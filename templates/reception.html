@@ -168,6 +168,95 @@ body{
   background:#fff;
   border-top:1px solid var(--line);
 }
+.modal-backdrop{
+  position:fixed;
+  inset:0;
+  background:rgba(15,23,42,.42);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+  z-index:1000;
+}
+.modal-backdrop.open{display:flex}
+.ticket-modal{
+  width:min(560px,96vw);
+  max-height:90vh;
+  overflow:auto;
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:18px;
+  box-shadow:0 24px 70px rgba(15,23,42,.24);
+}
+.ticket-modal-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:16px;
+  padding:18px 20px 14px;
+  border-bottom:1px solid var(--line);
+}
+.ticket-modal-title{font-size:20px;font-weight:900}
+.ticket-modal-sub{margin-top:4px;color:var(--muted);font-size:13px}
+.modal-close{
+  border:none;
+  background:#f1f5f9;
+  width:36px;
+  height:36px;
+  border-radius:10px;
+  cursor:pointer;
+  font-size:22px;
+  line-height:1;
+  color:#334155;
+}
+.ticket-modal-body{padding:18px 20px 20px}
+.detail-grid{
+  display:grid;
+  grid-template-columns:150px 1fr;
+  gap:10px 16px;
+  align-items:start;
+}
+.detail-label{color:var(--muted);font-size:13px;font-weight:800}
+.detail-value{font-weight:800;overflow-wrap:anywhere}
+.supplier-box{
+  margin-top:20px;
+  padding:16px;
+  border-radius:14px;
+  border:1px solid var(--line);
+  background:#f8fafc;
+}
+.supplier-title{
+  color:var(--muted);
+  font-size:12px;
+  font-weight:900;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+  margin-bottom:9px;
+}
+.supplier-status{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:8px 11px;
+  border-radius:999px;
+  font-size:14px;
+  font-weight:900;
+  background:#e2e8f0;
+  color:#334155;
+}
+.supplier-status.loading{background:#e0f2fe;color:#075985}
+.supplier-status.success{background:#dcfce7;color:#166534}
+.supplier-status.warning{background:#fef3c7;color:#92400e}
+.supplier-status.error{background:#fee2e2;color:#991b1b}
+.ticket-modal-foot{
+  padding:0 20px 20px;
+  display:flex;
+  justify-content:flex-end;
+}
+@media(max-width:600px){
+  .detail-grid{grid-template-columns:1fr;gap:4px}
+  .detail-value{margin-bottom:8px}
+}
 @media(max-width:900px){
   .month-grid,.week-head{grid-template-columns:1fr}
   .week-head{display:none}
@@ -208,10 +297,107 @@ body{
   </div>
 </div>
 
+<div class="modal-backdrop" id="ticketModalBackdrop" aria-hidden="true">
+  <div class="ticket-modal" role="dialog" aria-modal="true" aria-labelledby="ticketModalTitle">
+    <div class="ticket-modal-head">
+      <div>
+        <div class="ticket-modal-title" id="ticketModalTitle">Détail caisse</div>
+        <div class="ticket-modal-sub" id="ticketModalSub">-</div>
+      </div>
+      <button class="modal-close" id="ticketModalClose" type="button" aria-label="Fermer">×</button>
+    </div>
+
+    <div class="ticket-modal-body">
+      <div class="detail-grid">
+        <div class="detail-label">Dossier</div><div class="detail-value" id="modalDossier">-</div>
+        <div class="detail-label">N° caisse</div><div class="detail-value" id="modalRef">-</div>
+        <div class="detail-label">Dimensions</div><div class="detail-value" id="modalDimensions">-</div>
+        <div class="detail-label">Caissier</div><div class="detail-value" id="modalCaissier">-</div>
+        <div class="detail-label">Chargé de projet</div><div class="detail-value" id="modalChargeProjet">-</div>
+        <div class="detail-label">Date mise à dispo</div><div class="detail-value" id="modalDateEmballage">-</div>
+      </div>
+
+      <div class="supplier-box">
+        <div class="supplier-title">État fournisseur</div>
+        <div class="supplier-status loading" id="supplierStatus">Recherche du statut…</div>
+      </div>
+    </div>
+
+    <div class="ticket-modal-foot">
+      <button class="btn" id="ticketModalCloseBottom" type="button">Fermer</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let currentDate = new Date();
 let tickets = [];
 let searchTerm = '';
+
+function formatDateFr(value){
+  if(!value || value === '-') return '-';
+  const d = new Date(`${value}T12:00:00`);
+  if(Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString('fr-FR');
+}
+
+function setSupplierStatus(text, kind='loading'){
+  const el = document.getElementById('supplierStatus');
+  el.textContent = text || '-';
+  el.className = `supplier-status ${kind}`;
+}
+
+function closeTicketModal(){
+  const backdrop = document.getElementById('ticketModalBackdrop');
+  backdrop.classList.remove('open');
+  backdrop.setAttribute('aria-hidden','true');
+}
+
+async function openTicketModal(t){
+  const fiche = t.fiche || {};
+  const dimensions = `${fiche.longueur || '-'}x${fiche.largeur || '-'}x${fiche.hauteur || '-'}`;
+  const ref = t.ref || '-';
+
+  document.getElementById('ticketModalSub').textContent = `${t.dossier || '-'} - ${ref}`;
+  document.getElementById('modalDossier').textContent = t.dossier || '-';
+  document.getElementById('modalRef').textContent = ref;
+  document.getElementById('modalDimensions').textContent = dimensions;
+  document.getElementById('modalCaissier').textContent = fiche.choixCaissier || '-';
+  document.getElementById('modalChargeProjet').textContent = t.chargeProjet || '-';
+  document.getElementById('modalDateEmballage').textContent = formatDateFr(t.dateEmballage);
+
+  setSupplierStatus('Recherche du statut…', 'loading');
+
+  const backdrop = document.getElementById('ticketModalBackdrop');
+  backdrop.classList.add('open');
+  backdrop.setAttribute('aria-hidden','false');
+
+  if(!ref || ref === '-') {
+    setSupplierStatus('Référence caisse manquante', 'error');
+    return;
+  }
+
+  try{
+    const res = await fetch(`/api/caisse-status/${encodeURIComponent(ref)}`, {cache:'no-store'});
+    const data = await res.json();
+
+    if(data.success){
+      const etat = (data.etat || 'Non renseigné').trim();
+      const normalise = etat.toLowerCase();
+
+      let kind = 'success';
+      if(normalise.includes('livrer') || normalise.includes('commande') || normalise.includes('attente')){
+        kind = 'warning';
+      }
+      setSupplierStatus(etat.toUpperCase(), kind);
+    }else{
+      setSupplierStatus(data.error || 'Caisse introuvable', 'error');
+    }
+  }catch(err){
+    console.error(err);
+    setSupplierStatus('Statut fournisseur indisponible', 'error');
+  }
+}
 
 function pad(n){ return String(n).padStart(2,'0'); }
 function isoDate(d){ return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
@@ -344,7 +530,7 @@ function renderCalendar(){
             event.style.borderLeft = '5px solid #15803d';
           }
 
-          event.addEventListener('click',()=>alert(displayTicket(t)));
+          event.addEventListener('click',()=>openTicketModal(t));
           day.appendChild(event);
         });
 
@@ -369,6 +555,15 @@ document.getElementById('refreshBtn').addEventListener('click', loadTickets);
 document.getElementById('searchInput').addEventListener('input', (e)=>{
   searchTerm = e.target.value.trim();
   renderCalendar();
+});
+
+document.getElementById('ticketModalClose').addEventListener('click', closeTicketModal);
+document.getElementById('ticketModalCloseBottom').addEventListener('click', closeTicketModal);
+document.getElementById('ticketModalBackdrop').addEventListener('click', (e)=>{
+  if(e.target.id === 'ticketModalBackdrop') closeTicketModal();
+});
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape') closeTicketModal();
 });
 
 loadTickets();
