@@ -357,6 +357,7 @@ async function openTicketModal(t){
   const fiche = t.fiche || {};
   const dimensions = `${fiche.longueur || '-'}x${fiche.largeur || '-'}x${fiche.hauteur || '-'}`;
   const ref = t.ref || '-';
+  const fournisseurRef = `${t.dossier || ''}-${ref}`;
 
   document.getElementById('ticketModalSub').textContent = `${t.dossier || '-'} - ${ref}`;
   document.getElementById('modalDossier').textContent = t.dossier || '-';
@@ -378,7 +379,7 @@ async function openTicketModal(t){
   }
 
   try{
-    const res = await fetch(`/api/caisse-status/${encodeURIComponent(ref)}`, {cache:'no-store'});
+    const res = await fetch(`/api/caisse-status/${encodeURIComponent(fournisseurRef)}`, {cache:'no-store'});
     const data = await res.json();
 
     if(data.success){
