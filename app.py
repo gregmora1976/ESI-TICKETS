@@ -1,6 +1,8 @@
 from flask import Flask, render_template, jsonify, request, send_file, abort, redirect, url_for
 from pathlib import Path
 import json, webbrowser, os, urllib.request, urllib.parse
+import csv, re, time
+from io import StringIO
 import smtplib
 from email.mime.text import MIMEText
 from email.message import EmailMessage
@@ -18,6 +20,150 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or ""
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "uploads")
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
+
+# -----------------------------------------------------------------------------
+# Google Sheet public - suivi fournisseur caisserie
+# -----------------------------------------------------------------------------
+GOOGLE_SHEET_PUBLIC_ID = os.getenv(
+    "GOOGLE_SHEET_PUBLIC_ID",
+    "2PACX-1vQSiTSLN-AtXoa4GrscgSM_2VwFzO12Bh-UFyUKNLihyRZSocciqe8OHHIZCKvs5r77ynFqd5NZI29Q"
+)
+GOOGLE_SHEET_PUBHTML_URL = (
+    f"https://docs.google.com/spreadsheets/d/e/{GOOGLE_SHEET_PUBLIC_ID}/pubhtml"
+)
+GOOGLE_SHEET_CSV_BASE_URL = (
+    f"https://docs.google.com/spreadsheets/d/e/{GOOGLE_SHEET_PUBLIC_ID}/pub"
+)
+
+# Petit cache mémoire pour éviter de relire la page des onglets à chaque clic.
+_GOOGLE_GIDS_CACHE = {"gids": [], "expires_at": 0}
+
+
+def _http_get_text(url, timeout=10):
+    req = urllib.request.Request(
+        url,
+        method="GET",
+        headers={
+            "User-Agent": "Mozilla/5.0 ESI-Tickets/1.0",
+            "Accept": "text/html,text/csv,*/*"
+        }
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read()
+        charset = resp.headers.get_content_charset() or "utf-8"
+        return raw.decode(charset, errors="replace")
+
+
+def _google_sheet_gids(force_refresh=False):
+    now = time.time()
+    if (
+        not force_refresh
+        and _GOOGLE_GIDS_CACHE["gids"]
+        and now < _GOOGLE_GIDS_CACHE["expires_at"]
+    ):
+        return list(_GOOGLE_GIDS_CACHE["gids"])
+
+    html_page = _http_get_text(GOOGLE_SHEET_PUBHTML_URL, timeout=10)
+    gids = re.findall(r"gid=(\d+)", html_page)
+
+    # Supprime les doublons tout en conservant l'ordre du classeur publié.
+    gids = list(dict.fromkeys(gids))
+
+    _GOOGLE_GIDS_CACHE["gids"] = gids
+    _GOOGLE_GIDS_CACHE["expires_at"] = now + 600  # 10 minutes
+    return list(gids)
+
+
+def get_caisse_fournisseur_status(caisse_ref):
+    """
+    Recherche une caisse dans tous les onglets publiés du Google Sheet.
+
+    Exemple : 100872-01
+      - colonne B = 100872
+      - colonne C = 1
+      - colonne D = état fournisseur
+    """
+    caisse_ref = _as_text(caisse_ref).strip()
+    if not caisse_ref or "-" not in caisse_ref:
+        return {
+            "success": False,
+            "caisse": caisse_ref,
+            "error": "Format de caisse invalide"
+        }
+
+    try:
+        reference_recherchee, numero_recherche = caisse_ref.rsplit("-", 1)
+        reference_recherchee = reference_recherchee.strip()
+        numero_recherche = str(int(numero_recherche.strip()))
+    except Exception:
+        return {
+            "success": False,
+            "caisse": caisse_ref,
+            "error": "Format de caisse invalide"
+        }
+
+    try:
+        gids = _google_sheet_gids()
+    except Exception as e:
+        print(f"[GOOGLE SHEET] Impossible de récupérer les onglets : {e}")
+        return {
+            "success": False,
+            "caisse": caisse_ref,
+            "error": "Suivi fournisseur indisponible"
+        }
+
+    if not gids:
+        return {
+            "success": False,
+            "caisse": caisse_ref,
+            "error": "Aucun onglet fournisseur disponible"
+        }
+
+    for gid in gids:
+        csv_url = (
+            f"{GOOGLE_SHEET_CSV_BASE_URL}?gid={urllib.parse.quote(str(gid), safe='')}"
+            "&single=true&output=csv"
+        )
+
+        try:
+            csv_text = _http_get_text(csv_url, timeout=10)
+        except Exception as e:
+            print(f"[GOOGLE SHEET] Erreur lecture gid={gid} : {e}")
+            continue
+
+        reader = csv.reader(StringIO(csv_text))
+        for row in reader:
+            if len(row) < 4:
+                continue
+
+            reference = _as_text(row[1]).strip()
+            numero = _as_text(row[2]).strip()
+            etat = _as_text(row[3]).strip()
+
+            if not reference or not numero:
+                continue
+
+            try:
+                numero_normalise = str(int(float(numero.replace(",", "."))))
+            except Exception:
+                continue
+
+            if (
+                reference == reference_recherchee
+                and numero_normalise == numero_recherche
+            ):
+                return {
+                    "success": True,
+                    "caisse": caisse_ref,
+                    "etat": etat or "Non renseigné",
+                    "gid": str(gid)
+                }
+
+    return {
+        "success": False,
+        "caisse": caisse_ref,
+        "error": "Caisse introuvable dans le suivi fournisseur"
+    }
 
 def safe_filename(name):
     """Nettoie le nom du fichier pour Supabase tout en gardant le vrai nom affiché côté appli."""
@@ -826,6 +972,18 @@ def api_tickets():
     limit = request.args.get('limit')
     tickets = list_tickets(status=status, limit=limit)
     return jsonify(tickets)
+
+
+@app.route('/api/caisse-status/<path:caisse_ref>')
+def api_caisse_status(caisse_ref):
+    """Retourne l'état fournisseur d'une caisse depuis le Google Sheet public."""
+    result = get_caisse_fournisseur_status(caisse_ref)
+    if result.get("success"):
+        return jsonify(result)
+
+    # On garde un HTTP 200 pour que la fenêtre puisse afficher proprement
+    # "Caisse introuvable" sans traiter cela comme une panne réseau.
+    return jsonify(result)
 
 @app.route('/api/tickets', methods=['POST'])
 def api_create_ticket():
