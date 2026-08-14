@@ -2,7 +2,7 @@ from flask import Flask, render_template, jsonify, request, send_file, abort, re
 from pathlib import Path
 import json, webbrowser, os, urllib.request, urllib.parse
 import csv, re, time
-from io import StringIO
+from io import StringIO, BytesIO
 import smtplib
 from email.mime.text import MIMEText
 from email.message import EmailMessage
@@ -641,6 +641,157 @@ def load_ticket(ticket_id):
 
 
 # -----------------------------------------------------------------------------
+# Réception caisserie - lecture des bordereaux PDF fournisseur
+# -----------------------------------------------------------------------------
+def _normalise_numero_caisse(value):
+    """Normalise 01, 1, 1.0 -> 1 pour fiabiliser les rapprochements."""
+    txt = _as_text(value).strip()
+    if not txt:
+        return ""
+    try:
+        return str(int(float(txt.replace(",", "."))))
+    except Exception:
+        return txt.lstrip("0") or "0"
+
+
+def _extract_reception_pdf(pdf_bytes):
+    """
+    Extrait les informations utiles d'un bordereau PDF textuel.
+    Format SECO actuellement reconnu :
+      - BORDEREAU D'EXPEDITION N° 26400467 du 17/08/2026
+      - V/Cde : 101138/01
+    """
+    try:
+        from pypdf import PdfReader
+    except Exception as e:
+        raise RuntimeError(
+            "Le module pypdf n'est pas installé. Ajoute pypdf à requirements.txt."
+        ) from e
+
+    try:
+        reader = PdfReader(BytesIO(pdf_bytes))
+    except Exception as e:
+        raise ValueError(f"PDF illisible : {e}")
+
+    pages_text = []
+    for page in reader.pages:
+        try:
+            pages_text.append(page.extract_text() or "")
+        except Exception:
+            pages_text.append("")
+
+    text = "\n".join(pages_text).strip()
+    if not text:
+        raise ValueError(
+            "Aucun texte exploitable trouvé dans le PDF. "
+            "Ce fichier est peut-être un scan image et nécessiterait de l'OCR."
+        )
+
+    # Numéro et date du bordereau.
+    bl_numero = ""
+    bl_date = ""
+    m = re.search(
+        r"BORDEREAU\s+D['’]EXPEDITION.*?N\s*[°ºo]?\s*([0-9]+)\s+du\s+([0-9]{2}/[0-9]{2}/[0-9]{4})",
+        text,
+        flags=re.IGNORECASE | re.DOTALL
+    )
+    if m:
+        bl_numero = m.group(1)
+        bl_date = m.group(2)
+    else:
+        # Secours, plus tolérant.
+        m = re.search(r"N\s*[°ºo]?\s*([0-9]{6,})\s+du\s+([0-9]{2}/[0-9]{2}/[0-9]{4})", text)
+        if m:
+            bl_numero = m.group(1)
+            bl_date = m.group(2)
+
+    # Extrait toutes les références V/Cde : dossier/numero.
+    refs = []
+    seen = set()
+    for dossier, numero in re.findall(
+        r"V/Cde\s*:\s*([A-Za-z0-9_-]+)\s*/\s*([0-9]+)",
+        text,
+        flags=re.IGNORECASE
+    ):
+        dossier = dossier.strip()
+        numero_norm = _normalise_numero_caisse(numero)
+        key = (dossier, numero_norm)
+        if key not in seen:
+            seen.add(key)
+            refs.append({
+                "dossier": dossier,
+                "numero": numero_norm,
+                "numero_pdf": numero.strip()
+            })
+
+    if not refs:
+        raise ValueError(
+            "Aucune référence de caisse de type 'V/Cde : dossier/numéro' n'a été détectée."
+        )
+
+    return {
+        "bl_numero": bl_numero,
+        "bl_date": bl_date,
+        "references": refs,
+        "page_count": len(reader.pages),
+    }
+
+
+def _match_reception_refs_to_tickets(references):
+    """Rapproche les références du PDF avec les fiches de caisse ESI TICKETS."""
+    all_tickets = list_tickets()
+    candidates = [
+        t for t in all_tickets
+        if t.get("module") == "Fiche de caisse"
+    ]
+
+    by_key = {}
+    for t in candidates:
+        dossier = _as_text(t.get("dossier")).strip()
+        numero = _normalise_numero_caisse(t.get("ref"))
+        if dossier and numero:
+            by_key.setdefault((dossier, numero), []).append(t)
+
+    results = []
+    for ref in references:
+        key = (ref["dossier"], ref["numero"])
+        matches = by_key.get(key, [])
+
+        if len(matches) == 1:
+            t = matches[0]
+            fiche = t.get("fiche") or {}
+            results.append({
+                "found": True,
+                "ambiguous": False,
+                "ticket_id": t.get("id"),
+                "dossier": t.get("dossier") or "",
+                "ref": t.get("ref") or "",
+                "charge_projet": t.get("chargeProjet") or "",
+                "date_emballage": t.get("dateEmballage") or "",
+                "localisation": fiche.get("localisation") or "",
+                "status": t.get("status") or "",
+            })
+        elif len(matches) > 1:
+            results.append({
+                "found": False,
+                "ambiguous": True,
+                "dossier": ref["dossier"],
+                "ref": ref["numero_pdf"],
+                "error": f"{len(matches)} tickets correspondent à cette référence"
+            })
+        else:
+            results.append({
+                "found": False,
+                "ambiguous": False,
+                "dossier": ref["dossier"],
+                "ref": ref["numero_pdf"],
+                "error": "Ticket introuvable"
+            })
+
+    return results
+
+
+# -----------------------------------------------------------------------------
 # Référentiels métier : chargés de projet, clients, contacts
 # -----------------------------------------------------------------------------
 REFERENTIELS = {
@@ -1025,6 +1176,113 @@ def api_update_localisation(ticket_id):
         return jsonify({'ok': True, 'localisation': localisation})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/reception/analyse-bl', methods=['POST'])
+def api_reception_analyse_bl():
+    """
+    Analyse un bordereau PDF sans modifier la base.
+    Retourne les caisses détectées et leur correspondance avec ESI TICKETS.
+    """
+    fs = request.files.get('file')
+    if not fs or not fs.filename:
+        return jsonify({'ok': False, 'error': 'Fichier PDF manquant'}), 400
+
+    if not fs.filename.lower().endswith('.pdf'):
+        return jsonify({'ok': False, 'error': 'Le fichier doit être un PDF'}), 400
+
+    content = fs.read()
+    if not content:
+        return jsonify({'ok': False, 'error': 'Le fichier PDF est vide'}), 400
+
+    try:
+        parsed = _extract_reception_pdf(content)
+        matches = _match_reception_refs_to_tickets(parsed["references"])
+
+        return jsonify({
+            'ok': True,
+            'bl_numero': parsed.get('bl_numero', ''),
+            'bl_date': parsed.get('bl_date', ''),
+            'page_count': parsed.get('page_count', 0),
+            'items': matches,
+            'found_count': sum(1 for x in matches if x.get('found')),
+            'missing_count': sum(1 for x in matches if not x.get('found')),
+        })
+    except ValueError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+    except Exception as e:
+        print(f"[RECEPTION PDF] Erreur analyse : {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/reception/valider-bl', methods=['POST'])
+def api_reception_valider_bl():
+    """
+    Valide en lot la réception des caisses détectées.
+    Le fait de renseigner la localisation acte la réception.
+    """
+    data = request.get_json(silent=True) or {}
+    ticket_ids = data.get('ticket_ids') or []
+    localisation = _as_text(data.get('localisation')).strip()
+
+    if not localisation:
+        return jsonify({
+            'ok': False,
+            'error': 'La localisation est obligatoire pour valider la réception.'
+        }), 400
+
+    if not isinstance(ticket_ids, list) or not ticket_ids:
+        return jsonify({'ok': False, 'error': 'Aucune caisse sélectionnée'}), 400
+
+    updated = []
+    errors = []
+
+    for ticket_id in dict.fromkeys(_as_text(x).strip() for x in ticket_ids if _as_text(x).strip()):
+        try:
+            ticket = load_ticket(ticket_id)
+            if not ticket:
+                errors.append({'ticket_id': ticket_id, 'error': 'Ticket introuvable'})
+                continue
+
+            if ticket.get('module') != 'Fiche de caisse':
+                errors.append({'ticket_id': ticket_id, 'error': 'Ce ticket n’est pas une fiche de caisse'})
+                continue
+
+            fiche = ticket.get('fiche') or {}
+            if not fiche:
+                errors.append({'ticket_id': ticket_id, 'error': 'Fiche de caisse introuvable'})
+                continue
+
+            supabase_rest_request(
+                "PATCH",
+                "fiches",
+                "ticket_id=eq." + urllib.parse.quote(ticket_id, safe=''),
+                {"localisation": localisation},
+                prefer="return=minimal"
+            )
+
+            supabase_rest_request(
+                "PATCH",
+                "tickets",
+                "id=eq." + urllib.parse.quote(ticket_id, safe=''),
+                {"updated_at": datetime.now().isoformat()},
+                prefer="return=minimal"
+            )
+
+            updated.append(ticket_id)
+
+        except Exception as e:
+            print(f"[RECEPTION PDF] Erreur validation {ticket_id}: {e}")
+            errors.append({'ticket_id': ticket_id, 'error': str(e)})
+
+    return jsonify({
+        'ok': len(errors) == 0,
+        'updated_count': len(updated),
+        'updated': updated,
+        'errors': errors,
+        'localisation': localisation
+    }), (200 if not errors else 207)
+
 
 @app.route('/api/tickets', methods=['POST'])
 def api_create_ticket():
