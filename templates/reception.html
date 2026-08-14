@@ -248,6 +248,50 @@ body{
 .supplier-status.success{background:#dcfce7;color:#166534}
 .supplier-status.warning{background:#fef3c7;color:#92400e}
 .supplier-status.error{background:#fee2e2;color:#991b1b}
+.localisation-box{
+  margin-top:20px;
+  padding:16px;
+  border-radius:14px;
+  border:1px solid var(--line);
+  background:#fff;
+}
+.localisation-title{
+  color:var(--muted);
+  font-size:12px;
+  font-weight:900;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+  margin-bottom:9px;
+}
+.localisation-row{
+  display:flex;
+  gap:10px;
+  align-items:center;
+}
+.localisation-input{
+  flex:1;
+  min-width:0;
+  border:1px solid var(--line);
+  background:#f8fafc;
+  border-radius:10px;
+  padding:10px 12px;
+  font-size:14px;
+  font-weight:700;
+  color:var(--text);
+}
+.localisation-input:focus{
+  outline:2px solid rgba(14,165,233,.18);
+  border-color:var(--blue);
+}
+.localisation-feedback{
+  margin-top:8px;
+  min-height:18px;
+  font-size:12px;
+  font-weight:800;
+  color:var(--muted);
+}
+.localisation-feedback.success{color:#166534}
+.localisation-feedback.error{color:#991b1b}
 .ticket-modal-foot{
   padding:0 20px 20px;
   display:flex;
@@ -321,6 +365,21 @@ body{
         <div class="supplier-title">État fournisseur</div>
         <div class="supplier-status loading" id="supplierStatus">Recherche du statut…</div>
       </div>
+
+      <div class="localisation-box">
+        <div class="localisation-title">Localisation</div>
+        <div class="localisation-row">
+          <input
+            class="localisation-input"
+            id="modalLocalisation"
+            type="text"
+            placeholder="Ex. Quai réception, Rack A3, Atelier..."
+            autocomplete="off"
+          />
+          <button class="btn primary" id="saveLocalisationBtn" type="button">Enregistrer</button>
+        </div>
+        <div class="localisation-feedback" id="localisationFeedback"></div>
+      </div>
     </div>
 
     <div class="ticket-modal-foot">
@@ -333,6 +392,7 @@ body{
 let currentDate = new Date();
 let tickets = [];
 let searchTerm = '';
+let currentModalTicket = null;
 
 function formatDateFr(value){
   if(!value || value === '-') return '-';
@@ -351,9 +411,63 @@ function closeTicketModal(){
   const backdrop = document.getElementById('ticketModalBackdrop');
   backdrop.classList.remove('open');
   backdrop.setAttribute('aria-hidden','true');
+  currentModalTicket = null;
+}
+
+function setLocalisationFeedback(text='', kind=''){
+  const el = document.getElementById('localisationFeedback');
+  el.textContent = text;
+  el.className = 'localisation-feedback' + (kind ? ` ${kind}` : '');
+}
+
+async function saveLocalisation(){
+  if(!currentModalTicket || !currentModalTicket.id) return;
+
+  const input = document.getElementById('modalLocalisation');
+  const btn = document.getElementById('saveLocalisationBtn');
+  const localisation = input.value.trim();
+
+  btn.disabled = true;
+  btn.textContent = 'Enregistrement...';
+  setLocalisationFeedback('');
+
+  try{
+    const res = await fetch(
+      `/api/tickets/${encodeURIComponent(currentModalTicket.id)}/localisation`,
+      {
+        method:'PATCH',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({localisation})
+      }
+    );
+
+    const data = await res.json();
+    if(!res.ok || !data.ok){
+      throw new Error(data.error || 'Erreur lors de l’enregistrement');
+    }
+
+    currentModalTicket.fiche = currentModalTicket.fiche || {};
+    currentModalTicket.fiche.localisation = data.localisation || '';
+
+    // Met à jour également la copie présente dans la liste globale des tickets.
+    const idx = tickets.findIndex(x => x.id === currentModalTicket.id);
+    if(idx >= 0){
+      tickets[idx].fiche = tickets[idx].fiche || {};
+      tickets[idx].fiche.localisation = data.localisation || '';
+    }
+
+    setLocalisationFeedback('Localisation enregistrée', 'success');
+  }catch(err){
+    console.error(err);
+    setLocalisationFeedback(err.message || 'Enregistrement impossible', 'error');
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Enregistrer';
+  }
 }
 
 async function openTicketModal(t){
+  currentModalTicket = t;
   const fiche = t.fiche || {};
   const dimensions = `${fiche.longueur || '-'}x${fiche.largeur || '-'}x${fiche.hauteur || '-'}`;
   const ref = t.ref || '-';
@@ -366,6 +480,8 @@ async function openTicketModal(t){
   document.getElementById('modalCaissier').textContent = fiche.choixCaissier || '-';
   document.getElementById('modalChargeProjet').textContent = t.chargeProjet || '-';
   document.getElementById('modalDateEmballage').textContent = formatDateFr(t.dateEmballage);
+  document.getElementById('modalLocalisation').value = fiche.localisation || '';
+  setLocalisationFeedback('');
 
   setSupplierStatus('Recherche du statut…', 'loading');
 
@@ -556,6 +672,14 @@ document.getElementById('refreshBtn').addEventListener('click', loadTickets);
 document.getElementById('searchInput').addEventListener('input', (e)=>{
   searchTerm = e.target.value.trim();
   renderCalendar();
+});
+
+document.getElementById('saveLocalisationBtn').addEventListener('click', saveLocalisation);
+document.getElementById('modalLocalisation').addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter'){
+    e.preventDefault();
+    saveLocalisation();
+  }
 });
 
 document.getElementById('ticketModalClose').addEventListener('click', closeTicketModal);
