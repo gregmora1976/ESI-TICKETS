@@ -299,6 +299,82 @@ body{
   display:flex;
   justify-content:flex-end;
 }
+
+.bl-modal{
+  width:min(820px,96vw);
+  max-height:92vh;
+  overflow:auto;
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:18px;
+  box-shadow:0 24px 70px rgba(15,23,42,.24);
+}
+.bl-body{padding:18px 20px 20px}
+.bl-upload{
+  border:2px dashed var(--line);
+  border-radius:14px;
+  padding:18px;
+  background:#f8fafc;
+}
+.bl-upload input{width:100%}
+.bl-summary{
+  display:none;
+  margin-top:16px;
+  padding:14px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:#f8fafc;
+}
+.bl-summary.open{display:block}
+.bl-list{
+  margin-top:14px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  overflow:hidden;
+}
+.bl-item{
+  display:grid;
+  grid-template-columns:34px 110px 70px 1fr 130px;
+  gap:10px;
+  align-items:center;
+  padding:10px 12px;
+  border-bottom:1px solid var(--line);
+  font-size:13px;
+}
+.bl-item:last-child{border-bottom:none}
+.bl-item.missing{background:#fef2f2}
+.bl-item.found{background:#f0fdf4}
+.bl-item input[type="checkbox"]{width:18px;height:18px}
+.bl-location-row{
+  display:flex;
+  gap:10px;
+  margin-top:16px;
+  align-items:center;
+}
+.bl-location-row input{
+  flex:1;
+  border:1px solid var(--line);
+  background:#f8fafc;
+  border-radius:10px;
+  padding:11px 12px;
+  font-size:14px;
+  font-weight:700;
+}
+.bl-feedback{
+  margin-top:10px;
+  min-height:18px;
+  font-size:13px;
+  font-weight:800;
+}
+.bl-feedback.error{color:#991b1b}
+.bl-feedback.success{color:#166534}
+.bl-foot{
+  padding:0 20px 20px;
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+}
+
 @media(max-width:600px){
   .detail-grid{grid-template-columns:1fr;gap:4px}
   .detail-value{margin-bottom:8px}
@@ -323,6 +399,7 @@ body{
     <button class="btn primary" id="todayBtn" type="button">Aujourd'hui</button>
     <input class="search" id="searchInput" type="search" placeholder="Rechercher un ticket..." />
     <button class="btn" id="refreshBtn" type="button">Rafraîchir</button>
+    <button class="btn primary" id="importBlBtn" type="button">Importer BL PDF</button>
   </div>
 </div>
 
@@ -390,11 +467,230 @@ body{
   </div>
 </div>
 
+
+<div class="modal-backdrop" id="blModalBackdrop" aria-hidden="true">
+  <div class="bl-modal" role="dialog" aria-modal="true" aria-labelledby="blModalTitle">
+    <div class="ticket-modal-head">
+      <div>
+        <div class="ticket-modal-title" id="blModalTitle">Importer un bordereau de réception</div>
+        <div class="ticket-modal-sub">PDF fournisseur → détection des caisses → validation groupée</div>
+      </div>
+      <button class="modal-close" id="blModalClose" type="button" aria-label="Fermer">×</button>
+    </div>
+
+    <div class="bl-body">
+      <div class="bl-upload">
+        <input id="blPdfInput" type="file" accept="application/pdf,.pdf" />
+        <div style="margin-top:10px">
+          <button class="btn primary" id="analyseBlBtn" type="button">Analyser le PDF</button>
+        </div>
+      </div>
+
+      <div class="bl-summary" id="blSummary">
+        <div><strong>Bordereau :</strong> <span id="blNumero">-</span></div>
+        <div style="margin-top:5px"><strong>Date :</strong> <span id="blDate">-</span></div>
+        <div style="margin-top:5px"><strong>Résultat :</strong> <span id="blStats">-</span></div>
+
+        <div class="bl-list" id="blItems"></div>
+
+        <div class="bl-location-row">
+          <input id="blLocalisation" type="text" placeholder="Localisation commune : PUISEUX, Rack A3, Quai..." />
+          <button class="btn primary" id="validateBlBtn" type="button">Valider la réception</button>
+        </div>
+        <div class="bl-feedback" id="blFeedback"></div>
+      </div>
+    </div>
+
+    <div class="bl-foot">
+      <button class="btn" id="blModalCloseBottom" type="button">Fermer</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let currentDate = new Date();
 let tickets = [];
 let searchTerm = '';
 let currentModalTicket = null;
+let currentBlAnalysis = null;
+
+
+function openBlModal(){
+  const backdrop = document.getElementById('blModalBackdrop');
+  backdrop.classList.add('open');
+  backdrop.setAttribute('aria-hidden','false');
+}
+
+function closeBlModal(){
+  const backdrop = document.getElementById('blModalBackdrop');
+  backdrop.classList.remove('open');
+  backdrop.setAttribute('aria-hidden','true');
+}
+
+function setBlFeedback(text='', kind=''){
+  const el = document.getElementById('blFeedback');
+  el.textContent = text;
+  el.className = 'bl-feedback' + (kind ? ` ${kind}` : '');
+}
+
+function renderBlAnalysis(data){
+  currentBlAnalysis = data;
+  document.getElementById('blNumero').textContent = data.bl_numero || 'Non détecté';
+  document.getElementById('blDate').textContent = data.bl_date || 'Non détectée';
+  document.getElementById('blStats').textContent =
+    `${data.found_count || 0} caisse(s) trouvée(s), ${data.missing_count || 0} non trouvée(s)`;
+
+  const list = document.getElementById('blItems');
+  list.innerHTML = '';
+
+  (data.items || []).forEach(item=>{
+    const row = document.createElement('div');
+    row.className = `bl-item ${item.found ? 'found' : 'missing'}`;
+
+    const checkCell = document.createElement('div');
+    if(item.found){
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      cb.dataset.ticketId = item.ticket_id;
+      checkCell.appendChild(cb);
+    }else{
+      checkCell.textContent = '⚠';
+    }
+
+    const dossier = document.createElement('div');
+    dossier.textContent = item.dossier || '-';
+
+    const ref = document.createElement('div');
+    ref.textContent = item.ref || '-';
+
+    const info = document.createElement('div');
+    info.textContent = item.found
+      ? `${item.charge_projet || '-'}${item.localisation ? ' / ' + item.localisation : ''}`
+      : (item.error || 'Introuvable');
+
+    const status = document.createElement('div');
+    status.textContent = item.found ? (item.status || '-') : 'NON TROUVÉ';
+
+    row.append(checkCell, dossier, ref, info, status);
+    list.appendChild(row);
+  });
+
+  document.getElementById('blSummary').classList.add('open');
+  setBlFeedback('');
+}
+
+async function analyseBlPdf(){
+  const input = document.getElementById('blPdfInput');
+  const btn = document.getElementById('analyseBlBtn');
+
+  if(!input.files || !input.files[0]){
+    setBlFeedback('Choisis d’abord un fichier PDF.', 'error');
+    return;
+  }
+
+  const form = new FormData();
+  form.append('file', input.files[0]);
+
+  btn.disabled = true;
+  btn.textContent = 'Analyse...';
+  setBlFeedback('');
+
+  try{
+    const res = await fetch('/api/reception/analyse-bl', {
+      method:'POST',
+      body:form
+    });
+    const data = await res.json();
+
+    if(!res.ok || !data.ok){
+      throw new Error(data.error || 'Analyse impossible');
+    }
+
+    renderBlAnalysis(data);
+  }catch(err){
+    console.error(err);
+    setBlFeedback(err.message || 'Analyse impossible', 'error');
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Analyser le PDF';
+  }
+}
+
+async function validateBlReception(){
+  const localisation = document.getElementById('blLocalisation').value.trim();
+  const btn = document.getElementById('validateBlBtn');
+
+  if(!localisation){
+    setBlFeedback('Renseigne une localisation avant de valider la réception.', 'error');
+    return;
+  }
+
+  const selected = Array.from(
+    document.querySelectorAll('#blItems input[type="checkbox"]:checked')
+  ).map(x => x.dataset.ticketId).filter(Boolean);
+
+  if(!selected.length){
+    setBlFeedback('Aucune caisse sélectionnée.', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Validation...';
+  setBlFeedback('');
+
+  try{
+    const res = await fetch('/api/reception/valider-bl', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        ticket_ids:selected,
+        localisation
+      })
+    });
+
+    const data = await res.json();
+
+    if(!res.ok && res.status !== 207){
+      throw new Error(data.error || 'Validation impossible');
+    }
+
+    if(data.errors && data.errors.length){
+      setBlFeedback(
+        `${data.updated_count || 0} caisse(s) mises à jour, ${data.errors.length} erreur(s).`,
+        'error'
+      );
+    }else{
+      setBlFeedback(
+        `${data.updated_count || 0} caisse(s) réceptionnée(s) à ${localisation}.`,
+        'success'
+      );
+    }
+
+    await loadTickets();
+
+    // Met à jour visuellement les lignes déjà analysées.
+    (currentBlAnalysis?.items || []).forEach(item=>{
+      if(item.found && selected.includes(item.ticket_id)){
+        item.localisation = localisation;
+      }
+    });
+    if(currentBlAnalysis){
+      renderBlAnalysis(currentBlAnalysis);
+      setBlFeedback(
+        `${data.updated_count || 0} caisse(s) réceptionnée(s) à ${localisation}.`,
+        data.errors && data.errors.length ? 'error' : 'success'
+      );
+    }
+
+  }catch(err){
+    console.error(err);
+    setBlFeedback(err.message || 'Validation impossible', 'error');
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Valider la réception';
+  }
+}
 
 function formatDateFr(value){
   if(!value || value === '-') return '-';
@@ -691,6 +987,16 @@ document.getElementById('searchInput').addEventListener('input', (e)=>{
   searchTerm = e.target.value.trim();
   renderCalendar();
 });
+
+
+document.getElementById('importBlBtn').addEventListener('click', openBlModal);
+document.getElementById('blModalClose').addEventListener('click', closeBlModal);
+document.getElementById('blModalCloseBottom').addEventListener('click', closeBlModal);
+document.getElementById('blModalBackdrop').addEventListener('click', (e)=>{
+  if(e.target.id === 'blModalBackdrop') closeBlModal();
+});
+document.getElementById('analyseBlBtn').addEventListener('click', analyseBlPdf);
+document.getElementById('validateBlBtn').addEventListener('click', validateBlReception);
 
 document.getElementById('saveLocalisationBtn').addEventListener('click', saveLocalisation);
 document.getElementById('modalLocalisation').addEventListener('keydown', (e)=>{
