@@ -317,6 +317,13 @@ body{
   background:#f8fafc;
 }
 .bl-upload input{width:100%}
+.bl-upload.dragover{
+  border-color:var(--blue);
+  background:#e0f2fe;
+}
+.bl-upload.dragover #blDropText{
+  color:#075985;
+}
 .bl-summary{
   display:none;
   margin-top:16px;
@@ -479,8 +486,15 @@ body{
     </div>
 
     <div class="bl-body">
-      <div class="bl-upload">
-        <input id="blPdfInput" type="file" accept="application/pdf,.pdf" />
+      <div class="bl-upload" id="blDropZone">
+        <input id="blPdfInput" type="file" accept="application/pdf,.pdf" hidden />
+        <div id="blDropText" style="font-weight:800;color:var(--muted);margin-bottom:10px">
+          Glissez-déposez un PDF ici
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn" id="chooseBlBtn" type="button">Choisir un fichier</button>
+          <span id="blSelectedFile" style="font-size:13px;color:var(--muted)">Aucun fichier sélectionné</span>
+        </div>
         <div style="margin-top:10px">
           <button class="btn primary" id="analyseBlBtn" type="button">Analyser le PDF</button>
         </div>
@@ -515,6 +529,37 @@ let currentModalTicket = null;
 let currentBlAnalysis = null;
 
 
+
+function resetBlImport(){
+  currentBlAnalysis = null;
+  const input = document.getElementById('blPdfInput');
+  input.value = '';
+  document.getElementById('blSelectedFile').textContent = 'Aucun fichier sélectionné';
+  document.getElementById('blNumero').textContent = '-';
+  document.getElementById('blDate').textContent = '-';
+  document.getElementById('blStats').textContent = '-';
+  document.getElementById('blItems').innerHTML = '';
+  document.getElementById('blLocalisation').value = '';
+  document.getElementById('blSummary').classList.remove('open');
+  setBlFeedback('');
+}
+
+function setBlFile(file){
+  if(!file) return;
+  if(!file.name.toLowerCase().endsWith('.pdf')){
+    setBlFeedback('Le fichier doit être un PDF.', 'error');
+    return;
+  }
+
+  const input = document.getElementById('blPdfInput');
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+
+  document.getElementById('blSelectedFile').textContent = file.name;
+  setBlFeedback('');
+}
+
 function openBlModal(){
   const backdrop = document.getElementById('blModalBackdrop');
   backdrop.classList.add('open');
@@ -525,6 +570,7 @@ function closeBlModal(){
   const backdrop = document.getElementById('blModalBackdrop');
   backdrop.classList.remove('open');
   backdrop.setAttribute('aria-hidden','true');
+  resetBlImport();
 }
 
 function setBlFeedback(text='', kind=''){
@@ -669,18 +715,14 @@ async function validateBlReception(){
 
     await loadTickets();
 
-    // Met à jour visuellement les lignes déjà analysées.
-    (currentBlAnalysis?.items || []).forEach(item=>{
-      if(item.found && selected.includes(item.ticket_id)){
-        item.localisation = localisation;
-      }
-    });
-    if(currentBlAnalysis){
-      renderBlAnalysis(currentBlAnalysis);
+    if(data.errors && data.errors.length){
       setBlFeedback(
-        `${data.updated_count || 0} caisse(s) réceptionnée(s) à ${localisation}.`,
-        data.errors && data.errors.length ? 'error' : 'success'
+        `${data.updated_count || 0} caisse(s) mise(s) à jour, ${data.errors.length} erreur(s).`,
+        'error'
       );
+    }else{
+      // Réception validée : fermeture et remise à zéro de l'import.
+      closeBlModal();
     }
 
   }catch(err){
@@ -988,6 +1030,44 @@ document.getElementById('searchInput').addEventListener('input', (e)=>{
   renderCalendar();
 });
 
+
+
+document.getElementById('chooseBlBtn').addEventListener('click', ()=>{
+  document.getElementById('blPdfInput').click();
+});
+
+document.getElementById('blPdfInput').addEventListener('change', (e)=>{
+  const file = e.target.files && e.target.files[0];
+  if(file){
+    document.getElementById('blSelectedFile').textContent = file.name;
+    setBlFeedback('');
+  }
+});
+
+const blDropZone = document.getElementById('blDropZone');
+
+['dragenter','dragover'].forEach(evt=>{
+  blDropZone.addEventListener(evt, (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    blDropZone.classList.add('dragover');
+  });
+});
+
+['dragleave','drop'].forEach(evt=>{
+  blDropZone.addEventListener(evt, (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    blDropZone.classList.remove('dragover');
+  });
+});
+
+blDropZone.addEventListener('drop', (e)=>{
+  const files = e.dataTransfer && e.dataTransfer.files;
+  if(files && files[0]){
+    setBlFile(files[0]);
+  }
+});
 
 document.getElementById('importBlBtn').addEventListener('click', openBlModal);
 document.getElementById('blModalClose').addEventListener('click', closeBlModal);
