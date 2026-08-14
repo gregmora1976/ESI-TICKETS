@@ -3,3 +3,6 @@ gunicorn
 openpyxl
 supabase
 pypdf
+pytesseract
+pdf2image
+Pillow
