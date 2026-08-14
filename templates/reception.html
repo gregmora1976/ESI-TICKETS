@@ -16,6 +16,8 @@
   --blue-dark:#0284c7;
   --event:#fde68a;
   --event-border:#f59e0b;
+  --received:#bbf7d0;
+  --received-border:#15803d;
 }
 *{box-sizing:border-box}
 body{
@@ -456,7 +458,15 @@ async function saveLocalisation(){
       tickets[idx].fiche.localisation = data.localisation || '';
     }
 
-    setLocalisationFeedback('Localisation enregistrée', 'success');
+    // Rafraîchit immédiatement le planning :
+    // localisation renseignée => vert + localisation affichée ;
+    // localisation effacée => retour au jaune.
+    renderCalendar();
+
+    setLocalisationFeedback(
+      localisation ? 'Caisse réceptionnée — localisation enregistrée' : 'Localisation supprimée — caisse à réceptionner',
+      'success'
+    );
   }catch(err){
     console.error(err);
     setLocalisationFeedback(err.message || 'Enregistrement impossible', 'error');
@@ -550,7 +560,16 @@ function eventText(t){
     `${fiche.longueur || '-'}x${fiche.largeur || '-'}x${fiche.hauteur || '-'}`;
   const caissierNom = fiche.choixCaissier || '-';
   const chargeProjet = t.chargeProjet || '-';
-  return `${t.dossier || '-'}-${t.ref || '-'} / ${dimensions} / ${caissierNom} / ${chargeProjet}`;
+  const localisation = (fiche.localisation || '').trim();
+
+  let texte = `${t.dossier || '-'}-${t.ref || '-'} / ${dimensions} / ${caissierNom} / ${chargeProjet}`;
+
+  // Une localisation renseignée signifie que la caisse a été réceptionnée.
+  if(localisation){
+    texte += ` / ${localisation}`;
+  }
+
+  return texte;
 }
 function matchesSearch(t){
   if(!searchTerm) return true;
@@ -563,6 +582,7 @@ function matchesSearch(t){
     fiche.largeur,
     fiche.hauteur,
     fiche.choixCaissier,
+    fiche.localisation,
     eventText(t)
   ].join(' ').toLowerCase();
 
@@ -630,21 +650,19 @@ function renderCalendar(){
           const dimensions =
             `${fiche.longueur || '-'}x${fiche.largeur || '-'}x${fiche.hauteur || '-'}`;
 
-          const caissierNom = fiche.choixCaissier || '-';
-          const caissier = caissierNom.toLowerCase();
+          const localisation = (fiche.localisation || '').trim();
 
           event.textContent = eventText(t);
-
           event.title = event.textContent;
 
-          if(caissier.includes('secobois')){
-            event.style.background = '#fed7aa';
-            event.style.borderLeft = '5px solid #ea580c';
-          }
-
-          if(caissier.includes('arckx')){
-            event.style.background = '#bbf7d0';
-            event.style.borderLeft = '5px solid #15803d';
+          // Jaune = pas encore réceptionnée (aucune localisation).
+          // Vert = réceptionnée (localisation renseignée).
+          if(localisation){
+            event.style.background = 'var(--received)';
+            event.style.borderLeft = '5px solid var(--received-border)';
+          }else{
+            event.style.background = 'var(--event)';
+            event.style.borderLeft = '5px solid var(--event-border)';
           }
 
           event.addEventListener('click',()=>openTicketModal(t));
