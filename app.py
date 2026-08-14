@@ -2,6 +2,7 @@ from flask import Flask, render_template, jsonify, request, send_file, abort, re
 from pathlib import Path
 import json, webbrowser, os, urllib.request, urllib.parse
 import csv, re, time
+import hashlib, threading
 from io import StringIO, BytesIO
 import smtplib
 from email.mime.text import MIMEText
@@ -20,6 +21,31 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or ""
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "uploads")
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
+
+# Cache court + verrou pour éviter de relancer plusieurs OCR lourds sur le même PDF.
+_RECEPTION_OCR_LOCK = threading.Lock()
+_RECEPTION_PDF_CACHE = {}
+_RECEPTION_PDF_CACHE_TTL = 300  # 5 minutes
+_RECEPTION_PDF_CACHE_MAX = 20
+
+
+def _reception_cache_get(pdf_bytes):
+    key = hashlib.sha256(pdf_bytes).hexdigest()
+    item = _RECEPTION_PDF_CACHE.get(key)
+    if not item:
+        return key, None
+    if time.time() - item.get('ts', 0) > _RECEPTION_PDF_CACHE_TTL:
+        _RECEPTION_PDF_CACHE.pop(key, None)
+        return key, None
+    return key, dict(item.get('parsed') or {})
+
+
+def _reception_cache_set(key, parsed):
+    if len(_RECEPTION_PDF_CACHE) >= _RECEPTION_PDF_CACHE_MAX:
+        oldest = min(_RECEPTION_PDF_CACHE.items(), key=lambda kv: kv[1].get('ts', 0))[0]
+        _RECEPTION_PDF_CACHE.pop(oldest, None)
+    _RECEPTION_PDF_CACHE[key] = {'ts': time.time(), 'parsed': dict(parsed)}
+
 
 # -----------------------------------------------------------------------------
 # Google Sheet public - suivi fournisseur caisserie
@@ -699,26 +725,45 @@ def _extract_reception_pdf(pdf_bytes):
                 "puis installe tesseract-ocr et poppler-utils sur Render."
             ) from e
 
-        try:
-            images = convert_from_bytes(pdf_bytes, dpi=300)
-        except Exception as e:
-            raise RuntimeError(
-                "Impossible de convertir le PDF en image pour l'OCR. "
-                "Verifie que poppler-utils est installe sur Render."
-            ) from e
-
-        ocr_pages = []
-        for index, image in enumerate(images, start=1):
+        # Un seul OCR lourd à la fois par worker. Cela évite les pics mémoire
+        # si le navigateur/proxy soumet plusieurs fois le même PDF.
+        with _RECEPTION_OCR_LOCK:
             try:
-                page_text = pytesseract.image_to_string(image, lang="fra")
+                images = convert_from_bytes(
+                    pdf_bytes,
+                    dpi=200,
+                    grayscale=True,
+                    thread_count=1
+                )
             except Exception as e:
                 raise RuntimeError(
-                    "Echec OCR Tesseract. Verifie que tesseract-ocr et la langue francaise sont installes."
+                    "Impossible de convertir le PDF en image pour l'OCR. "
+                    "Verifie que poppler-utils est installe sur Render."
                 ) from e
-            print(f"[RECEPTION OCR] Page {index}/{len(images)} analysee")
-            ocr_pages.append(page_text or "")
 
-        text = "\n".join(ocr_pages).strip()
+            ocr_pages = []
+            total_pages = len(images)
+            for index, image in enumerate(images, start=1):
+                try:
+                    page_text = pytesseract.image_to_string(
+                        image,
+                        lang="fra",
+                        config="--psm 6"
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        "Echec OCR Tesseract. Verifie que tesseract-ocr et la langue francaise sont installes."
+                    ) from e
+                print(f"[RECEPTION OCR] Page {index}/{total_pages} analysee")
+                ocr_pages.append(page_text or "")
+                try:
+                    image.close()
+                except Exception:
+                    pass
+
+            # Libère explicitement les images avant le rapprochement Supabase.
+            images.clear()
+            text = "\n".join(ocr_pages).strip()
         ocr_used = True
         print(f"[RECEPTION OCR] OCR termine, {len(text)} caracteres detectes")
 
@@ -748,8 +793,10 @@ def _extract_reception_pdf(pdf_bytes):
     # Extrait toutes les références V/Cde : dossier/numero.
     refs = []
     seen = set()
+    # OCR peut lire "V/Cde" comme "ViCde", "VICde", "V Cde", etc.
+    # On tolère donc un séparateur imparfait entre V et Cde.
     for dossier, numero in re.findall(
-        r"V/Cde\s*:\s*([A-Za-z0-9_-]+)\s*/\s*([0-9]+)",
+        r"V\s*[/|Il1i\-]?\s*Cde\s*:\s*([A-Za-z0-9_-]+)\s*/\s*([0-9]+)",
         text,
         flags=re.IGNORECASE
     ):
@@ -766,7 +813,7 @@ def _extract_reception_pdf(pdf_bytes):
 
     if not refs:
         raise ValueError(
-            "Aucune référence de caisse de type 'V/Cde : dossier/numéro' n'a été détectée."
+            "Aucune référence de caisse de type 'V/Cde : dossier/numéro' n'a été détectée, même après OCR."
         )
 
     return {
@@ -1237,8 +1284,19 @@ def api_reception_analyse_bl():
         return jsonify({'ok': False, 'error': 'Le fichier PDF est vide'}), 400
 
     try:
-        parsed = _extract_reception_pdf(content)
+        cache_key, parsed = _reception_cache_get(content)
+        if parsed is not None:
+            print("[RECEPTION OCR] Resultat reutilise depuis le cache PDF")
+        else:
+            parsed = _extract_reception_pdf(content)
+            _reception_cache_set(cache_key, parsed)
+
+        print(
+            f"[RECEPTION PDF] Analyse terminee: BL={parsed.get('bl_numero', '') or '-'} "
+            f"refs={len(parsed.get('references') or [])} ocr={parsed.get('ocr_used', False)}"
+        )
         matches = _match_reception_refs_to_tickets(parsed["references"])
+        print(f"[RECEPTION PDF] Rapprochement termine: {len(matches)} ligne(s)")
 
         return jsonify({
             'ok': True,
