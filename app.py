@@ -429,6 +429,7 @@ def _fiche_to_db_row(ticket_id, fiche):
         "bilan_carbone": _as_text(fiche.get("bilanCarbone")),
         "poids": _as_text(fiche.get("poids")),
         "choix_caissier": _as_text(fiche.get("choixCaissier")),
+        "localisation": _as_text(fiche.get("localisation")),
     }
 
 
@@ -444,6 +445,7 @@ def _fiche_from_db_row(row):
         "bilanCarbone": row.get("bilan_carbone") or "",
         "poids": row.get("poids") or "",
         "choixCaissier": row.get("choix_caissier") or "",
+        "localisation": row.get("localisation") or "",
     }
 
 
@@ -985,6 +987,45 @@ def api_caisse_status(caisse_ref):
     # "Caisse introuvable" sans traiter cela comme une panne réseau.
     return jsonify(result)
 
+
+@app.route('/api/tickets/<ticket_id>/localisation', methods=['PATCH'])
+def api_update_localisation(ticket_id):
+    """Met à jour uniquement la localisation d'une fiche de caisse."""
+    ticket = load_ticket(ticket_id)
+    if not ticket:
+        return jsonify({'ok': False, 'error': 'Ticket introuvable'}), 404
+
+    fiche = ticket.get('fiche') or {}
+    if not fiche:
+        return jsonify({'ok': False, 'error': 'Fiche de caisse introuvable'}), 404
+
+    data = request.get_json(silent=True) or {}
+    localisation = _as_text(data.get('localisation')).strip()
+
+    fiche['localisation'] = localisation
+    ticket['fiche'] = fiche
+    ticket['updatedAt'] = datetime.now().isoformat()
+
+    try:
+        supabase_rest_request(
+            "PATCH",
+            "fiches",
+            "ticket_id=eq." + urllib.parse.quote(ticket_id, safe=''),
+            {"localisation": localisation},
+            prefer="return=minimal"
+        )
+        # On met également à jour updated_at du ticket principal sans réécrire les fichiers.
+        supabase_rest_request(
+            "PATCH",
+            "tickets",
+            "id=eq." + urllib.parse.quote(ticket_id, safe=''),
+            {"updated_at": ticket['updatedAt']},
+            prefer="return=minimal"
+        )
+        return jsonify({'ok': True, 'localisation': localisation})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
 @app.route('/api/tickets', methods=['POST'])
 def api_create_ticket():
     form = request.form
@@ -1515,6 +1556,7 @@ def api_save_fiche(ticket_id):
     largeur = data.get('largeur', '')
     hauteur = data.get('hauteur', '')
     dimensions_ext = " x ".join([v for v in [longueur, largeur, hauteur] if str(v).strip()])
+    ancienne_fiche = ticket.get('fiche') or {}
     ticket['fiche'] = {
         'longueur': longueur,
         'largeur': largeur,
@@ -1525,7 +1567,10 @@ def api_save_fiche(ticket_id):
         'typeCaisseFiche': data.get('typeCaisseFiche', ''),
         'bilanCarbone': data.get('bilanCarbone', ''),
         'poids': data.get('poids', ''),
-        'choixCaissier': data.get('choixCaissier', '')
+        'choixCaissier': data.get('choixCaissier', ''),
+        # La localisation est renseignée depuis le planning réception.
+        # On la conserve si la fiche est modifiée depuis l'écran gestionnaire.
+        'localisation': ancienne_fiche.get('localisation', '')
     }
     save_ticket(ticket)
     return jsonify({'ok': True})
