@@ -656,7 +656,11 @@ def _normalise_numero_caisse(value):
 
 def _extract_reception_pdf(pdf_bytes):
     """
-    Extrait les informations utiles d'un bordereau PDF textuel.
+    Extrait les informations utiles d'un bordereau PDF.
+
+    1) Essaie d'abord l'extraction texte native avec pypdf.
+    2) Si le PDF contient trop peu de texte, lance automatiquement un OCR.
+
     Format SECO actuellement reconnu :
       - BORDEREAU D'EXPEDITION N° 26400467 du 17/08/2026
       - V/Cde : 101138/01
@@ -681,10 +685,46 @@ def _extract_reception_pdf(pdf_bytes):
             pages_text.append("")
 
     text = "\n".join(pages_text).strip()
+    ocr_used = False
+
+    # Un scan image peut renvoyer une chaine vide ou quelques caracteres inutilisables.
+    if len(text) < 50:
+        print("[RECEPTION OCR] Texte natif insuffisant, lancement de l'OCR")
+        try:
+            from pdf2image import convert_from_bytes
+            import pytesseract
+        except Exception as e:
+            raise RuntimeError(
+                "OCR indisponible. Ajoute pdf2image, pytesseract et Pillow a requirements.txt, "
+                "puis installe tesseract-ocr et poppler-utils sur Render."
+            ) from e
+
+        try:
+            images = convert_from_bytes(pdf_bytes, dpi=300)
+        except Exception as e:
+            raise RuntimeError(
+                "Impossible de convertir le PDF en image pour l'OCR. "
+                "Verifie que poppler-utils est installe sur Render."
+            ) from e
+
+        ocr_pages = []
+        for index, image in enumerate(images, start=1):
+            try:
+                page_text = pytesseract.image_to_string(image, lang="fra")
+            except Exception as e:
+                raise RuntimeError(
+                    "Echec OCR Tesseract. Verifie que tesseract-ocr et la langue francaise sont installes."
+                ) from e
+            print(f"[RECEPTION OCR] Page {index}/{len(images)} analysee")
+            ocr_pages.append(page_text or "")
+
+        text = "\n".join(ocr_pages).strip()
+        ocr_used = True
+        print(f"[RECEPTION OCR] OCR termine, {len(text)} caracteres detectes")
+
     if not text:
         raise ValueError(
-            "Aucun texte exploitable trouvé dans le PDF. "
-            "Ce fichier est peut-être un scan image et nécessiterait de l'OCR."
+            "Aucun texte exploitable trouve dans le PDF, meme apres OCR."
         )
 
     # Numéro et date du bordereau.
@@ -734,6 +774,7 @@ def _extract_reception_pdf(pdf_bytes):
         "bl_date": bl_date,
         "references": refs,
         "page_count": len(reader.pages),
+        "ocr_used": ocr_used,
     }
 
 
@@ -1204,6 +1245,7 @@ def api_reception_analyse_bl():
             'bl_numero': parsed.get('bl_numero', ''),
             'bl_date': parsed.get('bl_date', ''),
             'page_count': parsed.get('page_count', 0),
+            'ocr_used': parsed.get('ocr_used', False),
             'items': matches,
             'found_count': sum(1 for x in matches if x.get('found')),
             'missing_count': sum(1 for x in matches if not x.get('found')),
