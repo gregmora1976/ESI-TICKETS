@@ -2210,10 +2210,10 @@ def api_update_enlevement(ticket_id):
     current = dict(ticket.get('enlevement') or {})
 
     editable = [
-        'client', 'numero_bon', 'date_enlevement', 'heure_enlevement',
+        'client', 'numero_bon', 'date_enlevement',
         'coordinateur', 'exhibition',
-        'adresse_depart', 'contact_depart', 'telephone_depart',
-        'adresse_destination', 'contact_destination', 'telephone_destination',
+        'adresse_depart', 'contact_depart',
+        'adresse_destination', 'contact_destination',
         'notes', 'instructions'
     ]
     for field in editable:
@@ -2249,7 +2249,8 @@ def api_update_enlevement(ticket_id):
     ticket['chargeProjet'] = current.get('coordinateur', '') or '-'
     ticket['expo'] = current.get('exhibition', '') or '-'
     ticket['objet'] = current.get('exhibition', '') or '-'
-    ticket['heureRdv'] = current.get('heure_enlevement', '') or '-'
+    # L'heure n'est pas utilisee dans la gestion reception.
+    ticket['heureRdv'] = '-'
 
     date_fr = current.get('date_enlevement', '')
     if date_fr:
