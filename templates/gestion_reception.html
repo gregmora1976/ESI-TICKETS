@@ -18,6 +18,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .btn{border:1px solid var(--line);background:#fff;border-radius:12px;padding:10px 13px;font-weight:800;cursor:pointer}
 .btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn.danger{background:#dc2626;border-color:#dc2626;color:#fff}
 .search{border:1px solid var(--line);background:#f8fafc;border-radius:12px;padding:10px 13px;font-size:14px;min-width:260px}
 .month-label{font-size:18px;font-weight:900;min-width:180px;text-align:center}
 .pending-wrap{padding:14px 14px 0}.pending{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
@@ -95,12 +96,15 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
       <button class="modal-close" id="ticketModalClose" type="button">×</button>
     </div>
     <div class="ticket-modal-body" id="ticketModalBody"></div>
-    <div class="ticket-modal-foot"><button class="btn" id="ticketModalCloseBottom" type="button">Fermer</button></div>
+    <div class="ticket-modal-foot" style="justify-content:space-between;gap:10px">
+      <button class="btn danger" id="ticketCancelBtn" type="button">Annuler le ticket</button>
+      <button class="btn" id="ticketModalCloseBottom" type="button">Fermer</button>
+    </div>
   </div>
 </div>
 
 <script>
-let currentDate=new Date(), tickets=[], searchTerm='';
+let currentDate=new Date(), tickets=[], searchTerm='', openedTicket=null;
 
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function val(v){const s=String(v??'').trim();return s||'-';}
@@ -143,8 +147,10 @@ function matches(t){
   return `${t.id||''} ${client(t)} ${bonRef(t)} ${refs} ${JSON.stringify(extraction(t))}`.toLowerCase().includes(searchTerm.toLowerCase());
 }
 function isEnlevement(t){return t.module==="Demande d'enlèvement"||t.module==='Demande d’enlèvement'||String(t.id||'').startsWith('ENL-');}
+function isCancelled(t){return String(t.status||'').trim().toLowerCase()==='annulé'||String(t.status||'').trim().toLowerCase()==='annule';}
 
 function openTicket(t){
+  openedTicket=t;
   const x=extraction(t), its=items(t);
   document.getElementById('ticketModalSub').textContent=`${val(client(t))} — ${val(bonRef(t))}`;
   let rows=[
@@ -179,18 +185,18 @@ function openTicket(t){
   document.getElementById('ticketModalBody').innerHTML=html;
   const b=document.getElementById('ticketModalBackdrop');b.classList.add('open');b.setAttribute('aria-hidden','false');
 }
-function closeTicket(){const b=document.getElementById('ticketModalBackdrop');b.classList.remove('open');b.setAttribute('aria-hidden','true');}
+function closeTicket(){openedTicket=null;const b=document.getElementById('ticketModalBackdrop');b.classList.remove('open');b.setAttribute('aria-hidden','true');}
 
 function renderPending(){
   const el=document.getElementById('pendingList');
-  const list=tickets.filter(t=>isEnlevement(t)&&!enlDate(t)&&matches(t));
+  const list=tickets.filter(t=>isEnlevement(t)&&!isCancelled(t)&&!enlDate(t)&&matches(t));
   el.innerHTML='';
   if(!list.length){el.innerHTML='<div class="pending-empty">Aucun ticket à vérifier.</div>';return;}
   list.forEach(t=>{const b=document.createElement('button');b.className='pending-ticket';b.type='button';b.textContent=eventText(t);b.addEventListener('click',()=>openTicket(t));el.appendChild(b);});
 }
 function grouped(){
   const g={};
-  tickets.filter(t=>isEnlevement(t)&&enlDate(t)&&matches(t)).forEach(t=>{const d=enlDate(t);(g[d]??=[]).push(t);});
+  tickets.filter(t=>isEnlevement(t)&&!isCancelled(t)&&enlDate(t)&&matches(t)).forEach(t=>{const d=enlDate(t);(g[d]??=[]).push(t);});
   return g;
 }
 function renderCalendar(){
@@ -222,6 +228,29 @@ document.getElementById('nextMonth').addEventListener('click',()=>{currentDate=n
 document.getElementById('todayBtn').addEventListener('click',()=>{currentDate=new Date();renderCalendar();});
 document.getElementById('refreshBtn').addEventListener('click',loadTickets);
 document.getElementById('searchInput').addEventListener('input',e=>{searchTerm=e.target.value.trim();renderCalendar();});
+document.getElementById('ticketCancelBtn').addEventListener('click',async()=>{
+  if(!openedTicket) return;
+  const label=`${openedTicket.id||''} - ${eventText(openedTicket)}`;
+  if(!confirm(`Annuler le ticket ${label} ?\n\nIl sera conservé dans la base mais ne sera plus affiché dans le planning réception.`)) return;
+  const btn=document.getElementById('ticketCancelBtn');
+  btn.disabled=true;
+  btn.textContent='Annulation...';
+  try{
+    const res=await fetch(`/api/tickets/${encodeURIComponent(openedTicket.id)}/annuler-enlevement`,{
+      method:'PATCH',
+      headers:{'Content-Type':'application/json'}
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok||!data.ok) throw new Error(data.error||"Impossible d'annuler le ticket");
+    closeTicket();
+    await loadTickets();
+  }catch(e){
+    alert(e.message||"Impossible d'annuler le ticket");
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Annuler le ticket';
+  }
+});
 document.getElementById('ticketModalClose').addEventListener('click',closeTicket);
 document.getElementById('ticketModalCloseBottom').addEventListener('click',closeTicket);
 document.getElementById('ticketModalBackdrop').addEventListener('click',e=>{if(e.target.id==='ticketModalBackdrop')closeTicket();});
