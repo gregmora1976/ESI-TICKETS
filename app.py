@@ -697,10 +697,11 @@ def _extract_enlevement_pdf_text(pdf_bytes):
         except Exception:
             pages_text.append("")
 
-    text = "\n".join(pages_text).strip()
+    native_text = "\n".join(pages_text).strip()
+    text = native_text
     ocr_used = False
 
-    if len(text) < 80:
+    if len(native_text) < 120:
         print("[ENLEVEMENT OCR] Texte natif insuffisant, lancement de l'OCR")
         try:
             from pdf2image import convert_from_bytes
@@ -714,7 +715,10 @@ def _extract_enlevement_pdf_text(pdf_bytes):
         with _RECEPTION_OCR_LOCK:
             try:
                 images = convert_from_bytes(
-                    pdf_bytes, dpi=200, grayscale=True, thread_count=1
+                    pdf_bytes,
+                    dpi=250,
+                    grayscale=True,
+                    thread_count=1
                 )
             except Exception as e:
                 raise RuntimeError(
@@ -723,129 +727,288 @@ def _extract_enlevement_pdf_text(pdf_bytes):
 
             ocr_pages = []
             total_pages = len(images)
+
             for index, image in enumerate(images, start=1):
                 try:
                     page_text = pytesseract.image_to_string(
-                        image, lang="fra", config="--psm 6"
+                        image,
+                        lang="fra",
+                        config="--psm 4"
                     )
+                    if len((page_text or "").strip()) < 120:
+                        page_text = pytesseract.image_to_string(
+                            image,
+                            lang="fra",
+                            config="--psm 11"
+                        )
                 except Exception as e:
                     raise RuntimeError("Echec OCR Tesseract.") from e
+
                 print(f"[ENLEVEMENT OCR] Page {index}/{total_pages} analysee")
                 ocr_pages.append(page_text or "")
                 try:
                     image.close()
                 except Exception:
                     pass
+
             images.clear()
             text = "\n".join(ocr_pages).strip()
+
         ocr_used = True
 
     if not text:
         raise ValueError("Aucun texte exploitable trouve dans le bon d'enlevement.")
 
+    print(f"[ENLEVEMENT OCR] {len(text)} caracteres exploitables")
     return text, len(reader.pages), ocr_used
 
 
 def _clean_ocr_line(value):
-    return re.sub(r"\s+", " ", _as_text(value)).strip(" \t|")
+    value = _as_text(value)
+    value = value.replace("\u00a0", " ")
+    value = value.replace("–", "-").replace("—", "-")
+    return re.sub(r"\s+", " ", value).strip(" \t|")
+
+
+def _enlevement_lines(text):
+    return [
+        _clean_ocr_line(line)
+        for line in _as_text(text).replace("\r", "").splitlines()
+        if _clean_ocr_line(line)
+    ]
+
+
+def _value_after_label(lines, labels, stop_labels=None):
+    stop_labels = stop_labels or []
+    all_labels = list(labels) + list(stop_labels)
+
+    for i, line in enumerate(lines):
+        for label in labels:
+            m = re.search(label, line, re.I)
+            if not m:
+                continue
+
+            rest = line[m.end():].strip(" :-|")
+            if rest:
+                cuts = []
+                for other in all_labels:
+                    mo = re.search(other, rest, re.I)
+                    if mo:
+                        cuts.append(mo.start())
+                if cuts:
+                    rest = rest[:min(cuts)].strip(" :-|")
+                if rest:
+                    return rest
+
+            if i + 1 < len(lines):
+                candidate = lines[i + 1].strip()
+                if candidate and not any(re.search(x, candidate, re.I) for x in all_labels):
+                    return candidate
+
+    return ""
+
+
+def _normalise_enlevement_date(value):
+    value = _clean_ocr_line(value)
+    m = re.search(r"\b([0-3]?\d)[/.\-]([01]?\d)[/.\-](\d{2}|\d{4})\b", value)
+    if not m:
+        return ""
+    day = int(m.group(1))
+    month = int(m.group(2))
+    year = int(m.group(3))
+    if year < 100:
+        year += 2000
+    try:
+        return datetime(year, month, day).strftime("%d/%m/%Y")
+    except ValueError:
+        return ""
 
 
 def _extract_enlevement_items(instructions_text):
     """Extrait les items/references de la zone Instructions avec deduplication."""
-    lines = [_clean_ocr_line(x) for x in instructions_text.splitlines()]
-    lines = [x for x in lines if x]
+    lines = _enlevement_lines(instructions_text)
     items = []
     seen_refs = set()
+
+    noise_words = {
+        "INSTRUCTIONS", "ENLEVEMENT", "ENLÈVEMENT", "STORAGE", "LAPLACE",
+        "CLIENT", "COORDINATEUR", "EXHIBITION", "ASSURE", "ASSURÉ",
+        "VALEUR", "CHANTIER", "SERVICE", "DATE"
+    }
 
     def previous_description(index):
         for j in range(index - 1, max(-1, index - 4), -1):
             candidate = lines[j]
-            if re.search(r"merci|rappel|storage|instruction|assur[eé]|valeur", candidate, re.I):
+            if re.search(r"merci|rappel|storage|instruction|assur[eé]|valeur|observation", candidate, re.I):
                 continue
-            if not re.search(r"\bREF\s*[:.-]", candidate, re.I):
+            if not re.search(r"\bREF(?:ERENCE)?\s*[:.-]", candidate, re.I):
                 return candidate
         return ""
 
     def add_item(reference, description="", dimensions=""):
         ref = re.sub(r"^[^A-Za-z0-9]+|[^A-Za-z0-9_-]+$", "", reference or "")
-        if len(ref) < 2 or ref.upper() in seen_refs:
+        ref = ref.replace(" ", "")
+        upper = ref.upper()
+
+        if len(ref) < 3:
             return
-        seen_refs.add(ref.upper())
+        if upper in noise_words:
+            return
+        if upper in seen_refs:
+            return
+        if not re.search(r"[A-Za-z]", ref) or not re.search(r"\d", ref):
+            return
+
+        seen_refs.add(upper)
+
         qty = ""
-        designation = description.strip()
+        designation = _clean_ocr_line(description)
         mqty = re.match(r"^\s*(\d+)\s*[xX]?\s+(.+)$", designation)
         if mqty:
             qty = mqty.group(1)
             designation = mqty.group(2).strip()
+
         items.append({
             "reference": ref,
             "quantite": qty,
             "designation": designation,
-            "dimensions": dimensions.strip(),
+            "dimensions": _clean_ocr_line(dimensions),
         })
 
-    # Cas explicite : REF : AN001
     for i, line in enumerate(lines):
-        m = re.search(r"\bREF(?:ERENCE)?\s*[:.=-]\s*([A-Za-z0-9][A-Za-z0-9_-]{1,})", line, re.I)
+        m = re.search(
+            r"\bREF(?:ERENCE)?\s*[:.=\-]?\s*([A-Za-z0-9][A-Za-z0-9_-]{2,})\b",
+            line,
+            re.I
+        )
         if not m:
             continue
+
         dims = ""
-        if i + 1 < len(lines):
-            md = re.search(r"(\d+(?:[.,]\d+)?\s*[xX×]\s*\d+(?:[.,]\d+)?(?:\s*[xX×]\s*\d+(?:[.,]\d+)?)?\s*(?:cm|mm|m)?)", lines[i + 1], re.I)
+        for candidate in [line] + lines[i + 1:i + 3]:
+            md = re.search(
+                r"(\d+(?:[.,]\d+)?\s*[xX×]\s*\d+(?:[.,]\d+)?"
+                r"(?:\s*[xX×]\s*\d+(?:[.,]\d+)?)?\s*(?:cm|mm|m)?)",
+                candidate,
+                re.I
+            )
             if md:
                 dims = md.group(1)
+                break
+
         add_item(m.group(1), previous_description(i), dims)
 
-    # Cas sans libelle REF : LDV_1047 // Dims. 114 x 71 cm
     for i, line in enumerate(lines):
-        m = re.match(r"^([A-Za-z][A-Za-z0-9]*[_-][A-Za-z0-9_-]+)\b", line)
-        if not m:
-            continue
-        dims = ""
-        md = re.search(r"(?:Dims?\.?\s*)?([0-9]+(?:[.,][0-9]+)?\s*[xX×]\s*[0-9]+(?:[.,][0-9]+)?(?:\s*[xX×]\s*[0-9]+(?:[.,][0-9]+)?)?\s*(?:cm|mm|m)?)", line, re.I)
-        if md:
-            dims = md.group(1)
-        add_item(m.group(1), previous_description(i), dims)
+        for m in re.finditer(
+            r"\b([A-Za-z]{1,12}[A-Za-z0-9]*[_-][A-Za-z0-9_-]*\d[A-Za-z0-9_-]*)\b",
+            line
+        ):
+            dims = ""
+            md = re.search(
+                r"(?:Dims?\.?\s*[:.-]?\s*)?"
+                r"([0-9]+(?:[.,][0-9]+)?\s*[xX×]\s*[0-9]+(?:[.,][0-9]+)?"
+                r"(?:\s*[xX×]\s*[0-9]+(?:[.,][0-9]+)?)?\s*(?:cm|mm|m)?)",
+                line,
+                re.I
+            )
+            if md:
+                dims = md.group(1)
+            add_item(m.group(1), previous_description(i), dims)
 
     return items
+
+
+def _extract_instructions_block(clean_text):
+    m = re.search(r"\bInstructions?\b", clean_text, re.I)
+    if not m:
+        return ""
+
+    tail = clean_text[m.end():]
+    stop = re.search(
+        r"\b(?:Assur[eé]\s+par|OBSERVATIONS?(?:\s+ou\s+R[EÉ]SERVES?)?|"
+        r"Valeur\s+assur[eé]e|Signature|Heure\s+d['’]?arriv[eé]e|Heure\s+de\s+d[eé]part)\b",
+        tail,
+        re.I
+    )
+    block = tail[:stop.start()] if stop else tail[:2500]
+    return block.strip()
 
 
 def _extract_enlevement_pdf(pdf_bytes):
     """Analyse un bon d'enlevement et retourne les donnees utiles au planning reception."""
     text, page_count, ocr_used = _extract_enlevement_pdf_text(pdf_bytes)
     clean_text = text.replace("\r", "")
+    lines = _enlevement_lines(clean_text)
 
-    def first_match(pattern, flags=re.I | re.M, group=1):
-        m = re.search(pattern, clean_text, flags)
-        return _clean_ocr_line(m.group(group)) if m else ""
+    label_numero = [
+        r"Num[eé]ro\s+de\s+r[eé]f[eé]r(?:ence)?",
+        r"N[°ºo]\s*de\s*r[eé]f[eé]rence",
+        r"R[eé]f[eé]rence\s+du\s+bon",
+    ]
+    common_stops = [
+        r"Client", r"Coordinateur", r"Exhibition", r"Programme\s+du\s+chantier",
+        r"Instructions?", r"Adresse", r"Service"
+    ]
 
-    numero_bon = first_match(
-        r"Num[eé]ro\s+de\s+r[eé]f[eé]r(?:ence)?\s*[:.-]?\s*([A-Za-z0-9_-]+)"
+    numero_bon = _value_after_label(lines, label_numero, common_stops)
+    if numero_bon:
+        m = re.search(r"\b([A-Za-z0-9][A-Za-z0-9_-]{3,})\b", numero_bon)
+        numero_bon = m.group(1) if m else ""
+
+    client = _value_after_label(
+        lines,
+        [r"\bClient\b"],
+        [r"Coordinateur", r"Exhibition", r"Programme\s+du\s+chantier", r"Adresse", r"Service"]
     )
-    client = first_match(r"^\s*Client\s*[:.-]?\s*([^\n]+)$")
-    coordinateur = first_match(r"Coordinateur\s*[:.-]?\s*([^\n]+)")
-    exhibition = first_match(r"Exhibition\s*[:.-]?\s*([^\n]+)")
+    coordinateur = _value_after_label(
+        lines,
+        [r"Coordinateur"],
+        [r"Client", r"Exhibition", r"Programme\s+du\s+chantier", r"Adresse", r"Service"]
+    )
+    exhibition = _value_after_label(
+        lines,
+        [r"Exhibition"],
+        [r"Client", r"Coordinateur", r"Programme\s+du\s+chantier", r"Adresse", r"Service"]
+    )
 
-    # Zone Programme du chantier : on prend en priorite la premiere date qui suit ce titre.
+    if client:
+        client = re.split(r"\bExhibition\b", client, maxsplit=1, flags=re.I)[0].strip(" :-|")
+    if coordinateur:
+        coordinateur = re.split(r"\b(?:Client|Exhibition)\b", coordinateur, maxsplit=1, flags=re.I)[0].strip(" :-|")
+    if exhibition:
+        exhibition = re.split(r"\b(?:Client|Coordinateur)\b", exhibition, maxsplit=1, flags=re.I)[0].strip(" :-|")
+
     date_enlevement = ""
-    programme = re.search(r"Programme\s+du\s+chantier(.*?)(?:Instructions|OBSERVATIONS|Assur[eé]\s+par)", clean_text, re.I | re.S)
-    if programme:
-        md = re.search(r"\b([0-3]?\d/[01]?\d/(?:\d{2}|\d{4}))\b", programme.group(1))
-        if md:
-            date_enlevement = md.group(1)
-
-    # Bloc Instructions uniquement, pour ne pas confondre signatures et references.
-    instructions = ""
-    mi = re.search(
-        r"Instructions\s*(.*?)(?:Assur[eé]\s+par|OBSERVATIONS\s+ou\s+RESERVES|OBSERVATIONS|Valeur\s+assur[eé]e)",
-        clean_text, re.I | re.S
+    programme_match = re.search(
+        r"Programme\s+du\s+chantier(.*?)(?:Instructions?|OBSERVATIONS?|Assur[eé]\s+par)",
+        clean_text,
+        re.I | re.S
     )
-    if mi:
-        instructions = mi.group(1).strip()
+    if programme_match:
+        date_enlevement = _normalise_enlevement_date(programme_match.group(1))
 
+    if not date_enlevement:
+        for i, line in enumerate(lines):
+            if re.search(r"\b(?:Enl[eè]vement|Service|Programme)\b", line, re.I):
+                window = " ".join(lines[i:i + 4])
+                date_enlevement = _normalise_enlevement_date(window)
+                if date_enlevement:
+                    break
+
+    if not date_enlevement:
+        dates = re.findall(r"\b[0-3]?\d[/.\-][01]?\d[/.\-](?:\d{2}|\d{4})\b", clean_text)
+        normalised = [_normalise_enlevement_date(x) for x in dates]
+        normalised = [x for x in normalised if x]
+        if normalised:
+            date_enlevement = normalised[0]
+
+    instructions = _extract_instructions_block(clean_text)
     items = _extract_enlevement_items(instructions)
 
-    return {
+    if not items:
+        items = _extract_enlevement_items(clean_text)
+
+    result = {
         "numero_bon": numero_bon,
         "client": client,
         "coordinateur": coordinateur,
@@ -858,6 +1021,15 @@ def _extract_enlevement_pdf(pdf_bytes):
         "ocr_used": ocr_used,
         "raw_text": clean_text,
     }
+
+    print(
+        "[ENLEVEMENT EXTRACTION] "
+        f"bon={result.get('numero_bon') or '-'} "
+        f"client={result.get('client') or '-'} "
+        f"date={result.get('date_enlevement') or '-'} "
+        f"refs={result.get('references') or []}"
+    )
+    return result
 
 
 def _analyse_enlevement_ticket_background(ticket_id, pdf_bytes):
@@ -877,24 +1049,21 @@ def _analyse_enlevement_ticket_background(ticket_id, pdf_bytes):
             "analysed_at": datetime.now().isoformat(),
         }
 
-        # Recopie quelques champs dans le modele historique pour faciliter les listes existantes.
         if parsed.get("client"):
             ticket["dossier"] = parsed["client"]
         if parsed.get("numero_bon"):
             ticket["ref"] = parsed["numero_bon"]
+        if parsed.get("coordinateur"):
+            ticket["chargeProjet"] = parsed["coordinateur"]
         if parsed.get("exhibition"):
             ticket["expo"] = parsed["exhibition"]
             ticket["objet"] = parsed["exhibition"]
         if parsed.get("date_enlevement"):
             try:
-                dt = datetime.strptime(parsed["date_enlevement"], "%d/%m/%y")
+                dt = datetime.strptime(parsed["date_enlevement"], "%d/%m/%Y")
                 ticket["dateRdv"] = dt.strftime("%Y-%m-%d")
             except ValueError:
-                try:
-                    dt = datetime.strptime(parsed["date_enlevement"], "%d/%m/%Y")
-                    ticket["dateRdv"] = dt.strftime("%Y-%m-%d")
-                except ValueError:
-                    pass
+                pass
 
         ticket["updatedAt"] = datetime.now().isoformat()
         save_ticket(ticket)
