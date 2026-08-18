@@ -716,7 +716,7 @@ def _extract_enlevement_pdf_text(pdf_bytes):
             try:
                 images = convert_from_bytes(
                     pdf_bytes,
-                    dpi=250,
+                    dpi=300,
                     grayscale=True,
                     thread_count=1
                 )
@@ -730,11 +730,13 @@ def _extract_enlevement_pdf_text(pdf_bytes):
 
             for index, image in enumerate(images, start=1):
                 try:
+                    # PSM 4 respecte mieux les blocs/colonnes du bon interne.
                     page_text = pytesseract.image_to_string(
                         image,
                         lang="fra",
                         config="--psm 4"
                     )
+                    # Secours pour les scans atypiques.
                     if len((page_text or "").strip()) < 120:
                         page_text = pytesseract.image_to_string(
                             image,
@@ -767,6 +769,7 @@ def _clean_ocr_line(value):
     value = _as_text(value)
     value = value.replace("\u00a0", " ")
     value = value.replace("–", "-").replace("—", "-")
+    value = value.replace("：", ":")
     return re.sub(r"\s+", " ", value).strip(" \t|")
 
 
@@ -793,17 +796,18 @@ def _value_after_label(lines, labels, stop_labels=None):
                 cuts = []
                 for other in all_labels:
                     mo = re.search(other, rest, re.I)
-                    if mo:
+                    if mo and mo.start() > 0:
                         cuts.append(mo.start())
                 if cuts:
                     rest = rest[:min(cuts)].strip(" :-|")
                 if rest:
                     return rest
 
-            if i + 1 < len(lines):
-                candidate = lines[i + 1].strip()
-                if candidate and not any(re.search(x, candidate, re.I) for x in all_labels):
-                    return candidate
+            for offset in (1, 2):
+                if i + offset < len(lines):
+                    candidate = lines[i + offset].strip()
+                    if candidate and not any(re.search(x, candidate, re.I) for x in all_labels):
+                        return candidate
 
     return ""
 
@@ -830,36 +834,25 @@ def _extract_enlevement_items(instructions_text):
     items = []
     seen_refs = set()
 
-    noise_words = {
-        "INSTRUCTIONS", "ENLEVEMENT", "ENLÈVEMENT", "STORAGE", "LAPLACE",
-        "CLIENT", "COORDINATEUR", "EXHIBITION", "ASSURE", "ASSURÉ",
-        "VALEUR", "CHANTIER", "SERVICE", "DATE"
-    }
-
     def previous_description(index):
         for j in range(index - 1, max(-1, index - 4), -1):
             candidate = lines[j]
-            if re.search(r"merci|rappel|storage|instruction|assur[eé]|valeur|observation", candidate, re.I):
+            if re.search(r"merci|rappel|storage|instruction|assur[eé]|valeur|observation|service", candidate, re.I):
                 continue
-            if not re.search(r"\bREF(?:ERENCE)?\s*[:.-]", candidate, re.I):
-                return candidate
+            return candidate
         return ""
 
     def add_item(reference, description="", dimensions=""):
         ref = re.sub(r"^[^A-Za-z0-9]+|[^A-Za-z0-9_-]+$", "", reference or "")
         ref = ref.replace(" ", "")
-        upper = ref.upper()
-
         if len(ref) < 3:
-            return
-        if upper in noise_words:
-            return
-        if upper in seen_refs:
             return
         if not re.search(r"[A-Za-z]", ref) or not re.search(r"\d", ref):
             return
-
-        seen_refs.add(upper)
+        key = ref.upper()
+        if key in seen_refs:
+            return
+        seen_refs.add(key)
 
         qty = ""
         designation = _clean_ocr_line(description)
@@ -875,29 +868,28 @@ def _extract_enlevement_items(instructions_text):
             "dimensions": _clean_ocr_line(dimensions),
         })
 
+    # REF : AN001 / REF AN001 / REFERENCE AN001
     for i, line in enumerate(lines):
         m = re.search(
             r"\bREF(?:ERENCE)?\s*[:.=\-]?\s*([A-Za-z0-9][A-Za-z0-9_-]{2,})\b",
             line,
             re.I
         )
-        if not m:
-            continue
+        if m:
+            dims = ""
+            for candidate in [line] + lines[i + 1:i + 3]:
+                md = re.search(
+                    r"(\d+(?:[.,]\d+)?\s*[xX×]\s*\d+(?:[.,]\d+)?"
+                    r"(?:\s*[xX×]\s*\d+(?:[.,]\d+)?)?\s*(?:cm|mm|m)?)",
+                    candidate,
+                    re.I
+                )
+                if md:
+                    dims = md.group(1)
+                    break
+            add_item(m.group(1), previous_description(i), dims)
 
-        dims = ""
-        for candidate in [line] + lines[i + 1:i + 3]:
-            md = re.search(
-                r"(\d+(?:[.,]\d+)?\s*[xX×]\s*\d+(?:[.,]\d+)?"
-                r"(?:\s*[xX×]\s*\d+(?:[.,]\d+)?)?\s*(?:cm|mm|m)?)",
-                candidate,
-                re.I
-            )
-            if md:
-                dims = md.group(1)
-                break
-
-        add_item(m.group(1), previous_description(i), dims)
-
+    # Références de type LDV_1047 n'importe où dans la ligne.
     for i, line in enumerate(lines):
         for m in re.finditer(
             r"\b([A-Za-z]{1,12}[A-Za-z0-9]*[_-][A-Za-z0-9_-]*\d[A-Za-z0-9_-]*)\b",
@@ -919,7 +911,8 @@ def _extract_enlevement_items(instructions_text):
 
 
 def _extract_instructions_block(clean_text):
-    m = re.search(r"\bInstructions?\b", clean_text, re.I)
+    """Isole la zone Instructions, y compris si le titre est légèrement déformé par l'OCR."""
+    m = re.search(r"\bInstr(?:uctions?|uctions|uction)\b", clean_text, re.I)
     if not m:
         return ""
 
@@ -930,8 +923,69 @@ def _extract_instructions_block(clean_text):
         tail,
         re.I
     )
-    block = tail[:stop.start()] if stop else tail[:2500]
+    block = tail[:stop.start()] if stop else tail[:3000]
     return block.strip()
+
+
+def _extract_contact_blocks(lines):
+    """
+    Tente d'extraire les blocs départ/destination sans supposer une mise en page parfaite.
+    """
+    result = {
+        "adresse_depart": "",
+        "contact_depart": "",
+        "telephone_depart": "",
+        "adresse_destination": "",
+        "contact_destination": "",
+        "telephone_destination": "",
+    }
+
+    def scan_block(start_pat, end_pats):
+        start_idx = None
+        for i, line in enumerate(lines):
+            if re.search(start_pat, line, re.I):
+                start_idx = i
+                break
+        if start_idx is None:
+            return []
+        block = []
+        for j in range(start_idx, min(len(lines), start_idx + 12)):
+            line = lines[j]
+            if j > start_idx and any(re.search(p, line, re.I) for p in end_pats):
+                break
+            block.append(line)
+        return block
+
+    depart = scan_block(
+        r"(?:Adresse\s+de\s+d[eé]part|D[eé]part|Enl[eè]vement\s+chez)",
+        [r"Destination", r"Adresse\s+de\s+destination", r"Programme\s+du\s+chantier", r"Instructions?"]
+    )
+    dest = scan_block(
+        r"(?:Adresse\s+de\s+destination|Destination)",
+        [r"Programme\s+du\s+chantier", r"Instructions?", r"Service"]
+    )
+
+    def parse(block):
+        address_parts, contact, phone = [], "", ""
+        for line in block[1:]:
+            if re.search(r"^(?:Contact|T[eé]l(?:[eé]phone)?|Phone)\b", line, re.I):
+                if re.search(r"^(?:Contact)\b", line, re.I):
+                    contact = re.sub(r"^(?:Contact)\s*[:.-]?\s*", "", line, flags=re.I)
+                else:
+                    phone = re.sub(r"^(?:T[eé]l(?:[eé]phone)?|Phone)\s*[:.-]?\s*", "", line, flags=re.I)
+                continue
+            if re.search(r"(?:\+33|0\d(?:[\s.\-]?\d{2}){4})", line) and not phone:
+                phone = line
+                continue
+            address_parts.append(line)
+        return " | ".join(address_parts[:4]), contact, phone
+
+    if depart:
+        result["adresse_depart"], result["contact_depart"], result["telephone_depart"] = parse(depart)
+    if dest:
+        result["adresse_destination"], result["contact_destination"], result["telephone_destination"] = parse(dest)
+
+    return result
 
 
 def _extract_enlevement_pdf(pdf_bytes):
@@ -979,22 +1033,26 @@ def _extract_enlevement_pdf(pdf_bytes):
         exhibition = re.split(r"\b(?:Client|Coordinateur)\b", exhibition, maxsplit=1, flags=re.I)[0].strip(" :-|")
 
     date_enlevement = ""
+
+    # 1) Zone Programme du chantier.
     programme_match = re.search(
-        r"Programme\s+du\s+chantier(.*?)(?:Instructions?|OBSERVATIONS?|Assur[eé]\s+par)",
+        r"Programme\s+du\s+chantier(.*?)(?:Instr(?:uctions?|uction)|OBSERVATIONS?|Assur[eé]\s+par)",
         clean_text,
         re.I | re.S
     )
     if programme_match:
         date_enlevement = _normalise_enlevement_date(programme_match.group(1))
 
+    # 2) Ligne contenant Enlèvement / Service.
     if not date_enlevement:
         for i, line in enumerate(lines):
             if re.search(r"\b(?:Enl[eè]vement|Service|Programme)\b", line, re.I):
-                window = " ".join(lines[i:i + 4])
+                window = " ".join(lines[max(0, i - 1):i + 5])
                 date_enlevement = _normalise_enlevement_date(window)
                 if date_enlevement:
                     break
 
+    # 3) Dernier secours : première date plausible.
     if not date_enlevement:
         dates = re.findall(r"\b[0-3]?\d[/.\-][01]?\d[/.\-](?:\d{2}|\d{4})\b", clean_text)
         normalised = [_normalise_enlevement_date(x) for x in dates]
@@ -1004,9 +1062,16 @@ def _extract_enlevement_pdf(pdf_bytes):
 
     instructions = _extract_instructions_block(clean_text)
     items = _extract_enlevement_items(instructions)
-
     if not items:
         items = _extract_enlevement_items(clean_text)
+
+    contact_data = _extract_contact_blocks(lines)
+
+    notes = _value_after_label(
+        lines,
+        [r"\bNotes?\b"],
+        [r"Instructions?", r"Programme\s+du\s+chantier", r"Service", r"Assur[eé]\s+par"]
+    )
 
     result = {
         "numero_bon": numero_bon,
@@ -1014,12 +1079,15 @@ def _extract_enlevement_pdf(pdf_bytes):
         "coordinateur": coordinateur,
         "exhibition": exhibition,
         "date_enlevement": date_enlevement,
+        "heure_enlevement": "",
+        "notes": notes,
         "instructions": instructions,
         "items": items,
         "references": [x.get("reference") for x in items if x.get("reference")],
         "page_count": page_count,
         "ocr_used": ocr_used,
         "raw_text": clean_text,
+        **contact_data,
     }
 
     print(
@@ -1979,6 +2047,23 @@ def api_update_status(ticket_id):
     # L'envoi automatique SMTP est volontairement désactivé.
     # La notification se prépare maintenant via Outlook Web avec le bouton "Envoyer Notif".
     return jsonify({'ok': True})
+
+
+@app.route('/api/tickets/<ticket_id>/annuler-enlevement', methods=['PATCH'])
+def api_annuler_enlevement(ticket_id):
+    """Annule une demande d'enlevement sans la supprimer de l'historique."""
+    ticket = load_ticket(ticket_id)
+    if not ticket:
+        return jsonify({'ok': False, 'error': 'Ticket introuvable'}), 404
+
+    module_normalise = _as_text(ticket.get('module')).replace("’", "'").strip()
+    if module_normalise not in ("Demande d'enlèvement", "Demande d'enlevement") and not _as_text(ticket_id).startswith('ENL-'):
+        return jsonify({'ok': False, 'error': "Ce ticket n'est pas une demande d'enlèvement"}), 400
+
+    ticket['status'] = 'Annulé'
+    ticket['updatedAt'] = datetime.now().isoformat()
+    save_ticket(ticket)
+    return jsonify({'ok': True, 'status': 'Annulé'})
 
 
 @app.route('/api/tickets/<ticket_id>/notification-url')
