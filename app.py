@@ -1165,6 +1165,227 @@ def _extract_contact_blocks(clean_text):
 
 
 
+
+def _spatial_group_lines(words, y_tolerance=14):
+    """Regroupe des mots OCR par lignes en conservant l'ordre horizontal."""
+    if not words:
+        return []
+    words = sorted(words, key=lambda w: (w["cy"], w["left"]))
+    lines = []
+    for word in words:
+        target = None
+        for line in lines:
+            if abs(word["cy"] - line["cy"]) <= y_tolerance:
+                target = line
+                break
+        if target is None:
+            target = {"cy": word["cy"], "words": []}
+            lines.append(target)
+        target["words"].append(word)
+        target["cy"] = sum(w["cy"] for w in target["words"]) / len(target["words"])
+
+    result = []
+    for line in sorted(lines, key=lambda x: x["cy"]):
+        ordered = sorted(line["words"], key=lambda w: w["left"])
+        text = _clean_ocr_line(" ".join(w["text"] for w in ordered))
+        if text:
+            result.append({"cy": line["cy"], "text": text, "words": ordered})
+    return result
+
+
+def _extract_enlevement_spatial(pdf_bytes):
+    """
+    Lecture spatiale de la première page du bon d'enlèvement.
+
+    Contrairement à la lecture texte classique, cette méthode utilise les vraies
+    coordonnées OCR des mots. Elle sert uniquement aux zones dont la mise en page
+    est en colonnes : Adresses (Depuis / À) et Programme du chantier.
+    """
+    result = {
+        "adresse_depart": "",
+        "contact_depart": "",
+        "adresse_destination": "",
+        "contact_destination": "",
+        "date_enlevement": "",
+        "notes": "",
+    }
+
+    try:
+        from pdf2image import convert_from_bytes
+        import pytesseract
+    except Exception as e:
+        print(f"[ENLEVEMENT SPATIAL] OCR spatial indisponible: {e}")
+        return result
+
+    try:
+        # 200 dpi suffit pour localiser correctement les colonnes et limite la charge mémoire.
+        images = convert_from_bytes(
+            pdf_bytes,
+            dpi=200,
+            grayscale=True,
+            first_page=1,
+            last_page=1,
+            thread_count=1,
+        )
+        if not images:
+            return result
+        image = images[0]
+        data = pytesseract.image_to_data(
+            image,
+            lang="fra",
+            config="--psm 6",
+            output_type=pytesseract.Output.DICT,
+        )
+    except Exception as e:
+        print(f"[ENLEVEMENT SPATIAL] Echec lecture spatiale: {e}")
+        return result
+    finally:
+        try:
+            for img in locals().get('images', []) or []:
+                img.close()
+        except Exception:
+            pass
+
+    words = []
+    count = len(data.get("text", []))
+    for i in range(count):
+        text = _clean_ocr_line(data["text"][i])
+        if not text:
+            continue
+        try:
+            conf = float(data.get("conf", [0] * count)[i])
+        except Exception:
+            conf = 0
+        if conf < 20:
+            continue
+        left = int(data["left"][i])
+        top = int(data["top"][i])
+        width = int(data["width"][i])
+        height = int(data["height"][i])
+        words.append({
+            "text": text,
+            "left": left,
+            "top": top,
+            "right": left + width,
+            "bottom": top + height,
+            "cx": left + width / 2,
+            "cy": top + height / 2,
+        })
+
+    if not words:
+        return result
+
+    page_width = max(w["right"] for w in words)
+    page_mid = page_width * 0.50
+
+    def find_word(pattern, y_min=0, y_max=10**9, x_min=0, x_max=10**9):
+        for w in sorted(words, key=lambda z: (z["top"], z["left"])):
+            if not (y_min <= w["cy"] <= y_max and x_min <= w["cx"] <= x_max):
+                continue
+            if re.search(pattern, w["text"], re.I):
+                return w
+        return None
+
+    # ------------------------------------------------------------------
+    # Zone Adresses : sépare physiquement la moitié gauche (Depuis) et droite (À).
+    # ------------------------------------------------------------------
+    depuis = find_word(r"^Depuis:?$")
+    programme = find_word(r"^Programme$", y_min=(depuis["cy"] if depuis else 0))
+    if depuis and programme:
+        y_start = depuis["bottom"] + 8
+        y_end = programme["top"] - 10
+        zone_words = [w for w in words if y_start <= w["cy"] <= y_end]
+
+        left_lines = _spatial_group_lines([w for w in zone_words if w["cx"] < page_mid])
+        right_lines = _spatial_group_lines([w for w in zone_words if w["cx"] >= page_mid])
+
+        phone_re = re.compile(r"^(?:\+33|0\d)(?:[\s.\-]?\d{2}){4}$")
+        email_re = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", re.I)
+
+        def clean_address_lines(lines, side):
+            cleaned = []
+            for line in lines:
+                txt = _clean_ocr_line(line["text"])
+                compact = re.sub(r"\s+", "", txt)
+                if not txt:
+                    continue
+                if re.search(r"\bOuverture\s+[aà]\b", txt, re.I):
+                    continue
+                if phone_re.match(compact):
+                    continue
+                if email_re.search(txt):
+                    continue
+                # Écarte les libellés résiduels.
+                if re.fullmatch(r"(?:Depuis|A|À)\s*:?", txt, re.I):
+                    continue
+                cleaned.append(txt)
+            return cleaned
+
+        left_clean = clean_address_lines(left_lines, "left")
+        right_clean = clean_address_lines(right_lines, "right")
+
+        if left_clean:
+            result["contact_depart"] = left_clean[0]
+            result["adresse_depart"] = ", ".join(left_clean[1:])
+        if right_clean:
+            result["contact_destination"] = right_clean[0]
+            result["adresse_destination"] = ", ".join(right_clean[1:])
+
+    # ------------------------------------------------------------------
+    # Programme du chantier : valeur située SOUS le libellé.
+    # ------------------------------------------------------------------
+    programme = programme or find_word(r"^Programme$")
+    instructions = find_word(r"^Instructions?$", y_min=(programme["cy"] if programme else 0))
+    if programme and instructions:
+        y_top = programme["bottom"] + 8
+        y_bottom = instructions["top"] - 8
+        prog_words = [w for w in words if y_top <= w["cy"] <= y_bottom]
+
+        # Repère les colonnes à partir des libellés Date / Heure / Service / Notes / Assigné.
+        labels = {}
+        for name, pattern in [
+            ("date", r"^Date:?$"),
+            ("heure", r"^Heure:?$"),
+            ("service", r"^Service:?$"),
+            ("notes", r"^Notes?:?$"),
+            ("assigne", r"^Assign[eé]$"),
+        ]:
+            matches = [w for w in prog_words if re.search(pattern, w["text"], re.I)]
+            if matches:
+                labels[name] = min(matches, key=lambda w: w["top"])
+
+        ordered = sorted((w["left"], name, w) for name, w in labels.items())
+        bounds = {}
+        for idx, (left, name, word) in enumerate(ordered):
+            x0 = 0 if idx == 0 else (ordered[idx - 1][0] + left) / 2
+            x1 = page_width if idx + 1 == len(ordered) else (left + ordered[idx + 1][0]) / 2
+            bounds[name] = (x0, x1, word["bottom"] + 4)
+
+        if "date" in bounds:
+            x0, x1, y0 = bounds["date"]
+            vals = [w for w in prog_words if x0 <= w["cx"] < x1 and w["cy"] >= y0]
+            date_text = " ".join(x["text"] for x in sorted(vals, key=lambda z: (z["top"], z["left"])))
+            result["date_enlevement"] = _normalise_enlevement_date(date_text)
+
+        if "notes" in bounds:
+            x0, x1, y0 = bounds["notes"]
+            vals = [w for w in prog_words if x0 <= w["cx"] < x1 and w["cy"] >= y0]
+            note_lines = _spatial_group_lines(vals)
+            if note_lines:
+                note = note_lines[0]["text"]
+                # Sur certains scans, le trait oblique sous la note transforme SS# en SSH#.
+                note = re.sub(r"\bSSH#(\d+)\b", r"SS#\1", note, flags=re.I)
+                result["notes"] = _clean_ocr_line(note)
+
+    print(
+        "[ENLEVEMENT SPATIAL] "
+        f"depart={result.get('contact_depart') or '-'} / {result.get('adresse_depart') or '-'} | "
+        f"destination={result.get('contact_destination') or '-'} / {result.get('adresse_destination') or '-'} | "
+        f"date={result.get('date_enlevement') or '-'} | notes={result.get('notes') or '-'}"
+    )
+    return result
+
+
 def _extract_enlevement_pdf(pdf_bytes):
     """Analyse un bon d'enlevement et retourne les donnees utiles au planning reception."""
     text, page_count, ocr_used = _extract_enlevement_pdf_text(pdf_bytes)
@@ -1217,14 +1438,22 @@ def _extract_enlevement_pdf(pdf_bytes):
         exhibition = re.split(r"\b(?:Client|Coordinateur)\b", exhibition, maxsplit=1, flags=re.I)[0].strip(" :-|")
 
     programme = _extract_programme_chantier(clean_text)
-    date_enlevement = programme.get("date_enlevement", "")
+    spatial = _extract_enlevement_spatial(pdf_bytes)
+    date_enlevement = spatial.get("date_enlevement") or programme.get("date_enlevement", "")
 
     instructions = _extract_instructions_block(clean_text)
     # Les articles doivent provenir uniquement de la zone Instructions.
     items = _extract_enlevement_items(instructions) if instructions else []
 
     contact_data = _extract_contact_blocks(clean_text)
-    notes = programme.get("notes", "")
+    # Les coordonnées OCR réelles sont prioritaires pour les deux colonnes d'adresses.
+    for key in ("adresse_depart", "contact_depart", "adresse_destination", "contact_destination"):
+        if spatial.get(key):
+            contact_data[key] = spatial[key]
+    # Ces informations ne sont pas utilisées dans la fiche réception.
+    contact_data.pop("telephone_depart", None)
+    contact_data.pop("telephone_destination", None)
+    notes = spatial.get("notes") or programme.get("notes", "")
 
     display_name = " - ".join(
         x for x in [_clean_ocr_line(client), _clean_ocr_line(numero_bon)] if x
@@ -1237,7 +1466,6 @@ def _extract_enlevement_pdf(pdf_bytes):
         "coordinateur": coordinateur,
         "exhibition": exhibition,
         "date_enlevement": date_enlevement,
-        "heure_enlevement": programme.get("heure_enlevement", ""),
         "service": programme.get("service", ""),
         "assigne_a": programme.get("assigne_a", ""),
         "vehicules": programme.get("vehicules", ""),
