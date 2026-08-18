@@ -356,7 +356,12 @@ function openDeliveryModal(){
   if(bons.length){
     html+=`<div class="section"><div class="section-title">Bons déjà générés</div>`;
     bons.slice().reverse().forEach(b=>{
-      html+=`<div style="margin:6px 0"><strong>${esc(b.reference||'')}</strong> — ${esc(b.date_reception||'')} — ${esc(b.receptionne_par||'')}</div>`;
+      const filename=b.filename||((b.reference||'')+'.pdf');
+      const href=`/api/tickets/${encodeURIComponent(openedTicket.id)}/download-sheet/${encodeURIComponent(filename)}`;
+      html+=`<div style="margin:6px 0">
+        <a class="file-link" target="_blank" href="${href}"><strong>${esc(b.reference||filename)}</strong></a>
+        — ${esc(b.date_reception||'')} — ${esc(b.receptionne_par||'')} — ${esc(b.lieu_stockage||'')}
+      </div>`;
     });
     html+=`</div>`;
   }
