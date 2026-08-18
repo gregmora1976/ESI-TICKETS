@@ -841,87 +841,232 @@ def _normalise_enlevement_date(value):
         return ""
 
 
+
 def _extract_enlevement_items(instructions_text):
-    """Extrait les items/references de la zone Instructions avec deduplication."""
+    """
+    Extrait les articles de la zone Instructions avec une logique générique.
+
+    Objectif :
+      - ne plus dépendre d'un format précis de référence ;
+      - accepter LDV_1047, ABC-123, 750012MW02, 960130M 04, etc. ;
+      - utiliser le reste de la ligne comme désignation ;
+      - éviter les faux positifs (dates, téléphones, dimensions, phrases générales).
+    """
     lines = _enlevement_lines(instructions_text)
     items = []
     seen_refs = set()
 
-    def previous_description(index):
-        for j in range(index - 1, max(-1, index - 4), -1):
-            candidate = lines[j]
-            if re.search(r"merci|rappel|storage|instruction|assur[eé]|valeur|observation|service", candidate, re.I):
-                continue
-            return candidate
-        return ""
+    noise_patterns = [
+        r"^\s*$",
+        r"^\s*(?:merci|rappel|vous\s+pouvez|merci\s+de|storage|instruction|assur[eé]|valeur|observation|service)\b",
+        r"^\s*(?:date|heure|notes?|assign[eé]|v[eé]hicules?)\s*:?\s*$",
+    ]
 
-    def add_item(reference, description="", dimensions=""):
-        ref = re.sub(r"^[^A-Za-z0-9]+|[^A-Za-z0-9_-]+$", "", reference or "")
+    def is_noise(line):
+        return any(re.search(p, line, re.I) for p in noise_patterns)
+
+    def is_date_like(value):
+        return bool(re.fullmatch(r"[0-3]?\d[/.\-][01]?\d[/.\-](?:\d{2}|\d{4})", value.strip()))
+
+    def is_phone_like(value):
+        compact = re.sub(r"[\s.\-()]+", "", value)
+        return bool(re.fullmatch(r"(?:\+33|0)\d{9,10}", compact))
+
+    def is_dimension_like(value):
+        return bool(re.fullmatch(
+            r"\d+(?:[.,]\d+)?\s*[xX×]\s*\d+(?:[.,]\d+)?"
+            r"(?:\s*[xX×]\s*\d+(?:[.,]\d+)?)?\s*(?:cm|mm|m)?",
+            value.strip(),
+            re.I
+        ))
+
+    def normalise_reference(ref):
+        ref = _clean_ocr_line(ref).strip(" :;,.|")
+        ref = re.sub(r"\s+", " ", ref)
+
+        # Cas fréquent OCR : "960130M 04" -> "960130M04".
+        # On fusionne uniquement si les deux blocs ressemblent à une même référence.
+        parts = ref.split()
+        if len(parts) == 2:
+            a, b = parts
+            if (
+                re.search(r"[A-Za-z]", a)
+                and re.search(r"\d", a)
+                and re.fullmatch(r"[A-Za-z0-9]{1,4}", b)
+            ):
+                ref = a + b
+
+        # Les références métier ne doivent pas garder les espaces internes.
         ref = ref.replace(" ", "")
+        ref = re.sub(r"^[^A-Za-z0-9]+|[^A-Za-z0-9_-]+$", "", ref)
+        return ref
+
+    def extract_dimensions(line):
+        m = re.search(
+            r"(?:Dims?\.?\s*[:.-]?\s*)?"
+            r"(\d+(?:[.,]\d+)?\s*[xX×]\s*\d+(?:[.,]\d+)?"
+            r"(?:\s*[xX×]\s*\d+(?:[.,]\d+)?)?\s*(?:cm|mm|m)?)",
+            line,
+            re.I
+        )
+        return _clean_ocr_line(m.group(1)) if m else ""
+
+    def add_item(reference, description="", dimensions="", qty=""):
+        ref = normalise_reference(reference)
         if len(ref) < 3:
             return
-        if not re.search(r"[A-Za-z]", ref) or not re.search(r"\d", ref):
+        if is_date_like(ref) or is_phone_like(ref) or is_dimension_like(ref):
             return
+
+        # Une vraie référence doit contenir au moins une lettre et un chiffre,
+        # ou bien comporter un séparateur structurant (_ / -).
+        if not (
+            (re.search(r"[A-Za-z]", ref) and re.search(r"\d", ref))
+            or "_" in ref
+            or "-" in ref
+        ):
+            return
+
         key = ref.upper()
         if key in seen_refs:
             return
         seen_refs.add(key)
 
-        qty = ""
-        designation = _clean_ocr_line(description)
-        mqty = re.match(r"^\s*(\d+)\s*[xX]?\s+(.+)$", designation)
-        if mqty:
-            qty = mqty.group(1)
-            designation = mqty.group(2).strip()
+        designation = _clean_ocr_line(description).strip(" -:;,.")
+        quantity = _clean_ocr_line(qty)
+
+        # Si aucune quantité n'est donnée explicitement, on considère 1 article.
+        if not quantity:
+            quantity = "1"
 
         items.append({
             "reference": ref,
-            "quantite": qty,
+            "quantite": quantity,
             "designation": designation,
             "dimensions": _clean_ocr_line(dimensions),
         })
 
-    # REF : AN001 / REF AN001 / REFERENCE AN001
-    for i, line in enumerate(lines):
+    # 1) Cas explicite REF / REFERENCE.
+    for line in lines:
         m = re.search(
-            r"\bREF(?:ERENCE)?\s*[:.=\-]?\s*([A-Za-z0-9][A-Za-z0-9_-]{2,})\b",
+            r"\bREF(?:ERENCE)?\s*[:.=\-]?\s*([A-Za-z0-9][A-Za-z0-9 _/-]{2,30})",
             line,
             re.I
         )
-        if m:
-            dims = ""
-            for candidate in [line] + lines[i + 1:i + 3]:
-                md = re.search(
-                    r"(\d+(?:[.,]\d+)?\s*[xX×]\s*\d+(?:[.,]\d+)?"
-                    r"(?:\s*[xX×]\s*\d+(?:[.,]\d+)?)?\s*(?:cm|mm|m)?)",
-                    candidate,
-                    re.I
-                )
-                if md:
-                    dims = md.group(1)
-                    break
-            add_item(m.group(1), previous_description(i), dims)
+        if not m:
+            continue
 
-    # Références de type LDV_1047 n'importe où dans la ligne.
-    for i, line in enumerate(lines):
+        raw = _clean_ocr_line(m.group(1))
+        # Coupe la référence au premier gros séparateur ou début clair de désignation.
+        tokens = raw.split()
+        ref_tokens = []
+        for token in tokens[:3]:
+            if re.fullmatch(r"[A-Za-z0-9_-]+", token):
+                ref_tokens.append(token)
+            else:
+                break
+        raw_ref = " ".join(ref_tokens) if ref_tokens else raw
+
+        designation = line[m.end():].strip(" :-|")
+        add_item(raw_ref, designation, extract_dimensions(line))
+
+    # 2) Références structurées avec _ ou - n'importe où dans la ligne.
+    for line in lines:
+        if is_noise(line):
+            continue
         for m in re.finditer(
-            r"\b([A-Za-z]{1,12}[A-Za-z0-9]*[_-][A-Za-z0-9_-]*\d[A-Za-z0-9_-]*)\b",
+            r"\b([A-Za-z0-9]{1,20}[_-][A-Za-z0-9_-]{2,30})\b",
             line
         ):
-            dims = ""
-            md = re.search(
-                r"(?:Dims?\.?\s*[:.-]?\s*)?"
-                r"([0-9]+(?:[.,][0-9]+)?\s*[xX×]\s*[0-9]+(?:[.,][0-9]+)?"
-                r"(?:\s*[xX×]\s*[0-9]+(?:[.,][0-9]+)?)?\s*(?:cm|mm|m)?)",
-                line,
-                re.I
-            )
-            if md:
-                dims = md.group(1)
-            add_item(m.group(1), previous_description(i), dims)
+            ref = m.group(1)
+            designation = (line[:m.start()] + " " + line[m.end():]).strip(" :-|")
+            # Si la ligne commence par la référence, la suite est la désignation.
+            if not line[:m.start()].strip():
+                designation = line[m.end():].strip(" :-|")
+            add_item(ref, designation, extract_dimensions(line))
 
+    # 3) Détection générique du début de ligne.
+    #    On examine les 1 à 3 premiers blocs et on choisit le meilleur candidat.
+    for line in lines:
+        if is_noise(line):
+            continue
+
+        # Retire une éventuelle quantité en début de ligne : "1 750012MW02 ..."
+        qty = ""
+        work = line
+        mq = re.match(r"^\s*(\d{1,3})\s+[xX]?\s+(.+)$", work)
+        if mq:
+            qty = mq.group(1)
+            work = mq.group(2).strip()
+
+        tokens = work.split()
+        if len(tokens) < 2:
+            continue
+
+        candidates = []
+
+        # Candidat 1 token : 750012MW02, LDV_1047, ABC-123
+        candidates.append((tokens[0], 1))
+
+        # Candidat 2 tokens : 960130M 04
+        if len(tokens) >= 3:
+            candidates.append((tokens[0] + " " + tokens[1], 2))
+
+        # Candidat 3 tokens, très rare mais toléré.
+        if len(tokens) >= 4:
+            candidates.append((tokens[0] + " " + tokens[1] + " " + tokens[2], 3))
+
+        best = None
+        best_score = -999
+
+        for cand, used in candidates:
+            ref = normalise_reference(cand)
+            if len(ref) < 4 or len(ref) > 30:
+                continue
+            if is_date_like(ref) or is_phone_like(ref) or is_dimension_like(ref):
+                continue
+
+            score = 0
+
+            has_letter = bool(re.search(r"[A-Za-z]", ref))
+            has_digit = bool(re.search(r"\d", ref))
+
+            if has_letter and has_digit:
+                score += 5
+            if "_" in ref or "-" in ref:
+                score += 3
+            if 5 <= len(ref) <= 18:
+                score += 2
+            if re.match(r"^[A-Za-z0-9]", ref):
+                score += 1
+            if used == 1:
+                score += 1
+
+            # Pénalise les mots ordinaires.
+            if ref.isalpha():
+                score -= 8
+            if re.fullmatch(r"\d+", ref):
+                score -= 8
+
+            # Il doit rester une désignation crédible après la référence.
+            remaining = tokens[used:]
+            designation = " ".join(remaining).strip()
+            if len(designation) >= 4 and re.search(r"[A-Za-zÀ-ÿ]", designation):
+                score += 4
+            else:
+                score -= 4
+
+            if score > best_score:
+                best_score = score
+                best = (ref, used, designation)
+
+        if best and best_score >= 7:
+            ref, used, designation = best
+            dims = extract_dimensions(line)
+            add_item(ref, designation, dims, qty)
+
+    print(f"[ENLEVEMENT ITEMS] {len(items)} article(s) detecte(s): {[x['reference'] for x in items]}")
     return items
-
 
 def _extract_instructions_block(clean_text):
     """Isole la zone Instructions, y compris si le titre est légèrement déformé par l'OCR."""
