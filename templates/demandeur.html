@@ -94,6 +94,7 @@
               <button class="tab active" id="tab-caisse" type="button">Fiche de caisse</button>
               <button class="tab" id="tab-devis" type="button">Demande de devis</button>
               <button class="tab" id="tab-aller-voir" type="button">Demande Aller voir</button>
+              <button class="tab" id="tab-enlevement" type="button">Demande d’enlèvement</button>
             </div>
             <div class="folder-state" id="folderState">Dossier de sauvegarde automatique : chargement...</div>
           </div>
@@ -201,6 +202,26 @@
               <div style="height:18px"></div>
               <div class="actions"><button class="btn primary" id="sendAllerVoir" type="button">Envoyer la demande</button></div>
             </form>
+
+            <form id="form-enlevement" class="card hidden">
+              <div class="section-title">Demande d’enlèvement</div>
+              <div class="small">Dépose uniquement le bon d’enlèvement au format PDF. Après validation, ta demande est enregistrée immédiatement et le document sera analysé automatiquement.</div>
+              <div style="height:14px"></div>
+              <div class="drop" id="dropEnlevement">
+                <div class="section-title" style="margin-bottom:0">Bon d’enlèvement PDF</div>
+                <div class="drop-inner" id="dropInnerEnlevement">
+                  <div style="font-size:18px;font-weight:700;">Glisse le bon d’enlèvement ici</div>
+                  <div class="sub">ou clique pour sélectionner le PDF</div>
+                  <input type="file" id="fileInputEnlevement" class="hidden" accept="application/pdf,.pdf" />
+                  <div class="actions" style="justify-content:center;margin-top:14px">
+                    <button class="btn secondary" id="chooseEnlevementFile" type="button">Choisir le PDF</button>
+                  </div>
+                  <div class="files" id="filesEnlevement" style="margin-top:18px"></div>
+                </div>
+              </div>
+              <div style="height:18px"></div>
+              <div class="actions"><button class="btn primary" id="sendEnlevement" type="button">Valider la demande</button></div>
+            </form>
           </div>
 
           <div class="card">
@@ -244,6 +265,7 @@ const state = {
   filesCaisse:[],
   filesDevis:[],
   filesAllerVoir:[],
+  filesEnlevement:[],
   doneSearch:'',
   directTicketId: urlParams.get('ticket') || '',
   directTicketOpened: false
@@ -253,15 +275,19 @@ const els = {
   tabCaisse: document.getElementById('tab-caisse'),
   tabDevis: document.getElementById('tab-devis'),
   tabAllerVoir: document.getElementById('tab-aller-voir'),
+  tabEnlevement: document.getElementById('tab-enlevement'),
   formCaisse: document.getElementById('form-caisse'),
   formDevis: document.getElementById('form-devis'),
   formAllerVoir: document.getElementById('form-aller-voir'),
+  formEnlevement: document.getElementById('form-enlevement'),
   filesCaisse: document.getElementById('filesCaisse'),
   filesDevis: document.getElementById('filesDevis'),
   filesAllerVoir: document.getElementById('filesAllerVoir'),
+  filesEnlevement: document.getElementById('filesEnlevement'),
   fileInputCaisse: document.getElementById('fileInputCaisse'),
   fileInputDevis: document.getElementById('fileInputDevis'),
   fileInputAllerVoir: document.getElementById('fileInputAllerVoir'),
+  fileInputEnlevement: document.getElementById('fileInputEnlevement'),
   notice: document.getElementById('notice'),
   successBox: document.getElementById('successBox'),
   doneList: document.getElementById('doneList'),
@@ -285,18 +311,22 @@ function activateModule(module){
   const isCaisse = module === 'caisse';
   const isDevis = module === 'devis';
   const isAllerVoir = module === 'aller-voir';
+  const isEnlevement = module === 'enlevement';
   els.tabCaisse.classList.toggle('active', isCaisse);
   els.tabDevis.classList.toggle('active', isDevis);
   els.tabAllerVoir.classList.toggle('active', isAllerVoir);
+  els.tabEnlevement.classList.toggle('active', isEnlevement);
   els.formCaisse.classList.toggle('hidden', !isCaisse);
   els.formDevis.classList.toggle('hidden', !isDevis);
   els.formAllerVoir.classList.toggle('hidden', !isAllerVoir);
+  els.formEnlevement.classList.toggle('hidden', !isEnlevement);
   els.successBox.classList.remove('show');
 }
 function moduleKeyFromTicketModule(module){
   if(module === 'Fiche de caisse') return 'caisse';
   if(module === 'Demande de devis') return 'devis';
   if(module === 'Demande Aller voir') return 'aller-voir';
+  if(module === 'Demande d’enlèvement') return 'enlevement';
   return 'caisse';
 }
 function escapeHtml(str){
@@ -475,6 +505,7 @@ function renderAllFiles(){
   renderFiles(els.filesCaisse, state.filesCaisse);
   renderFiles(els.filesDevis, state.filesDevis);
   renderFiles(els.filesAllerVoir, state.filesAllerVoir);
+  renderFiles(els.filesEnlevement, state.filesEnlevement);
 }
 function addFiles(target, fileList){
   const files = Array.from(fileList || []).filter(file => file && file.name);
@@ -684,6 +715,33 @@ async function sendAllerVoir(){
 }
 
 
+async function sendEnlevement(){
+  if(state.filesEnlevement.length !== 1){
+    showNotice('Merci de déposer un seul bon d’enlèvement au format PDF.');
+    return;
+  }
+  const file = state.filesEnlevement[0];
+  if(!file.name.toLowerCase().endsWith('.pdf')){
+    showNotice('Le bon d’enlèvement doit être un fichier PDF.');
+    return;
+  }
+  try{
+    const fd = new FormData();
+    fd.append('module','Demande d’enlèvement');
+    fd.append('files', file);
+    const res = await fetch('/api/tickets', {method:'POST', body:fd});
+    const data = await res.json();
+    if(!res.ok){ showNotice(data.error || 'Erreur enregistrement'); return; }
+    document.getElementById('form-enlevement').reset();
+    state.filesEnlevement.length = 0;
+    renderAllFiles();
+    showSuccess(`Votre demande ${data.id} a bien été enregistrée. Le bon sera analysé automatiquement.`);
+    window.scrollTo({top:0, behavior:'smooth'});
+  }catch(e){
+    showNotice(`Échec enregistrement : ${e.message || e}`);
+  }
+}
+
 function displayValue(value){
   const v = value === undefined || value === null ? '' : String(value).trim();
   return v || '-';
@@ -847,7 +905,7 @@ async function renderDoneTickets(){
     const expectedModule =
       state.currentModule === 'caisse'
         ? 'Fiche de caisse'
-        : (state.currentModule === 'devis' ? 'Demande de devis' : 'Demande Aller voir');
+        : (state.currentModule === 'devis' ? 'Demande de devis' : (state.currentModule === 'aller-voir' ? 'Demande Aller voir' : 'Demande d’enlèvement'));
 
     let done = (allTickets || []).filter(t => (t.status || '') === 'Terminé' && t.module === expectedModule);
 
@@ -1134,13 +1192,15 @@ document.addEventListener('keydown', (e) => {
 els.tabCaisse.addEventListener('click', ()=>{activateModule('caisse'); refreshReferenceAutocompleteBindings(); renderDoneTickets();});
 els.tabDevis.addEventListener('click', ()=>{activateModule('devis'); refreshReferenceAutocompleteBindings(); renderDoneTickets();});
 els.tabAllerVoir.addEventListener('click', ()=>{activateModule('aller-voir'); refreshReferenceAutocompleteBindings(); renderDoneTickets();});
+els.tabEnlevement.addEventListener('click', ()=>{activateModule('enlevement'); renderDoneTickets();});
 document.getElementById('chooseCaisseFiles').addEventListener('click', (e)=>{e.stopPropagation(); els.fileInputCaisse.click();});
 document.getElementById('chooseDevisFiles').addEventListener('click', (e)=>{e.stopPropagation(); els.fileInputDevis.click();});
 document.getElementById('chooseAllerVoirFiles').addEventListener('click', (e)=>{e.stopPropagation(); els.fileInputAllerVoir.click();});
+document.getElementById('chooseEnlevementFile').addEventListener('click', (e)=>{e.stopPropagation(); els.fileInputEnlevement.click();});
 document.getElementById('sendCaisse').addEventListener('click', sendCaisse);
 document.getElementById('sendDevis').addEventListener('click', sendDevis);
 document.getElementById('sendAllerVoir').addEventListener('click', sendAllerVoir);
-document.getElementById('sendAllerVoir').addEventListener('click', sendAllerVoir);
+document.getElementById('sendEnlevement').addEventListener('click', sendEnlevement);
 document.getElementById('openManager').addEventListener('click', ()=>window.open('/login','_blank'));
 document.getElementById('planningCaisserie').addEventListener('click', () => {
   window.open('/reception', '_blank');
@@ -1150,6 +1210,7 @@ document.getElementById('doneSearch').addEventListener('input', e=>{state.doneSe
 setupDrop('dropCaisse','dropInnerCaisse',els.fileInputCaisse,state.filesCaisse);
 setupDrop('dropDevis','dropInnerDevis',els.fileInputDevis,state.filesDevis);
 setupDrop('dropAllerVoir','dropInnerAllerVoir',els.fileInputAllerVoir,state.filesAllerVoir);
+setupDrop('dropEnlevement','dropInnerEnlevement',els.fileInputEnlevement,state.filesEnlevement);
 
 activateModule('caisse');
 renderAllFiles();
