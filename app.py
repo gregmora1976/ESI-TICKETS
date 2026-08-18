@@ -2561,6 +2561,251 @@ def api_update_enlevement(ticket_id):
 
 
 
+
+_BLR_LOCK = threading.Lock()
+
+
+def _next_blr_reference():
+    """Retourne une référence BLR-0001, BLR-0002... à partir des bons déjà enregistrés."""
+    highest = 0
+    try:
+        for t in list_tickets():
+            enl = t.get("enlevement") or {}
+            for bon in enl.get("bons_livraison") or []:
+                ref = _as_text(bon.get("reference")).strip()
+                m = re.fullmatch(r"BLR-(\d+)", ref, re.I)
+                if m:
+                    highest = max(highest, int(m.group(1)))
+    except Exception as e:
+        print(f"[BLR] Impossible de lire l'historique des BLR: {e}")
+    return f"BLR-{highest + 1:04d}"
+
+
+def _build_blr_pdf_bytes(ticket, bon):
+    """Construit un PDF simple du bon de livraison/réception, sans dépendance supplémentaire."""
+    import io
+    import textwrap as _tw
+
+    enl = ticket.get("enlevement") or {}
+    items = bon.get("items") or []
+
+    def clean(v):
+        return _as_text(v, "-").replace("\r", " ").replace("\n", " ").strip() or "-"
+
+    lines = [
+        "ESI FINE ART - BON DE LIVRAISON / RECEPTION",
+        "=" * 70,
+        "",
+        f"Reference du bon : {clean(bon.get('reference'))}",
+        f"Date de reception : {clean(bon.get('date_reception'))}",
+        f"Receptionne par : {clean(bon.get('receptionne_par'))}",
+        f"Lieu de stockage : {clean(bon.get('lieu_stockage'))}",
+        "",
+        f"Client : {clean(enl.get('client') or ticket.get('dossier'))}",
+        f"Bon d'enlevement : {clean(enl.get('numero_bon') or ticket.get('ref'))}",
+        f"Ticket lie : {clean(ticket.get('id'))}",
+        "",
+        "ARTICLES RECEPTIONNES",
+        "-" * 70,
+    ]
+
+    for idx, item in enumerate(items, start=1):
+        ref = clean(item.get("reference"))
+        qty = clean(item.get("quantite"))
+        designation = clean(item.get("designation"))
+        dims = clean(item.get("dimensions"))
+        wrapped = _tw.wrap(
+            f"{idx}. Qte {qty} | Ref {ref} | {designation} | Dim. {dims}",
+            width=82
+        ) or [f"{idx}. Ref {ref}"]
+        lines.extend(wrapped)
+
+    lines += [
+        "",
+        "-" * 70,
+        "Validation de la reception effectuee dans ESI TICKETS.",
+    ]
+
+    def pdf_escape(value):
+        value = str(value)
+        return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    page_width, page_height = 595, 842
+    margin_left = 42
+    y_start = 800
+    line_height = 14
+    max_lines = 53
+    chunks = [lines[i:i + max_lines] for i in range(0, len(lines), max_lines)] or [["Bon vide"]]
+
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        None,
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+    ]
+    page_refs = []
+
+    for chunk in chunks:
+        content_obj_num = len(objects) + 1
+        content_lines = ["BT", "/F1 10 Tf", f"{margin_left} {y_start} Td"]
+        first = True
+        for line in chunk:
+            if not first:
+                content_lines.append(f"0 -{line_height} Td")
+            first = False
+            content_lines.append(f"({pdf_escape(line)}) Tj")
+        content_lines.append("ET")
+
+        stream = "\n".join(content_lines).encode("latin-1", errors="replace")
+        objects.append(
+            f"<< /Length {len(stream)} >>\nstream\n".encode("latin-1")
+            + stream + b"\nendstream"
+        )
+        page_obj_num = len(objects) + 1
+        page = (
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width} {page_height}] "
+            f"/Resources << /Font << /F1 3 0 R >> >> /Contents {content_obj_num} 0 R >>"
+        )
+        objects.append(page.encode("latin-1"))
+        page_refs.append(f"{page_obj_num} 0 R")
+
+    objects[1] = (
+        f"<< /Type /Pages /Kids [{' '.join(page_refs)}] /Count {len(page_refs)} >>"
+    ).encode("latin-1")
+
+    pdf = io.BytesIO()
+    pdf.write(b"%PDF-1.4\n")
+    offsets = []
+    for i, obj in enumerate(objects, start=1):
+        offsets.append(pdf.tell())
+        pdf.write(f"{i} 0 obj\n".encode("latin-1"))
+        pdf.write(obj)
+        pdf.write(b"\nendobj\n")
+
+    xref_pos = pdf.tell()
+    pdf.write(f"xref\n0 {len(objects)+1}\n".encode("latin-1"))
+    pdf.write(b"0000000000 65535 f \n")
+    for offset in offsets:
+        pdf.write(f"{offset:010d} 00000 n \n".encode("latin-1"))
+
+    trailer = (
+        f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_pos}\n%%EOF"
+    )
+    pdf.write(trailer.encode("latin-1"))
+    return pdf.getvalue()
+
+
+@app.route('/api/tickets/<ticket_id>/bon-livraison', methods=['POST'])
+def api_create_bon_livraison(ticket_id):
+    """Valide la réception d'items et génère un bon de livraison PDF rattaché au ticket."""
+    ticket = load_ticket(ticket_id)
+    if not ticket:
+        return jsonify({'ok': False, 'error': 'Ticket introuvable'}), 404
+
+    module_normalise = _as_text(ticket.get('module')).replace("’", "'").strip()
+    if module_normalise not in ("Demande d'enlèvement", "Demande d'enlevement") and not _as_text(ticket_id).startswith('ENL-'):
+        return jsonify({'ok': False, 'error': "Ce ticket n'est pas une demande d'enlèvement"}), 400
+
+    data = request.get_json(silent=True) or {}
+    receptionne_par = _as_text(data.get('receptionne_par')).strip()
+    lieu_stockage = _as_text(data.get('lieu_stockage')).strip()
+    selected_indexes = data.get('selected_indexes') or []
+
+    if not receptionne_par:
+        return jsonify({'ok': False, 'error': 'Nom et prénom du réceptionnaire obligatoires'}), 400
+    if not lieu_stockage:
+        return jsonify({'ok': False, 'error': 'Lieu de stockage obligatoire'}), 400
+    if not isinstance(selected_indexes, list) or not selected_indexes:
+        return jsonify({'ok': False, 'error': 'Sélectionne au moins un article à réceptionner'}), 400
+
+    enl = dict(ticket.get('enlevement') or {})
+    all_items = list(enl.get('items') or [])
+    selected = []
+    now = datetime.now()
+
+    for raw_idx in selected_indexes:
+        try:
+            idx = int(raw_idx)
+        except Exception:
+            continue
+        if idx < 0 or idx >= len(all_items):
+            continue
+
+        item = dict(all_items[idx] or {})
+        item['receptionne'] = True
+        item['receptionne_le'] = now.isoformat()
+        item['receptionne_par'] = receptionne_par
+        item['lieu_stockage'] = lieu_stockage
+        all_items[idx] = item
+        selected.append({
+            'index': idx,
+            'quantite': _as_text(item.get('quantite')).strip(),
+            'designation': _as_text(item.get('designation')).strip(),
+            'reference': _as_text(item.get('reference')).strip(),
+            'dimensions': _as_text(item.get('dimensions')).strip(),
+        })
+
+    if not selected:
+        return jsonify({'ok': False, 'error': 'Aucun article valide sélectionné'}), 400
+
+    with _BLR_LOCK:
+        blr_ref = _next_blr_reference()
+
+        bon = {
+            'reference': blr_ref,
+            'ticket_id': ticket_id,
+            'client': enl.get('client') or ticket.get('dossier') or '',
+            'numero_bon_enlevement': enl.get('numero_bon') or ticket.get('ref') or '',
+            'receptionne_par': receptionne_par,
+            'lieu_stockage': lieu_stockage,
+            'date_reception': now.strftime("%d/%m/%Y %H:%M"),
+            'created_at': now.isoformat(),
+            'items': selected,
+        }
+
+        pdf_bytes = _build_blr_pdf_bytes(ticket, bon)
+        filename = f"{blr_ref}.pdf"
+        storage_path = f"{ticket_id}/bons_livraison/{now.strftime('%Y%m%d%H%M%S')}_{filename}"
+
+        try:
+            supabase_upload_bytes(storage_path, pdf_bytes, "application/pdf")
+        except Exception as e:
+            print(f"[BLR] Erreur upload PDF: {e}")
+            return jsonify({'ok': False, 'error': f'Impossible d’enregistrer le PDF : {e}'}), 500
+
+        bon['filename'] = filename
+        bon['storage_path'] = storage_path
+
+        enl['items'] = all_items
+        enl['references'] = [
+            _as_text(x.get('reference')).strip()
+            for x in all_items
+            if _as_text(x.get('reference')).strip()
+        ]
+        bons = list(enl.get('bons_livraison') or [])
+        bons.append(bon)
+        enl['bons_livraison'] = bons
+        ticket['enlevement'] = enl
+
+        manager_sheets = list(ticket.get('managerSheets') or [])
+        manager_sheets.append({
+            'name': filename,
+            'size': len(pdf_bytes),
+            'path': storage_path,
+        })
+        ticket['managerSheets'] = manager_sheets
+        ticket['updatedAt'] = now.isoformat()
+        save_ticket(ticket)
+
+    return jsonify({
+        'ok': True,
+        'reference': blr_ref,
+        'filename': filename,
+        'bon': bon,
+    })
+
+
+
 @app.route('/api/tickets/<ticket_id>/status', methods=['PATCH'])
 def api_update_status(ticket_id):
     ticket = load_ticket(ticket_id)
