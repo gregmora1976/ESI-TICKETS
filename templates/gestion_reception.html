@@ -259,6 +259,20 @@ function renderTicketModal(editing=false){
   html+=files.length?files.map(f=>`<a class="file-link" target="_blank" href="/api/tickets/${encodeURIComponent(t.id)}/download/${encodeURIComponent(f.name)}">${esc(f.name)}</a>`).join(''):`<div>Aucun PDF disponible.</div>`;
   html+=`</div>`;
 
+  const bons=(extraction(t).bons_livraison||[]);
+  if(bons.length){
+    html+=`<div class="section"><div class="section-title">Bons de livraison générés</div>`;
+    bons.slice().reverse().forEach(b=>{
+      const filename=b.filename||((b.reference||'')+'.pdf');
+      const href=`/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(filename)}`;
+      html+=`<div style="margin:6px 0">
+        <a class="file-link" target="_blank" href="${href}"><strong>${esc(b.reference||filename)}</strong></a>
+        — ${esc(b.date_reception||'')} — ${esc(b.receptionne_par||'')} — ${esc(b.lieu_stockage||'')}
+      </div>`;
+    });
+    html+=`</div>`;
+  }
+
   document.getElementById('ticketModalBody').innerHTML=html;
   document.getElementById('ticketEditBtn').style.display=editing?'none':'inline-block';
   document.getElementById('ticketDeliveryBtn').style.display=editing?'none':'inline-block';
