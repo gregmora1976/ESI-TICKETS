@@ -164,7 +164,7 @@ function openTicket(t){
   const x=extraction(t), its=items(t);
   document.getElementById('ticketModalSub').textContent=`${val(client(t))} — ${val(bonRef(t))}`;
   let rows=[
-    ['Ticket',t.id],['Client',client(t)],['Référence du bon',bonRef(t)],
+    ['Client',client(t)],['Référence du bon',bonRef(t)],
     ['Date enlèvement',pick(t,['date_enlevement','dateEnlevement','date','date_chantier'])],
     ['Heure',pick(t,['heure_enlevement','heureEnlevement','heure'])],
     ['Coordinateur',pick(t,['coordinateur','chargeProjet'])],
@@ -241,8 +241,8 @@ document.getElementById('refreshBtn').addEventListener('click',loadTickets);
 document.getElementById('searchInput').addEventListener('input',e=>{searchTerm=e.target.value.trim();renderCalendar();});
 document.getElementById('ticketCancelBtn').addEventListener('click',async()=>{
   if(!openedTicket) return;
-  const label=`${openedTicket.id||''} - ${eventText(openedTicket)}`;
-  if(!confirm(`Annuler le ticket ${label} ?\n\nIl sera conservé dans la base mais ne sera plus affiché dans le planning réception.`)) return;
+  const label=eventText(openedTicket);
+  if(!confirm(`Annuler ${label} ?\n\nLa demande sera conservée dans la base mais ne sera plus affichée dans le planning réception.`)) return;
   const btn=document.getElementById('ticketCancelBtn');
   btn.disabled=true;
   btn.textContent='Annulation...';
