@@ -1456,6 +1456,11 @@ button{margin-top:14px;width:100%;padding:12px 14px;border:none;border-radius:14
 def reception():
     return render_template('reception.html')
 
+
+@app.route('/gestion-reception')
+def gestion_reception():
+    return render_template('gestion_reception.html')
+
 @app.route('/api/status')
 def api_status():
     root = ensure_shared_root()
