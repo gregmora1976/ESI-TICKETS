@@ -177,9 +177,7 @@ function fieldValue(t,key){
     coordinateur:['coordinateur','chargeProjet'],
     exhibition:['site','exhibition','expo'],
     adresse_depart:['adresse_depart','adresseDepart'],
-    contact_depart:['contact_depart','contactDepart'],
     adresse_destination:['adresse_destination','adresseDestination'],
-    contact_destination:['contact_destination','contactDestination'],
     notes:['notes','note'],
     instructions:['instructions','instruction']
   };
@@ -198,9 +196,8 @@ function renderTicketModal(editing=false){
     ['Client','client',false],['Référence du bon','numero_bon',false],
     ['Date enlèvement','date_enlevement',false],
     ['Coordinateur','coordinateur',false],['Site / Exhibition','exhibition',false],
-    ['Adresse départ','adresse_depart',true],['Contact départ','contact_depart',false],
+    ['Adresse départ','adresse_depart',true],
     ['Adresse destination','adresse_destination',true],
-    ['Contact destination','contact_destination',false],
     ['Notes','notes',true],['Instructions','instructions',true]
   ];
 
