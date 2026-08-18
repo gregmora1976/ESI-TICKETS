@@ -1005,6 +1005,13 @@ def _extract_enlevement_pdf(pdf_bytes):
     """Analyse un bon d'enlevement et retourne les donnees utiles au planning reception."""
     text, page_count, ocr_used = _extract_enlevement_pdf_text(pdf_bytes)
     clean_text = text.replace("\r", "")
+
+    # Toute la partie du bon à partir de "Assuré par" est administrative :
+    # elle ne doit jamais alimenter les champs, instructions ou articles.
+    cutoff = re.search(r"\bAssur[eé]\s+par\b", clean_text, re.I)
+    if cutoff:
+        clean_text = clean_text[:cutoff.start()].rstrip()
+
     lines = _enlevement_lines(clean_text)
 
     label_numero = [
@@ -1074,9 +1081,9 @@ def _extract_enlevement_pdf(pdf_bytes):
             date_enlevement = normalised[0]
 
     instructions = _extract_instructions_block(clean_text)
-    items = _extract_enlevement_items(instructions)
-    if not items:
-        items = _extract_enlevement_items(clean_text)
+    # Les articles doivent provenir uniquement de la zone Instructions.
+    # Cela évite de récupérer des références présentes ailleurs sur le bon.
+    items = _extract_enlevement_items(instructions) if instructions else []
 
     contact_data = _extract_contact_blocks(lines)
 
@@ -1086,9 +1093,14 @@ def _extract_enlevement_pdf(pdf_bytes):
         [r"Instructions?", r"Programme\s+du\s+chantier", r"Service", r"Assur[eé]\s+par"]
     )
 
+    display_name = " - ".join(
+        x for x in [_clean_ocr_line(client), _clean_ocr_line(numero_bon)] if x
+    )
+
     result = {
         "numero_bon": numero_bon,
         "client": client,
+        "display_name": display_name,
         "coordinateur": coordinateur,
         "exhibition": exhibition,
         "date_enlevement": date_enlevement,
@@ -1125,6 +1137,10 @@ def _analyse_enlevement_ticket_background(ticket_id, pdf_bytes):
 
         ticket["enlevement"] = {
             **parsed,
+            # Nom visible côté réception. L'id ENL-xxx reste uniquement technique.
+            "display_name": parsed.get("display_name") or " - ".join(
+                x for x in [parsed.get("client"), parsed.get("numero_bon")] if x
+            ),
             "analysis_status": "ready",
             "analysis_error": "",
             "analysed_at": datetime.now().isoformat(),
