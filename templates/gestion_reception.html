@@ -48,6 +48,11 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .items-table th,.items-table td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;font-size:13px}.items-table th{background:#f1f5f9}.items-table tr:last-child td{border-bottom:none}
 .file-link{display:inline-block;border:1px solid var(--line);background:#fff;border-radius:10px;padding:9px 12px;font-weight:800;color:#0369a1;text-decoration:none;margin:3px}
 .ticket-modal-foot{padding:0 20px 20px;display:flex;justify-content:flex-end}
+.edit-input,.edit-textarea{width:100%;border:1px solid #cbd5e1;border-radius:9px;padding:8px 10px;font:inherit;font-weight:700;background:#fff;color:var(--text)}
+.edit-textarea{min-height:78px;resize:vertical;white-space:pre-wrap}
+.items-table .edit-input{min-width:80px}
+.edit-actions{display:flex;gap:10px;margin-left:auto;flex-wrap:wrap}
+.btn.success{background:#16a34a;border-color:#16a34a;color:#fff}
 @media(max-width:600px){.detail-grid{grid-template-columns:1fr;gap:4px}.detail-value{margin-bottom:8px}}
 @media(max-width:900px){.month-grid,.week-head{grid-template-columns:1fr}.week-head{display:none}.day{min-height:auto;border-right:none}}
 </style>
@@ -98,7 +103,12 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
     <div class="ticket-modal-body" id="ticketModalBody"></div>
     <div class="ticket-modal-foot" style="justify-content:space-between;gap:10px">
       <button class="btn danger" id="ticketCancelBtn" type="button">Annuler le ticket</button>
-      <button class="btn" id="ticketModalCloseBottom" type="button">Fermer</button>
+      <div class="edit-actions">
+        <button class="btn" id="ticketEditBtn" type="button">Modifier</button>
+        <button class="btn success" id="ticketSaveBtn" type="button" style="display:none">Enregistrer</button>
+        <button class="btn" id="ticketEditCancelBtn" type="button" style="display:none">Annuler les modifications</button>
+        <button class="btn" id="ticketModalCloseBottom" type="button">Fermer</button>
+      </div>
     </div>
   </div>
 </div>
@@ -159,33 +169,68 @@ function matches(t){
 function isEnlevement(t){return t.module==="Demande d'enlèvement"||t.module==='Demande d’enlèvement'||String(t.id||'').startsWith('ENL-');}
 function isCancelled(t){return String(t.status||'').trim().toLowerCase()==='annulé'||String(t.status||'').trim().toLowerCase()==='annule';}
 
-function openTicket(t){
-  openedTicket=t;
-  const x=extraction(t), its=items(t);
+function fieldValue(t,key){
+  const map={
+    client:['client','customer','dossier'],
+    numero_bon:['numero_bon','bon_reference','reference_bon','bonNumero','ref'],
+    date_enlevement:['date_enlevement','dateEnlevement','date','date_chantier'],
+    heure_enlevement:['heure_enlevement','heureEnlevement','heure'],
+    coordinateur:['coordinateur','chargeProjet'],
+    exhibition:['site','exhibition','expo'],
+    adresse_depart:['adresse_depart','adresseDepart'],
+    contact_depart:['contact_depart','contactDepart'],
+    telephone_depart:['telephone_depart','telephoneDepart'],
+    adresse_destination:['adresse_destination','adresseDestination'],
+    contact_destination:['contact_destination','contactDestination'],
+    telephone_destination:['telephone_destination','telephoneDestination'],
+    notes:['notes','note'],
+    instructions:['instructions','instruction']
+  };
+  return pick(t,map[key]||[key]);
+}
+function editControl(key,value,multiline=false){
+  if(multiline) return `<textarea class="edit-textarea" data-field="${esc(key)}">${esc(value||'')}</textarea>`;
+  return `<input class="edit-input" data-field="${esc(key)}" value="${esc(value||'')}">`;
+}
+function renderTicketModal(editing=false){
+  if(!openedTicket) return;
+  const t=openedTicket, its=items(t);
   document.getElementById('ticketModalSub').textContent=`${val(client(t))} — ${val(bonRef(t))}`;
-  let rows=[
-    ['Client',client(t)],['Référence du bon',bonRef(t)],
-    ['Date enlèvement',pick(t,['date_enlevement','dateEnlevement','date','date_chantier'])],
-    ['Heure',pick(t,['heure_enlevement','heureEnlevement','heure'])],
-    ['Coordinateur',pick(t,['coordinateur','chargeProjet'])],
-    ['Site / Exhibition',pick(t,['site','exhibition','expo'])],
-    ['Adresse départ',pick(t,['adresse_depart','adresseDepart'])],
-    ['Contact départ',pick(t,['contact_depart','contactDepart'])],
-    ['Téléphone départ',pick(t,['telephone_depart','telephoneDepart'])],
-    ['Adresse destination',pick(t,['adresse_destination','adresseDestination'])],
-    ['Contact destination',pick(t,['contact_destination','contactDestination'])],
-    ['Téléphone destination',pick(t,['telephone_destination','telephoneDestination'])],
-    ['Notes',pick(t,['notes','note'])],
-    ['Instructions',pick(t,['instructions','instruction'])],
-    ["État de l'analyse",pick(t,['analysis_status','analyse_status','ocr_status'])],
-    ["Erreur d'analyse",pick(t,['analysis_error','analyse_error','ocr_error'])]
+
+  const rows=[
+    ['Client','client',false],['Référence du bon','numero_bon',false],
+    ['Date enlèvement','date_enlevement',false],['Heure','heure_enlevement',false],
+    ['Coordinateur','coordinateur',false],['Site / Exhibition','exhibition',false],
+    ['Adresse départ','adresse_depart',true],['Contact départ','contact_depart',false],
+    ['Téléphone départ','telephone_depart',false],['Adresse destination','adresse_destination',true],
+    ['Contact destination','contact_destination',false],['Téléphone destination','telephone_destination',false],
+    ['Notes','notes',true],['Instructions','instructions',true]
   ];
-  let html=`<div class="detail-grid">${rows.map(r=>`<div class="detail-label">${esc(r[0])}</div><div class="detail-value">${esc(val(r[1]))}</div>`).join('')}</div>`;
+
+  let html='<div class="detail-grid">';
+  rows.forEach(([label,key,multiline])=>{
+    const value=fieldValue(t,key);
+    html+=`<div class="detail-label">${esc(label)}</div><div class="detail-value">${editing?editControl(key,value,multiline):esc(val(value))}</div>`;
+  });
+  html+=`<div class="detail-label">État de l'analyse</div><div class="detail-value">${esc(val(pick(t,['analysis_status','analyse_status','ocr_status'])))}</div>`;
+  html+=`<div class="detail-label">Erreur d'analyse</div><div class="detail-value">${esc(val(pick(t,['analysis_error','analyse_error','ocr_error'])))}</div></div>`;
+
   html+=`<div class="section"><div class="section-title">Articles à enlever</div>`;
   if(its.length){
-    html+=`<table class="items-table"><thead><tr><th>Qté</th><th>Désignation</th><th>Référence</th><th>Dimensions</th></tr></thead><tbody>`+
-      its.map(i=>`<tr><td>${esc(val(i.quantite||i.qty))}</td><td>${esc(val(i.designation||i.description))}</td><td><strong>${esc(val(i.reference||i.ref))}</strong></td><td>${esc(val(i.dimensions))}</td></tr>`).join('')+
-      `</tbody></table>`;
+    html+=`<table class="items-table"><thead><tr><th>Qté</th><th>Désignation</th><th>Référence</th><th>Dimensions</th></tr></thead><tbody>`;
+    its.forEach((i,index)=>{
+      if(editing){
+        html+=`<tr data-item-index="${index}">
+          <td><input class="edit-input item-field" data-item-field="quantite" value="${esc(i.quantite||i.qty||'')}"></td>
+          <td><input class="edit-input item-field" data-item-field="designation" value="${esc(i.designation||i.description||'')}"></td>
+          <td><input class="edit-input item-field" data-item-field="reference" value="${esc(i.reference||i.ref||'')}"></td>
+          <td><input class="edit-input item-field" data-item-field="dimensions" value="${esc(i.dimensions||'')}"></td>
+        </tr>`;
+      }else{
+        html+=`<tr><td>${esc(val(i.quantite||i.qty))}</td><td>${esc(val(i.designation||i.description))}</td><td><strong>${esc(val(i.reference||i.ref))}</strong></td><td>${esc(val(i.dimensions))}</td></tr>`;
+      }
+    });
+    html+=`</tbody></table>`;
   }else html+=`<div>Aucun article extrait pour le moment.</div>`;
   html+=`</div>`;
 
@@ -193,10 +238,59 @@ function openTicket(t){
   html+=`<div class="section"><div class="section-title">Bon d'enlèvement PDF</div>`;
   html+=files.length?files.map(f=>`<a class="file-link" target="_blank" href="/api/tickets/${encodeURIComponent(t.id)}/download/${encodeURIComponent(f.name)}">${esc(f.name)}</a>`).join(''):`<div>Aucun PDF disponible.</div>`;
   html+=`</div>`;
+
   document.getElementById('ticketModalBody').innerHTML=html;
+  document.getElementById('ticketEditBtn').style.display=editing?'none':'inline-block';
+  document.getElementById('ticketSaveBtn').style.display=editing?'inline-block':'none';
+  document.getElementById('ticketEditCancelBtn').style.display=editing?'inline-block':'none';
+  document.getElementById('ticketModalCloseBottom').style.display=editing?'none':'inline-block';
+  document.getElementById('ticketCancelBtn').style.display=editing?'none':'inline-block';
+}
+function openTicket(t){
+  openedTicket=t;
+  renderTicketModal(false);
   const b=document.getElementById('ticketModalBackdrop');b.classList.add('open');b.setAttribute('aria-hidden','false');
 }
-function closeTicket(){openedTicket=null;const b=document.getElementById('ticketModalBackdrop');b.classList.remove('open');b.setAttribute('aria-hidden','true');}
+function closeTicket(){
+  openedTicket=null;
+  const b=document.getElementById('ticketModalBackdrop');b.classList.remove('open');b.setAttribute('aria-hidden','true');
+}
+async function saveTicketEdits(){
+  if(!openedTicket) return;
+  const body=document.getElementById('ticketModalBody');
+  const payload={};
+  body.querySelectorAll('[data-field]').forEach(el=>payload[el.dataset.field]=el.value.trim());
+  payload.items=[...body.querySelectorAll('tr[data-item-index]')].map(row=>{
+    const item={};
+    row.querySelectorAll('[data-item-field]').forEach(el=>item[el.dataset.itemField]=el.value.trim());
+    return item;
+  });
+
+  const btn=document.getElementById('ticketSaveBtn');
+  btn.disabled=true; btn.textContent='Enregistrement...';
+  try{
+    const ticketId=openedTicket.id;
+    const res=await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/enlevement`,{
+      method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok||!data.ok) throw new Error(data.error||"Impossible d'enregistrer les modifications");
+
+    await loadTickets();
+    const refreshed=tickets.find(t=>t.id===ticketId);
+    if(refreshed){
+      openedTicket=refreshed;
+      renderTicketModal(false);
+    }
+  }catch(e){
+    alert(e.message||"Impossible d'enregistrer les modifications");
+  }finally{
+    btn.disabled=false;
+    btn.textContent='Enregistrer';
+  }
+}
 
 function renderPending(){
   const el=document.getElementById('pendingList');
@@ -262,6 +356,9 @@ document.getElementById('ticketCancelBtn').addEventListener('click',async()=>{
     btn.textContent='Annuler le ticket';
   }
 });
+document.getElementById('ticketEditBtn').addEventListener('click',()=>renderTicketModal(true));
+document.getElementById('ticketEditCancelBtn').addEventListener('click',()=>renderTicketModal(false));
+document.getElementById('ticketSaveBtn').addEventListener('click',saveTicketEdits);
 document.getElementById('ticketModalClose').addEventListener('click',closeTicket);
 document.getElementById('ticketModalCloseBottom').addEventListener('click',closeTicket);
 document.getElementById('ticketModalBackdrop').addEventListener('click',e=>{if(e.target.id==='ticketModalBackdrop')closeTicket();});
