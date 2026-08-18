@@ -53,6 +53,14 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .items-table .edit-input{min-width:80px}
 .edit-actions{display:flex;gap:10px;margin-left:auto;flex-wrap:wrap}
 .btn.success{background:#16a34a;border-color:#16a34a;color:#fff}
+.btn.delivery{background:#7c3aed;border-color:#7c3aed;color:#fff}
+.delivery-list{display:flex;flex-direction:column;gap:8px;margin:12px 0}
+.delivery-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fff}
+.delivery-item.received{background:#f0fdf4}
+.delivery-meta{font-size:12px;color:var(--muted);margin-top:4px}
+.form-row{margin-top:12px}.form-row label{display:block;font-size:13px;font-weight:900;color:var(--muted);margin-bottom:5px}
+.form-row input{width:100%;border:1px solid #cbd5e1;border-radius:9px;padding:10px;font:inherit}
+
 @media(max-width:600px){.detail-grid{grid-template-columns:1fr;gap:4px}.detail-value{margin-bottom:8px}}
 @media(max-width:900px){.month-grid,.week-head{grid-template-columns:1fr}.week-head{display:none}.day{min-height:auto;border-right:none}}
 </style>
@@ -104,11 +112,29 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
     <div class="ticket-modal-foot" style="justify-content:space-between;gap:10px">
       <button class="btn danger" id="ticketCancelBtn" type="button">Annuler le ticket</button>
       <div class="edit-actions">
+        <button class="btn delivery" id="ticketDeliveryBtn" type="button">Bon de livraison</button>
         <button class="btn" id="ticketEditBtn" type="button">Modifier</button>
         <button class="btn success" id="ticketSaveBtn" type="button" style="display:none">Enregistrer</button>
         <button class="btn" id="ticketEditCancelBtn" type="button" style="display:none">Annuler les modifications</button>
         <button class="btn" id="ticketModalCloseBottom" type="button">Fermer</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="deliveryModalBackdrop" aria-hidden="true">
+  <div class="ticket-modal" role="dialog" aria-modal="true">
+    <div class="ticket-modal-head">
+      <div>
+        <div class="ticket-modal-title">Bon de livraison / Réception</div>
+        <div class="ticket-modal-sub" id="deliveryModalSub">-</div>
+      </div>
+      <button class="modal-close" id="deliveryModalClose" type="button">×</button>
+    </div>
+    <div class="ticket-modal-body" id="deliveryModalBody"></div>
+    <div class="ticket-modal-foot" style="justify-content:space-between;gap:10px">
+      <button class="btn" id="deliveryCancelBtn" type="button">Annuler</button>
+      <button class="btn success" id="deliveryValidateBtn" type="button">Valider la réception et générer le PDF</button>
     </div>
   </div>
 </div>
@@ -235,6 +261,7 @@ function renderTicketModal(editing=false){
 
   document.getElementById('ticketModalBody').innerHTML=html;
   document.getElementById('ticketEditBtn').style.display=editing?'none':'inline-block';
+  document.getElementById('ticketDeliveryBtn').style.display=editing?'none':'inline-block';
   document.getElementById('ticketSaveBtn').style.display=editing?'inline-block':'none';
   document.getElementById('ticketEditCancelBtn').style.display=editing?'inline-block':'none';
   document.getElementById('ticketModalCloseBottom').style.display=editing?'none':'inline-block';
@@ -283,6 +310,100 @@ async function saveTicketEdits(){
   }finally{
     btn.disabled=false;
     btn.textContent='Enregistrer';
+  }
+}
+
+
+function closeDeliveryModal(){
+  const b=document.getElementById('deliveryModalBackdrop');
+  b.classList.remove('open');b.setAttribute('aria-hidden','true');
+}
+function openDeliveryModal(){
+  if(!openedTicket) return;
+  const its=items(openedTicket);
+  if(!its.length){
+    alert("Aucun article n'est disponible dans ce ticket.");
+    return;
+  }
+
+  document.getElementById('deliveryModalSub').textContent=`${val(client(openedTicket))} — ${val(bonRef(openedTicket))}`;
+
+  let html=`<div class="section-title">Articles à réceptionner</div><div class="delivery-list">`;
+  its.forEach((i,index)=>{
+    const received=!!i.receptionne;
+    const checked=received?'':' checked';
+    const disabled=received?' disabled':'';
+    html+=`<label class="delivery-item${received?' received':''}">
+      <input type="checkbox" class="delivery-check" data-index="${index}"${checked}${disabled}>
+      <div>
+        <strong>${esc(i.reference||i.ref||'-')}</strong> — ${esc(i.designation||i.description||'-')}
+        <div class="delivery-meta">Qté : ${esc(i.quantite||i.qty||'1')}${i.dimensions?` · Dimensions : ${esc(i.dimensions)}`:''}</div>
+        ${received?`<div class="delivery-meta"><strong>Déjà réceptionné</strong> · ${esc(i.lieu_stockage||'')} · ${esc(i.receptionne_par||'')}</div>`:''}
+      </div>
+    </label>`;
+  });
+  html+=`</div>
+    <div class="form-row">
+      <label for="deliveryReceiver">Nom et prénom de la personne qui réceptionne</label>
+      <input id="deliveryReceiver" type="text" autocomplete="name" placeholder="Nom Prénom">
+    </div>
+    <div class="form-row">
+      <label for="deliveryLocation">Lieu de stockage</label>
+      <input id="deliveryLocation" type="text" placeholder="Ex. Stock A, rack B12, réserve 2...">
+    </div>`;
+
+  const bons=(extraction(openedTicket).bons_livraison||[]);
+  if(bons.length){
+    html+=`<div class="section"><div class="section-title">Bons déjà générés</div>`;
+    bons.slice().reverse().forEach(b=>{
+      html+=`<div style="margin:6px 0"><strong>${esc(b.reference||'')}</strong> — ${esc(b.date_reception||'')} — ${esc(b.receptionne_par||'')}</div>`;
+    });
+    html+=`</div>`;
+  }
+
+  document.getElementById('deliveryModalBody').innerHTML=html;
+  const b=document.getElementById('deliveryModalBackdrop');
+  b.classList.add('open');b.setAttribute('aria-hidden','false');
+}
+async function validateDelivery(){
+  if(!openedTicket) return;
+
+  const receiver=document.getElementById('deliveryReceiver')?.value.trim()||'';
+  const location=document.getElementById('deliveryLocation')?.value.trim()||'';
+  const selected=[...document.querySelectorAll('.delivery-check:checked:not(:disabled)')].map(el=>Number(el.dataset.index));
+
+  if(!receiver){alert("Renseigne le nom et prénom de la personne qui réceptionne.");return;}
+  if(!location){alert("Renseigne le lieu de stockage.");return;}
+  if(!selected.length){alert("Sélectionne au moins un article à réceptionner.");return;}
+
+  const btn=document.getElementById('deliveryValidateBtn');
+  btn.disabled=true;btn.textContent='Génération du bon...';
+  try{
+    const ticketId=openedTicket.id;
+    const res=await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/bon-livraison`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        receptionne_par:receiver,
+        lieu_stockage:location,
+        selected_indexes:selected
+      })
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok||!data.ok) throw new Error(data.error||"Impossible de valider la réception");
+
+    await loadTickets();
+    const refreshed=tickets.find(t=>t.id===ticketId);
+    if(refreshed){
+      openedTicket=refreshed;
+      renderTicketModal(false);
+    }
+    closeDeliveryModal();
+    alert(`Réception validée.\nBon généré : ${data.reference}`);
+  }catch(e){
+    alert(e.message||"Impossible de valider la réception");
+  }finally{
+    btn.disabled=false;btn.textContent='Valider la réception et générer le PDF';
   }
 }
 
@@ -350,6 +471,11 @@ document.getElementById('ticketCancelBtn').addEventListener('click',async()=>{
     btn.textContent='Annuler le ticket';
   }
 });
+document.getElementById('ticketDeliveryBtn').addEventListener('click',openDeliveryModal);
+document.getElementById('deliveryModalClose').addEventListener('click',closeDeliveryModal);
+document.getElementById('deliveryCancelBtn').addEventListener('click',closeDeliveryModal);
+document.getElementById('deliveryValidateBtn').addEventListener('click',validateDelivery);
+document.getElementById('deliveryModalBackdrop').addEventListener('click',e=>{if(e.target.id==='deliveryModalBackdrop')closeDeliveryModal();});
 document.getElementById('ticketEditBtn').addEventListener('click',()=>renderTicketModal(true));
 document.getElementById('ticketEditCancelBtn').addEventListener('click',()=>renderTicketModal(false));
 document.getElementById('ticketSaveBtn').addEventListener('click',saveTicketEdits);
