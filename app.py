@@ -940,9 +940,138 @@ def _extract_instructions_block(clean_text):
     return block.strip()
 
 
-def _extract_contact_blocks(lines):
+def _slice_columns_by_headers(raw_lines, header_index, headers):
     """
-    Tente d'extraire les blocs départ/destination sans supposer une mise en page parfaite.
+    Découpe les lignes sous une ligne d'en-têtes en colonnes selon la position
+    horizontale de chaque libellé. Utile pour les tableaux OCR du bon interne.
+    """
+    header_line = raw_lines[header_index]
+    positions = []
+    for name, pattern in headers:
+        m = re.search(pattern, header_line, re.I)
+        if m:
+            positions.append((name, m.start()))
+    positions.sort(key=lambda x: x[1])
+
+    if len(positions) < 2:
+        return {}
+
+    bounds = {}
+    for i, (name, pos) in enumerate(positions):
+        if i == 0:
+            left = 0
+        else:
+            prev_pos = positions[i - 1][1]
+            left = (prev_pos + pos) // 2
+        if i + 1 < len(positions):
+            right = (pos + positions[i + 1][1]) // 2
+        else:
+            right = None
+        bounds[name] = (left, right)
+
+    columns = {name: [] for name, _ in positions}
+    for line in raw_lines[header_index + 1:]:
+        for name, (left, right) in bounds.items():
+            piece = line[left:right].strip() if right is not None else line[left:].strip()
+            if piece:
+                columns[name].append(_clean_ocr_line(piece))
+    return columns
+
+
+def _extract_programme_chantier(clean_text):
+    """
+    Lit la zone 'Programme du chantier' comme un tableau vertical :
+    les valeurs sont sous Date:, Heure:, Service:, Notes:, Assigné à:, Véhicules:.
+    """
+    result = {
+        "date_enlevement": "",
+        "heure_enlevement": "",
+        "service": "",
+        "notes": "",
+        "assigne_a": "",
+        "vehicules": "",
+    }
+
+    raw_lines = _as_text(clean_text).replace("\r", "").splitlines()
+    start_idx = None
+    end_idx = len(raw_lines)
+
+    for i, line in enumerate(raw_lines):
+        if re.search(r"Programme\s+du\s+chantier", line, re.I):
+            start_idx = i
+            break
+    if start_idx is None:
+        return result
+
+    for i in range(start_idx + 1, len(raw_lines)):
+        if re.search(r"\bInstr(?:uctions?|uction)\b", raw_lines[i], re.I):
+            end_idx = i
+            break
+
+    zone = raw_lines[start_idx + 1:end_idx]
+
+    header_idx_local = None
+    for i, line in enumerate(zone):
+        # On cherche la vraie ligne d'en-têtes du tableau.
+        if re.search(r"\bDate\s*:", line, re.I) and re.search(r"\bNotes?\s*:", line, re.I):
+            header_idx_local = i
+            break
+
+    if header_idx_local is not None:
+        headers = [
+            ("date", r"\bDate\s*:"),
+            ("heure", r"\bHeure\s*:"),
+            ("service", r"\bService\s*:"),
+            ("notes", r"\bNotes?\s*:"),
+            ("assigne", r"\bAssign[eé]\s+[aà]\s*:"),
+            ("vehicules", r"\bV[eé]hicules?\s*:"),
+        ]
+        cols = _slice_columns_by_headers(zone, header_idx_local, headers)
+
+        def first_value(name):
+            vals = [v for v in cols.get(name, []) if v and not re.search(r"^[|:_-]+$", v)]
+            return vals[0] if vals else ""
+
+        result["date_enlevement"] = _normalise_enlevement_date(first_value("date"))
+        result["heure_enlevement"] = first_value("heure")
+        result["service"] = first_value("service")
+        result["notes"] = first_value("notes")
+        result["assigne_a"] = first_value("assigne")
+        result["vehicules"] = first_value("vehicules")
+
+    # Secours ciblé uniquement dans la zone Programme du chantier.
+    zone_text = "\n".join(zone)
+    if not result["date_enlevement"]:
+        result["date_enlevement"] = _normalise_enlevement_date(zone_text)
+
+    # Si les colonnes OCR sont mal alignées, essaie les valeurs situées
+    # immédiatement sous les libellés sur des lignes séparées.
+    cleaned_zone = _enlevement_lines(zone_text)
+    if not result["notes"]:
+        result["notes"] = _value_after_label(
+            cleaned_zone,
+            [r"\bNotes?\b"],
+            [r"Assign[eé]\s+[aà]", r"V[eé]hicules?", r"Service", r"Instructions?"]
+        )
+    if not result["heure_enlevement"]:
+        result["heure_enlevement"] = _value_after_label(
+            cleaned_zone, [r"\bHeure\b"], [r"Service", r"Notes?", r"Assign[eé]\s+[aà]"]
+        )
+    if not result["service"]:
+        result["service"] = _value_after_label(
+            cleaned_zone, [r"\bService\b"], [r"Notes?", r"Assign[eé]\s+[aà]", r"V[eé]hicules?"]
+        )
+
+    return result
+
+
+def _extract_contact_blocks(clean_text):
+    """
+    Extrait les deux colonnes du bloc Adresses :
+      - Depuis :
+      - À :
+    Le premier élément de chaque colonne est traité comme contact/société,
+    les téléphones sont isolés, et le reste compose l'adresse.
     """
     result = {
         "adresse_depart": "",
@@ -951,54 +1080,89 @@ def _extract_contact_blocks(lines):
         "adresse_destination": "",
         "contact_destination": "",
         "telephone_destination": "",
+        "email_destination": "",
     }
 
-    def scan_block(start_pat, end_pats):
-        start_idx = None
-        for i, line in enumerate(lines):
-            if re.search(start_pat, line, re.I):
-                start_idx = i
-                break
-        if start_idx is None:
-            return []
-        block = []
-        for j in range(start_idx, min(len(lines), start_idx + 12)):
-            line = lines[j]
-            if j > start_idx and any(re.search(p, line, re.I) for p in end_pats):
-                break
-            block.append(line)
-        return block
+    raw_lines = _as_text(clean_text).replace("\r", "").splitlines()
 
-    depart = scan_block(
-        r"(?:Adresse\s+de\s+d[eé]part|D[eé]part|Enl[eè]vement\s+chez)",
-        [r"Destination", r"Adresse\s+de\s+destination", r"Programme\s+du\s+chantier", r"Instructions?"]
+    header_idx = None
+    for i, line in enumerate(raw_lines):
+        if re.search(r"\bDepuis\s*:", line, re.I) and re.search(r"(?:\bA\s*:|\bÀ\s*:)", line, re.I):
+            header_idx = i
+            break
+
+    if header_idx is None:
+        return result
+
+    # Limite stricte du bloc aux adresses : stop avant Programme du chantier.
+    end_idx = len(raw_lines)
+    for i in range(header_idx + 1, len(raw_lines)):
+        if re.search(r"Programme\s+du\s+chantier", raw_lines[i], re.I):
+            end_idx = i
+            break
+
+    address_lines = raw_lines[:end_idx]
+    cols = _slice_columns_by_headers(
+        address_lines,
+        header_idx,
+        [
+            ("depart", r"\bDepuis\s*:"),
+            ("destination", r"(?:\bA\s*:|\bÀ\s*:)")
+        ]
     )
-    dest = scan_block(
-        r"(?:Adresse\s+de\s+destination|Destination)",
-        [r"Programme\s+du\s+chantier", r"Instructions?", r"Service"]
-    )
 
-    def parse(block):
-        address_parts, contact, phone = [], "", ""
-        for line in block[1:]:
-            if re.search(r"^(?:Contact|T[eé]l(?:[eé]phone)?|Phone)\b", line, re.I):
-                if re.search(r"^(?:Contact)\b", line, re.I):
-                    contact = re.sub(r"^(?:Contact)\s*[:.-]?\s*", "", line, flags=re.I)
-                else:
-                    phone = re.sub(r"^(?:T[eé]l(?:[eé]phone)?|Phone)\s*[:.-]?\s*", "", line, flags=re.I)
+    phone_re = re.compile(r"(?:\+33\s*\d(?:[\s.\-]?\d{2}){4}|0\d(?:[\s.\-]?\d{2}){4})")
+    email_re = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", re.I)
+
+    def parse(values, destination=False):
+        vals = []
+        phone = ""
+        email = ""
+        for v in values:
+            v = _clean_ocr_line(v)
+            if not v:
                 continue
-            if re.search(r"(?:\+33|0\d(?:[\s.\-]?\d{2}){4})", line) and not phone:
-                phone = line
+            mphone = phone_re.search(v)
+            if mphone and not phone:
+                phone = mphone.group(0).strip()
+                rest = (v[:mphone.start()] + " " + v[mphone.end():]).strip()
+                if rest:
+                    vals.append(rest)
                 continue
-            address_parts.append(line)
-        return " | ".join(address_parts[:4]), contact, phone
+            memail = email_re.search(v)
+            if memail and destination and not email:
+                email = memail.group(0).strip()
+                rest = (v[:memail.start()] + " " + v[memail.end():]).strip()
+                if rest:
+                    vals.append(rest)
+                continue
+            vals.append(v)
 
-    if depart:
-        result["adresse_depart"], result["contact_depart"], result["telephone_depart"] = parse(depart)
-    if dest:
-        result["adresse_destination"], result["contact_destination"], result["telephone_destination"] = parse(dest)
+        contact = vals[0] if vals else ""
+        address_parts = []
+        for v in vals[1:]:
+            # L'information "Ouverture à ..." n'est pas une adresse.
+            if re.search(r"\bOuverture\s+[aà]\b", v, re.I):
+                continue
+            address_parts.append(v)
 
+        address = ", ".join(address_parts)
+        return contact, address, phone, email
+
+    dep_contact, dep_address, dep_phone, _ = parse(cols.get("depart", []), destination=False)
+    dst_contact, dst_address, dst_phone, dst_email = parse(cols.get("destination", []), destination=True)
+
+    result.update({
+        "adresse_depart": dep_address,
+        "contact_depart": dep_contact,
+        "telephone_depart": dep_phone,
+        "adresse_destination": dst_address,
+        "contact_destination": dst_contact,
+        "telephone_destination": dst_phone,
+        "email_destination": dst_email,
+    })
     return result
+
 
 
 def _extract_enlevement_pdf(pdf_bytes):
@@ -1052,46 +1216,15 @@ def _extract_enlevement_pdf(pdf_bytes):
     if exhibition:
         exhibition = re.split(r"\b(?:Client|Coordinateur)\b", exhibition, maxsplit=1, flags=re.I)[0].strip(" :-|")
 
-    date_enlevement = ""
-
-    # 1) Zone Programme du chantier.
-    programme_match = re.search(
-        r"Programme\s+du\s+chantier(.*?)(?:Instr(?:uctions?|uction)|OBSERVATIONS?|Assur[eé]\s+par)",
-        clean_text,
-        re.I | re.S
-    )
-    if programme_match:
-        date_enlevement = _normalise_enlevement_date(programme_match.group(1))
-
-    # 2) Ligne contenant Enlèvement / Service.
-    if not date_enlevement:
-        for i, line in enumerate(lines):
-            if re.search(r"\b(?:Enl[eè]vement|Service|Programme)\b", line, re.I):
-                window = " ".join(lines[max(0, i - 1):i + 5])
-                date_enlevement = _normalise_enlevement_date(window)
-                if date_enlevement:
-                    break
-
-    # 3) Dernier secours : première date plausible.
-    if not date_enlevement:
-        dates = re.findall(r"\b[0-3]?\d[/.\-][01]?\d[/.\-](?:\d{2}|\d{4})\b", clean_text)
-        normalised = [_normalise_enlevement_date(x) for x in dates]
-        normalised = [x for x in normalised if x]
-        if normalised:
-            date_enlevement = normalised[0]
+    programme = _extract_programme_chantier(clean_text)
+    date_enlevement = programme.get("date_enlevement", "")
 
     instructions = _extract_instructions_block(clean_text)
     # Les articles doivent provenir uniquement de la zone Instructions.
-    # Cela évite de récupérer des références présentes ailleurs sur le bon.
     items = _extract_enlevement_items(instructions) if instructions else []
 
-    contact_data = _extract_contact_blocks(lines)
-
-    notes = _value_after_label(
-        lines,
-        [r"\bNotes?\b"],
-        [r"Instructions?", r"Programme\s+du\s+chantier", r"Service", r"Assur[eé]\s+par"]
-    )
+    contact_data = _extract_contact_blocks(clean_text)
+    notes = programme.get("notes", "")
 
     display_name = " - ".join(
         x for x in [_clean_ocr_line(client), _clean_ocr_line(numero_bon)] if x
@@ -1104,7 +1237,10 @@ def _extract_enlevement_pdf(pdf_bytes):
         "coordinateur": coordinateur,
         "exhibition": exhibition,
         "date_enlevement": date_enlevement,
-        "heure_enlevement": "",
+        "heure_enlevement": programme.get("heure_enlevement", ""),
+        "service": programme.get("service", ""),
+        "assigne_a": programme.get("assigne_a", ""),
+        "vehicules": programme.get("vehicules", ""),
         "notes": notes,
         "instructions": instructions,
         "items": items,
@@ -2057,6 +2193,78 @@ def api_update_ticket(ticket_id):
     ticket['updatedAt'] = datetime.now().isoformat()
     save_ticket(ticket)
     return jsonify({'ok': True})
+
+
+@app.route('/api/tickets/<ticket_id>/enlevement', methods=['PATCH'])
+def api_update_enlevement(ticket_id):
+    """Enregistre les corrections manuelles des champs d'une demande d'enlèvement."""
+    ticket = load_ticket(ticket_id)
+    if not ticket:
+        return jsonify({'ok': False, 'error': 'Ticket introuvable'}), 404
+
+    module_normalise = _as_text(ticket.get('module')).replace("’", "'").strip()
+    if module_normalise not in ("Demande d'enlèvement", "Demande d'enlevement") and not _as_text(ticket_id).startswith('ENL-'):
+        return jsonify({'ok': False, 'error': "Ce ticket n'est pas une demande d'enlèvement"}), 400
+
+    data = request.get_json(silent=True) or {}
+    current = dict(ticket.get('enlevement') or {})
+
+    editable = [
+        'client', 'numero_bon', 'date_enlevement', 'heure_enlevement',
+        'coordinateur', 'exhibition',
+        'adresse_depart', 'contact_depart', 'telephone_depart',
+        'adresse_destination', 'contact_destination', 'telephone_destination',
+        'notes', 'instructions'
+    ]
+    for field in editable:
+        if field in data:
+            current[field] = _as_text(data.get(field)).strip()
+
+    if 'items' in data:
+        if not isinstance(data.get('items'), list):
+            return jsonify({'ok': False, 'error': 'Format des articles invalide'}), 400
+        cleaned_items = []
+        for item in data.get('items') or []:
+            if not isinstance(item, dict):
+                continue
+            cleaned_items.append({
+                'quantite': _as_text(item.get('quantite')).strip(),
+                'designation': _as_text(item.get('designation')).strip(),
+                'reference': _as_text(item.get('reference')).strip(),
+                'dimensions': _as_text(item.get('dimensions')).strip(),
+            })
+        current['items'] = cleaned_items
+        current['references'] = [x['reference'] for x in cleaned_items if x.get('reference')]
+
+    current['display_name'] = " - ".join(
+        x for x in [current.get('client', '').strip(), current.get('numero_bon', '').strip()] if x
+    )
+    current['manually_edited'] = True
+    current['manual_updated_at'] = datetime.now().isoformat()
+    ticket['enlevement'] = current
+
+    # Synchronisation avec les champs historiques utilisés ailleurs.
+    ticket['dossier'] = current.get('client', '')
+    ticket['ref'] = current.get('numero_bon', '')
+    ticket['chargeProjet'] = current.get('coordinateur', '') or '-'
+    ticket['expo'] = current.get('exhibition', '') or '-'
+    ticket['objet'] = current.get('exhibition', '') or '-'
+    ticket['heureRdv'] = current.get('heure_enlevement', '') or '-'
+
+    date_fr = current.get('date_enlevement', '')
+    if date_fr:
+        try:
+            ticket['dateRdv'] = datetime.strptime(date_fr, "%d/%m/%Y").strftime("%Y-%m-%d")
+        except ValueError:
+            return jsonify({'ok': False, 'error': 'La date doit être au format JJ/MM/AAAA'}), 400
+    else:
+        ticket['dateRdv'] = '-'
+
+    ticket['updatedAt'] = datetime.now().isoformat()
+    save_ticket(ticket)
+    return jsonify({'ok': True, 'enlevement': current})
+
+
 
 @app.route('/api/tickets/<ticket_id>/status', methods=['PATCH'])
 def api_update_status(ticket_id):
