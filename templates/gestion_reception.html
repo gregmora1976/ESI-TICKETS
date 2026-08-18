@@ -174,15 +174,12 @@ function fieldValue(t,key){
     client:['client','customer','dossier'],
     numero_bon:['numero_bon','bon_reference','reference_bon','bonNumero','ref'],
     date_enlevement:['date_enlevement','dateEnlevement','date','date_chantier'],
-    heure_enlevement:['heure_enlevement','heureEnlevement','heure'],
     coordinateur:['coordinateur','chargeProjet'],
     exhibition:['site','exhibition','expo'],
     adresse_depart:['adresse_depart','adresseDepart'],
     contact_depart:['contact_depart','contactDepart'],
-    telephone_depart:['telephone_depart','telephoneDepart'],
     adresse_destination:['adresse_destination','adresseDestination'],
     contact_destination:['contact_destination','contactDestination'],
-    telephone_destination:['telephone_destination','telephoneDestination'],
     notes:['notes','note'],
     instructions:['instructions','instruction']
   };
@@ -199,11 +196,11 @@ function renderTicketModal(editing=false){
 
   const rows=[
     ['Client','client',false],['Référence du bon','numero_bon',false],
-    ['Date enlèvement','date_enlevement',false],['Heure','heure_enlevement',false],
+    ['Date enlèvement','date_enlevement',false],
     ['Coordinateur','coordinateur',false],['Site / Exhibition','exhibition',false],
     ['Adresse départ','adresse_depart',true],['Contact départ','contact_depart',false],
-    ['Téléphone départ','telephone_depart',false],['Adresse destination','adresse_destination',true],
-    ['Contact destination','contact_destination',false],['Téléphone destination','telephone_destination',false],
+    ['Adresse destination','adresse_destination',true],
+    ['Contact destination','contact_destination',false],
     ['Notes','notes',true],['Instructions','instructions',true]
   ];
 
