@@ -1211,103 +1211,39 @@ def _extract_programme_chantier(clean_text):
 
 
 def _extract_contact_blocks(clean_text):
-    """
-    Extrait les deux colonnes du bloc Adresses :
-      - Depuis :
-      - À :
-    Le premier élément de chaque colonne est traité comme contact/société,
-    les téléphones sont isolés, et le reste compose l'adresse.
-    """
+    """Extrait les blocs Depuis / À en conservant toutes les informations dans l'adresse."""
     result = {
         "adresse_depart": "",
-        "contact_depart": "",
-        "telephone_depart": "",
         "adresse_destination": "",
-        "contact_destination": "",
-        "telephone_destination": "",
-        "email_destination": "",
     }
 
     raw_lines = _as_text(clean_text).replace("\r", "").splitlines()
-
     header_idx = None
     for i, line in enumerate(raw_lines):
         if re.search(r"\bDepuis\s*:", line, re.I) and re.search(r"(?:\bA\s*:|\bÀ\s*:)", line, re.I):
             header_idx = i
             break
-
     if header_idx is None:
         return result
 
-    # Limite stricte du bloc aux adresses : stop avant Programme du chantier.
     end_idx = len(raw_lines)
     for i in range(header_idx + 1, len(raw_lines)):
         if re.search(r"Programme\s+du\s+chantier", raw_lines[i], re.I):
             end_idx = i
             break
 
-    address_lines = raw_lines[:end_idx]
     cols = _slice_columns_by_headers(
-        address_lines,
-        header_idx,
-        [
-            ("depart", r"\bDepuis\s*:"),
-            ("destination", r"(?:\bA\s*:|\bÀ\s*:)")
-        ]
+        raw_lines[:end_idx], header_idx,
+        [("depart", r"\bDepuis\s*:"), ("destination", r"(?:\bA\s*:|\bÀ\s*:)")]
     )
 
-    phone_re = re.compile(r"(?:\+33\s*\d(?:[\s.\-]?\d{2}){4}|0\d(?:[\s.\-]?\d{2}){4})")
-    email_re = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", re.I)
+    def full_block(values):
+        vals = [_clean_ocr_line(v) for v in values if _clean_ocr_line(v)]
+        return "\n".join(vals)
 
-    def parse(values, destination=False):
-        vals = []
-        phone = ""
-        email = ""
-        for v in values:
-            v = _clean_ocr_line(v)
-            if not v:
-                continue
-            mphone = phone_re.search(v)
-            if mphone and not phone:
-                phone = mphone.group(0).strip()
-                rest = (v[:mphone.start()] + " " + v[mphone.end():]).strip()
-                if rest:
-                    vals.append(rest)
-                continue
-            memail = email_re.search(v)
-            if memail and destination and not email:
-                email = memail.group(0).strip()
-                rest = (v[:memail.start()] + " " + v[memail.end():]).strip()
-                if rest:
-                    vals.append(rest)
-                continue
-            vals.append(v)
-
-        contact = vals[0] if vals else ""
-        address_parts = []
-        for v in vals[1:]:
-            # L'information "Ouverture à ..." n'est pas une adresse.
-            if re.search(r"\bOuverture\s+[aà]\b", v, re.I):
-                continue
-            address_parts.append(v)
-
-        address = ", ".join(address_parts)
-        return contact, address, phone, email
-
-    dep_contact, dep_address, dep_phone, _ = parse(cols.get("depart", []), destination=False)
-    dst_contact, dst_address, dst_phone, dst_email = parse(cols.get("destination", []), destination=True)
-
-    result.update({
-        "adresse_depart": dep_address,
-        "contact_depart": dep_contact,
-        "telephone_depart": dep_phone,
-        "adresse_destination": dst_address,
-        "contact_destination": dst_contact,
-        "telephone_destination": dst_phone,
-        "email_destination": dst_email,
-    })
+    result["adresse_depart"] = full_block(cols.get("depart", []))
+    result["adresse_destination"] = full_block(cols.get("destination", []))
     return result
-
 
 
 
@@ -1348,9 +1284,7 @@ def _extract_enlevement_spatial(pdf_bytes):
     """
     result = {
         "adresse_depart": "",
-        "contact_depart": "",
         "adresse_destination": "",
-        "contact_destination": "",
         "date_enlevement": "",
         "notes": "",
     }
@@ -1444,37 +1378,24 @@ def _extract_enlevement_spatial(pdf_bytes):
         left_lines = _spatial_group_lines([w for w in zone_words if w["cx"] < page_mid])
         right_lines = _spatial_group_lines([w for w in zone_words if w["cx"] >= page_mid])
 
-        phone_re = re.compile(r"^(?:\+33|0\d)(?:[\s.\-]?\d{2}){4}$")
-        email_re = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", re.I)
-
-        def clean_address_lines(lines, side):
+        def clean_address_lines(lines):
             cleaned = []
             for line in lines:
                 txt = _clean_ocr_line(line["text"])
-                compact = re.sub(r"\s+", "", txt)
                 if not txt:
                     continue
-                if re.search(r"\bOuverture\s+[aà]\b", txt, re.I):
-                    continue
-                if phone_re.match(compact):
-                    continue
-                if email_re.search(txt):
-                    continue
-                # Écarte les libellés résiduels.
                 if re.fullmatch(r"(?:Depuis|A|À)\s*:?", txt, re.I):
                     continue
                 cleaned.append(txt)
             return cleaned
 
-        left_clean = clean_address_lines(left_lines, "left")
-        right_clean = clean_address_lines(right_lines, "right")
+        left_clean = clean_address_lines(left_lines)
+        right_clean = clean_address_lines(right_lines)
 
         if left_clean:
-            result["contact_depart"] = left_clean[0]
-            result["adresse_depart"] = ", ".join(left_clean[1:])
+            result["adresse_depart"] = "\n".join(left_clean)
         if right_clean:
-            result["contact_destination"] = right_clean[0]
-            result["adresse_destination"] = ", ".join(right_clean[1:])
+            result["adresse_destination"] = "\n".join(right_clean)
 
     # ------------------------------------------------------------------
     # Programme du chantier : valeur située SOUS le libellé.
@@ -1524,8 +1445,8 @@ def _extract_enlevement_spatial(pdf_bytes):
 
     print(
         "[ENLEVEMENT SPATIAL] "
-        f"depart={result.get('contact_depart') or '-'} / {result.get('adresse_depart') or '-'} | "
-        f"destination={result.get('contact_destination') or '-'} / {result.get('adresse_destination') or '-'} | "
+        f"depart={result.get('adresse_depart') or '-'} | "
+        f"destination={result.get('adresse_destination') or '-'} | "
         f"date={result.get('date_enlevement') or '-'} | notes={result.get('notes') or '-'}"
     )
     return result
@@ -1592,7 +1513,7 @@ def _extract_enlevement_pdf(pdf_bytes):
 
     contact_data = _extract_contact_blocks(clean_text)
     # Les coordonnées OCR réelles sont prioritaires pour les deux colonnes d'adresses.
-    for key in ("adresse_depart", "contact_depart", "adresse_destination", "contact_destination"):
+    for key in ("adresse_depart", "adresse_destination"):
         if spatial.get(key):
             contact_data[key] = spatial[key]
     # Ces informations ne sont pas utilisées dans la fiche réception.
@@ -2585,8 +2506,8 @@ def api_update_enlevement(ticket_id):
     editable = [
         'client', 'numero_bon', 'date_enlevement',
         'coordinateur', 'exhibition',
-        'adresse_depart', 'contact_depart',
-        'adresse_destination', 'contact_destination',
+        'adresse_depart',
+        'adresse_destination',
         'notes', 'instructions'
     ]
     for field in editable:
