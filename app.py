@@ -1456,11 +1456,6 @@ button{margin-top:14px;width:100%;padding:12px 14px;border:none;border-radius:14
 def reception():
     return render_template('reception.html')
 
-
-@app.route('/gestion-reception')
-def gestion_reception():
-    return render_template('gestion_reception.html')
-
 @app.route('/api/status')
 def api_status():
     root = ensure_shared_root()
@@ -1647,6 +1642,9 @@ def api_reception_valider_bl():
 def api_create_ticket():
     form = request.form
     module = form.get('module','')
+    # Normalise l'apostrophe typographique envoyee par certains navigateurs/pages HTML.
+    # Ainsi "Demande d’enlèvement" et "Demande d'enlèvement" sont traites de la meme facon.
+    module = module.replace("’", "'").strip()
 
     prefixes = {
         'Fiche de caisse': 'DEM',
