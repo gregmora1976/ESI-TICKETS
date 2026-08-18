@@ -116,16 +116,26 @@ function startOfCalendar(m){const f=new Date(m.getFullYear(),m.getMonth(),1),day
 function endOfCalendar(m){const l=new Date(m.getFullYear(),m.getMonth()+1,0),day=l.getDay()||7,e=new Date(l);e.setDate(l.getDate()+(5-day));return e;}
 
 function extraction(t){return t.enlevement||t.extraction||t.ocrData||t.ocr_data||{};}
+function usable(v){
+  if(v===undefined||v===null) return false;
+  const s=String(v).trim();
+  return s!==''&&s!=='-';
+}
 function pick(t, keys){
   const x=extraction(t);
+
+  // Les données OCR sont prioritaires pour les champs d'enlèvement.
+  // Les anciennes colonnes du ticket contiennent souvent "-" par défaut.
   for(const k of keys){
-    if(t[k]!==undefined&&String(t[k]).trim()) return t[k];
-    if(x[k]!==undefined&&String(x[k]).trim()) return x[k];
+    if(x[k]!==undefined&&usable(x[k])) return x[k];
+  }
+  for(const k of keys){
+    if(t[k]!==undefined&&usable(t[k])) return t[k];
   }
   return '';
 }
-function client(t){return pick(t,['client','dossier','customer']);}
-function bonRef(t){return pick(t,['bon_reference','reference_bon','numero_bon','bonNumero','ref']);}
+function client(t){return pick(t,['client','customer','dossier']);}
+function bonRef(t){return pick(t,['numero_bon','bon_reference','reference_bon','bonNumero','ref']);}
 function enlDate(t){
   let v=pick(t,['date_enlevement','dateEnlevement','date','date_chantier']);
   if(!v||v==='-') return '';
@@ -167,7 +177,8 @@ function openTicket(t){
     ['Téléphone destination',pick(t,['telephone_destination','telephoneDestination'])],
     ['Notes',pick(t,['notes','note'])],
     ['Instructions',pick(t,['instructions','instruction'])],
-    ["État de l'analyse",pick(t,['analyse_status','analysis_status','ocr_status'])]
+    ["État de l'analyse",pick(t,['analysis_status','analyse_status','ocr_status'])],
+    ["Erreur d'analyse",pick(t,['analysis_error','analyse_error','ocr_error'])]
   ];
   let html=`<div class="detail-grid">${rows.map(r=>`<div class="detail-label">${esc(r[0])}</div><div class="detail-value">${esc(val(r[1]))}</div>`).join('')}</div>`;
   html+=`<div class="section"><div class="section-title">Articles à enlever</div>`;
