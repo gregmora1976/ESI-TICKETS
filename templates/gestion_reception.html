@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ESI - Gestion réception</title>
+<link rel="icon" type="image/png" href="/static/logo.png">
+<style>
+:root{
+  --bg:#f1f5f9;--panel:#fff;--line:#dbe7f0;--text:#0f172a;--muted:#64748b;
+  --blue:#0ea5e9;--blue-dark:#0284c7;--event:#dbeafe;--event-border:#0284c7;
+  --warning:#fef3c7;--warning-border:#d97706;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)}
+.topbar{background:#fff;border-bottom:1px solid var(--line);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:14px;position:sticky;top:0;z-index:10}
+.title{font-size:22px;font-weight:900}.sub{color:var(--muted);font-size:13px;margin-top:3px}
+.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:#fff;border-radius:12px;padding:10px 13px;font-weight:800;cursor:pointer}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.search{border:1px solid var(--line);background:#f8fafc;border-radius:12px;padding:10px 13px;font-size:14px;min-width:260px}
+.month-label{font-size:18px;font-weight:900;min-width:180px;text-align:center}
+.pending-wrap{padding:14px 14px 0}.pending{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.pending-title{font-size:14px;font-weight:900;color:#92400e;margin-bottom:8px}
+.pending-list{display:flex;gap:8px;flex-wrap:wrap}.pending-empty{font-size:13px;color:var(--muted)}
+.pending-ticket{border:1px solid var(--warning-border);background:var(--warning);border-radius:10px;padding:8px 10px;font-weight:800;cursor:pointer}
+.calendar-wrap{padding:14px}.calendar{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.week-head{display:grid;grid-template-columns:repeat(5,1fr);border-bottom:1px solid var(--line);background:#f8fafc}
+.week-head div{padding:12px 10px;font-weight:900;text-transform:lowercase;border-right:1px solid var(--line)}.week-head div:last-child{border-right:none}
+.month-grid{display:grid;grid-template-columns:repeat(5,1fr)}
+.day{min-height:130px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px;position:relative;background:#fff}
+.day:nth-child(5n){border-right:none}.day.other-month{background:#f8fafc;color:#94a3b8}.day.today{background:#eff6ff}
+.day-number{font-size:18px;font-weight:900;margin-bottom:8px}.day-number.small{font-size:14px;color:#94a3b8}
+.event{display:block;width:100%;border:none;border-left:5px solid var(--event-border);background:var(--event);color:#111827;border-radius:3px;padding:6px 7px;margin:4px 0;font-size:13px;line-height:1.25;text-align:left;cursor:pointer;font-weight:800;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.event:hover{filter:brightness(.97)}
+.legend{padding:10px 14px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#fff;border-top:1px solid var(--line)}
+.modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.42);display:none;align-items:center;justify-content:center;padding:20px;z-index:1000}.modal-backdrop.open{display:flex}
+.ticket-modal{width:min(850px,96vw);max-height:92vh;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 70px rgba(15,23,42,.24)}
+.ticket-modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:18px 20px 14px;border-bottom:1px solid var(--line)}
+.ticket-modal-title{font-size:20px;font-weight:900}.ticket-modal-sub{margin-top:4px;color:var(--muted);font-size:13px}
+.modal-close{border:none;background:#f1f5f9;width:36px;height:36px;border-radius:10px;cursor:pointer;font-size:22px;line-height:1;color:#334155}
+.ticket-modal-body{padding:18px 20px 20px}.detail-grid{display:grid;grid-template-columns:170px 1fr;gap:10px 16px;align-items:start}
+.detail-label{color:var(--muted);font-size:13px;font-weight:800}.detail-value{font-weight:800;overflow-wrap:anywhere;white-space:pre-wrap}
+.section{margin-top:20px;padding:16px;border-radius:14px;border:1px solid var(--line);background:#f8fafc}
+.section-title{color:var(--muted);font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
+.items-table{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden}
+.items-table th,.items-table td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;font-size:13px}.items-table th{background:#f1f5f9}.items-table tr:last-child td{border-bottom:none}
+.file-link{display:inline-block;border:1px solid var(--line);background:#fff;border-radius:10px;padding:9px 12px;font-weight:800;color:#0369a1;text-decoration:none;margin:3px}
+.ticket-modal-foot{padding:0 20px 20px;display:flex;justify-content:flex-end}
+@media(max-width:600px){.detail-grid{grid-template-columns:1fr;gap:4px}.detail-value{margin-bottom:8px}}
+@media(max-width:900px){.month-grid,.week-head{grid-template-columns:1fr}.week-head{display:none}.day{min-height:auto;border-right:none}}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div>
+    <div class="title">Gestion réception</div>
+    <div class="sub">Demandes d'enlèvement classées par date extraite du bon PDF</div>
+  </div>
+  <div class="actions">
+    <button class="btn" id="prevMonth" type="button">‹ Mois précédent</button>
+    <div class="month-label" id="monthLabel"></div>
+    <button class="btn" id="nextMonth" type="button">Mois suivant ›</button>
+    <button class="btn primary" id="todayBtn" type="button">Aujourd'hui</button>
+    <input class="search" id="searchInput" type="search" placeholder="Client, bon, référence item..." />
+    <button class="btn" id="refreshBtn" type="button">Rafraîchir</button>
+  </div>
+</div>
+
+<div class="pending-wrap">
+  <div class="pending">
+    <div class="pending-title">À vérifier — date d'enlèvement non détectée</div>
+    <div class="pending-list" id="pendingList"></div>
+  </div>
+</div>
+
+<div class="calendar-wrap">
+  <div class="calendar">
+    <div class="week-head"><div>lundi</div><div>mardi</div><div>mercredi</div><div>jeudi</div><div>vendredi</div></div>
+    <div class="month-grid" id="monthGrid"></div>
+    <div class="legend">
+      <div>Affichage : demandes d'enlèvement</div>
+      <div>Format : Client — Référence du bon</div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="ticketModalBackdrop" aria-hidden="true">
+  <div class="ticket-modal" role="dialog" aria-modal="true">
+    <div class="ticket-modal-head">
+      <div>
+        <div class="ticket-modal-title" id="ticketModalTitle">Demande d'enlèvement</div>
+        <div class="ticket-modal-sub" id="ticketModalSub">-</div>
+      </div>
+      <button class="modal-close" id="ticketModalClose" type="button">×</button>
+    </div>
+    <div class="ticket-modal-body" id="ticketModalBody"></div>
+    <div class="ticket-modal-foot"><button class="btn" id="ticketModalCloseBottom" type="button">Fermer</button></div>
+  </div>
+</div>
+
+<script>
+let currentDate=new Date(), tickets=[], searchTerm='';
+
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function val(v){const s=String(v??'').trim();return s||'-';}
+function pad(n){return String(n).padStart(2,'0');}
+function isoDate(d){return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;}
+function labelMonth(d){return d.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});}
+function isWeekday(d){return d.getDay()>=1&&d.getDay()<=5;}
+function startOfCalendar(m){const f=new Date(m.getFullYear(),m.getMonth(),1),day=f.getDay()||7,s=new Date(f);s.setDate(f.getDate()-(day-1));return s;}
+function endOfCalendar(m){const l=new Date(m.getFullYear(),m.getMonth()+1,0),day=l.getDay()||7,e=new Date(l);e.setDate(l.getDate()+(5-day));return e;}
+
+function extraction(t){return t.enlevement||t.extraction||t.ocrData||t.ocr_data||{};}
+function pick(t, keys){
+  const x=extraction(t);
+  for(const k of keys){
+    if(t[k]!==undefined&&String(t[k]).trim()) return t[k];
+    if(x[k]!==undefined&&String(x[k]).trim()) return x[k];
+  }
+  return '';
+}
+function client(t){return pick(t,['client','dossier','customer']);}
+function bonRef(t){return pick(t,['bon_reference','reference_bon','numero_bon','bonNumero','ref']);}
+function enlDate(t){
+  let v=pick(t,['date_enlevement','dateEnlevement','date','date_chantier']);
+  if(!v||v==='-') return '';
+  v=String(v).trim();
+  if(/^\d{2}\/\d{2}\/\d{2,4}$/.test(v)){
+    const [d,m,y0]=v.split('/'); const y=y0.length===2?'20'+y0:y0; return `${y}-${m}-${d}`;
+  }
+  return /^\d{4}-\d{2}-\d{2}$/.test(v)?v:'';
+}
+function items(t){
+  const x=extraction(t);
+  const a=t.items||t.enlevement_items||x.items||x.articles||x.references_items||[];
+  return Array.isArray(a)?a:[];
+}
+function eventText(t){return `${val(client(t))} — ${val(bonRef(t))}`;}
+function matches(t){
+  if(!searchTerm) return true;
+  const refs=items(t).map(i=>`${i.reference||i.ref||''} ${i.designation||i.description||''}`).join(' ');
+  return `${t.id||''} ${client(t)} ${bonRef(t)} ${refs} ${JSON.stringify(extraction(t))}`.toLowerCase().includes(searchTerm.toLowerCase());
+}
+function isEnlevement(t){return t.module==="Demande d'enlèvement"||t.module==='Demande d’enlèvement'||String(t.id||'').startsWith('ENL-');}
+
+function openTicket(t){
+  const x=extraction(t), its=items(t);
+  document.getElementById('ticketModalSub').textContent=`${val(client(t))} — ${val(bonRef(t))}`;
+  let rows=[
+    ['Ticket',t.id],['Client',client(t)],['Référence du bon',bonRef(t)],
+    ['Date enlèvement',pick(t,['date_enlevement','dateEnlevement','date','date_chantier'])],
+    ['Heure',pick(t,['heure_enlevement','heureEnlevement','heure'])],
+    ['Coordinateur',pick(t,['coordinateur','chargeProjet'])],
+    ['Site / Exhibition',pick(t,['site','exhibition','expo'])],
+    ['Adresse départ',pick(t,['adresse_depart','adresseDepart'])],
+    ['Contact départ',pick(t,['contact_depart','contactDepart'])],
+    ['Téléphone départ',pick(t,['telephone_depart','telephoneDepart'])],
+    ['Adresse destination',pick(t,['adresse_destination','adresseDestination'])],
+    ['Contact destination',pick(t,['contact_destination','contactDestination'])],
+    ['Téléphone destination',pick(t,['telephone_destination','telephoneDestination'])],
+    ['Notes',pick(t,['notes','note'])],
+    ['Instructions',pick(t,['instructions','instruction'])],
+    ["État de l'analyse",pick(t,['analyse_status','analysis_status','ocr_status'])]
+  ];
+  let html=`<div class="detail-grid">${rows.map(r=>`<div class="detail-label">${esc(r[0])}</div><div class="detail-value">${esc(val(r[1]))}</div>`).join('')}</div>`;
+  html+=`<div class="section"><div class="section-title">Articles à enlever</div>`;
+  if(its.length){
+    html+=`<table class="items-table"><thead><tr><th>Qté</th><th>Désignation</th><th>Référence</th><th>Dimensions</th></tr></thead><tbody>`+
+      its.map(i=>`<tr><td>${esc(val(i.quantite||i.qty))}</td><td>${esc(val(i.designation||i.description))}</td><td><strong>${esc(val(i.reference||i.ref))}</strong></td><td>${esc(val(i.dimensions))}</td></tr>`).join('')+
+      `</tbody></table>`;
+  }else html+=`<div>Aucun article extrait pour le moment.</div>`;
+  html+=`</div>`;
+
+  const files=(t.files||[]).filter(f=>f&&f.name);
+  html+=`<div class="section"><div class="section-title">Bon d'enlèvement PDF</div>`;
+  html+=files.length?files.map(f=>`<a class="file-link" target="_blank" href="/api/tickets/${encodeURIComponent(t.id)}/download/${encodeURIComponent(f.name)}">${esc(f.name)}</a>`).join(''):`<div>Aucun PDF disponible.</div>`;
+  html+=`</div>`;
+  document.getElementById('ticketModalBody').innerHTML=html;
+  const b=document.getElementById('ticketModalBackdrop');b.classList.add('open');b.setAttribute('aria-hidden','false');
+}
+function closeTicket(){const b=document.getElementById('ticketModalBackdrop');b.classList.remove('open');b.setAttribute('aria-hidden','true');}
+
+function renderPending(){
+  const el=document.getElementById('pendingList');
+  const list=tickets.filter(t=>isEnlevement(t)&&!enlDate(t)&&matches(t));
+  el.innerHTML='';
+  if(!list.length){el.innerHTML='<div class="pending-empty">Aucun ticket à vérifier.</div>';return;}
+  list.forEach(t=>{const b=document.createElement('button');b.className='pending-ticket';b.type='button';b.textContent=eventText(t);b.addEventListener('click',()=>openTicket(t));el.appendChild(b);});
+}
+function grouped(){
+  const g={};
+  tickets.filter(t=>isEnlevement(t)&&enlDate(t)&&matches(t)).forEach(t=>{const d=enlDate(t);(g[d]??=[]).push(t);});
+  return g;
+}
+function renderCalendar(){
+  document.getElementById('monthLabel').textContent=labelMonth(currentDate);
+  const grid=document.getElementById('monthGrid');grid.innerHTML='';const g=grouped(),start=startOfCalendar(currentDate),end=endOfCalendar(currentDate),today=isoDate(new Date());
+  let d=new Date(start);
+  while(d<=end){
+    if(isWeekday(d)){
+      const key=isoDate(d),day=document.createElement('div');day.className='day';
+      if(d.getMonth()!==currentDate.getMonth())day.classList.add('other-month');if(key===today)day.classList.add('today');
+      const num=document.createElement('div');num.className=d.getMonth()!==currentDate.getMonth()?'day-number small':'day-number';
+      num.textContent=d.getDate()===1?d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'}):d.getDate();day.appendChild(num);
+      (g[key]||[]).sort((a,b)=>eventText(a).localeCompare(eventText(b))).forEach(t=>{const e=document.createElement('button');e.className='event';e.type='button';e.textContent=eventText(t);e.title=e.textContent;e.addEventListener('click',()=>openTicket(t));day.appendChild(e);});
+      grid.appendChild(day);
+    }
+    d.setDate(d.getDate()+1);
+  }
+  renderPending();
+}
+async function loadTickets(){
+  try{
+    const res=await fetch('/api/tickets',{cache:'no-store'});
+    if(!res.ok)throw new Error('Lecture des tickets impossible');
+    tickets=await res.json();renderCalendar();
+  }catch(e){console.error(e);document.getElementById('pendingList').innerHTML='<div class="pending-empty">Impossible de charger les tickets.</div>';}
+}
+document.getElementById('prevMonth').addEventListener('click',()=>{currentDate=new Date(currentDate.getFullYear(),currentDate.getMonth()-1,1);renderCalendar();});
+document.getElementById('nextMonth').addEventListener('click',()=>{currentDate=new Date(currentDate.getFullYear(),currentDate.getMonth()+1,1);renderCalendar();});
+document.getElementById('todayBtn').addEventListener('click',()=>{currentDate=new Date();renderCalendar();});
+document.getElementById('refreshBtn').addEventListener('click',loadTickets);
+document.getElementById('searchInput').addEventListener('input',e=>{searchTerm=e.target.value.trim();renderCalendar();});
+document.getElementById('ticketModalClose').addEventListener('click',closeTicket);
+document.getElementById('ticketModalCloseBottom').addEventListener('click',closeTicket);
+document.getElementById('ticketModalBackdrop').addEventListener('click',e=>{if(e.target.id==='ticketModalBackdrop')closeTicket();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeTicket();});
+loadTickets();setInterval(loadTickets,30000);
+</script>
+</body>
+</html>
