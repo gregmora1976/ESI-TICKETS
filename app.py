@@ -419,8 +419,21 @@ def _ticket_to_db_row(ticket):
 def _ticket_from_db_row(row):
     # raw_json permet de conserver des donnees metier additionnelles sans ajouter
     # immediatement de nouvelles colonnes Supabase (ex. analyse d'un bon d'enlevement).
+    #
+    # Selon la reponse PostgREST / le type reel de la colonne Supabase, raw_json
+    # peut arriver soit deja decode en dict, soit sous forme de chaine JSON.
     raw = row.get("raw_json")
-    ticket = dict(raw) if isinstance(raw, dict) else {}
+    if isinstance(raw, dict):
+        ticket = dict(raw)
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            decoded = json.loads(raw)
+            ticket = dict(decoded) if isinstance(decoded, dict) else {}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            print(f"[SUPABASE DB] raw_json invalide pour ticket {row.get('id')}: {type(raw).__name__}")
+            ticket = {}
+    else:
+        ticket = {}
 
     # Les colonnes principales restent la source de verite pour les champs historiques.
     ticket.update({
