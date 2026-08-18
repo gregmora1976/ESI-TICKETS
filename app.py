@@ -417,7 +417,13 @@ def _ticket_to_db_row(ticket):
 
 
 def _ticket_from_db_row(row):
-    return {
+    # raw_json permet de conserver des donnees metier additionnelles sans ajouter
+    # immediatement de nouvelles colonnes Supabase (ex. analyse d'un bon d'enlevement).
+    raw = row.get("raw_json")
+    ticket = dict(raw) if isinstance(raw, dict) else {}
+
+    # Les colonnes principales restent la source de verite pour les champs historiques.
+    ticket.update({
         "id": row.get("id") or "",
         "module": row.get("module") or "",
         "status": row.get("status") or "",
@@ -439,7 +445,8 @@ def _ticket_from_db_row(row):
         "contactRdv": row.get("contact_rdv") or "-",
         "commentaire": row.get("commentaire") or "",
         "validatedAt": row.get("validated_at") or "",
-    }
+    })
+    return ticket
 
 
 def _fiche_to_db_row(ticket_id, fiche):
@@ -664,6 +671,253 @@ def load_ticket(ticket_id):
     if not rows:
         return None
     return _attach_children(_ticket_from_db_row(rows[0]))
+
+
+# -----------------------------------------------------------------------------
+# Demande d'enlevement - analyse automatique des bons PDF
+# -----------------------------------------------------------------------------
+def _extract_enlevement_pdf_text(pdf_bytes):
+    """Extrait le texte d'un bon d'enlevement natif ou scanne."""
+    try:
+        from pypdf import PdfReader
+    except Exception as e:
+        raise RuntimeError(
+            "Le module pypdf n'est pas installe. Ajoute pypdf a requirements.txt."
+        ) from e
+
+    try:
+        reader = PdfReader(BytesIO(pdf_bytes))
+    except Exception as e:
+        raise ValueError(f"PDF illisible : {e}")
+
+    pages_text = []
+    for page in reader.pages:
+        try:
+            pages_text.append(page.extract_text() or "")
+        except Exception:
+            pages_text.append("")
+
+    text = "\n".join(pages_text).strip()
+    ocr_used = False
+
+    if len(text) < 80:
+        print("[ENLEVEMENT OCR] Texte natif insuffisant, lancement de l'OCR")
+        try:
+            from pdf2image import convert_from_bytes
+            import pytesseract
+        except Exception as e:
+            raise RuntimeError(
+                "OCR indisponible. Verifie pdf2image, pytesseract, Pillow, "
+                "tesseract-ocr et poppler-utils."
+            ) from e
+
+        with _RECEPTION_OCR_LOCK:
+            try:
+                images = convert_from_bytes(
+                    pdf_bytes, dpi=200, grayscale=True, thread_count=1
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    "Impossible de convertir le PDF en image pour l'OCR."
+                ) from e
+
+            ocr_pages = []
+            total_pages = len(images)
+            for index, image in enumerate(images, start=1):
+                try:
+                    page_text = pytesseract.image_to_string(
+                        image, lang="fra", config="--psm 6"
+                    )
+                except Exception as e:
+                    raise RuntimeError("Echec OCR Tesseract.") from e
+                print(f"[ENLEVEMENT OCR] Page {index}/{total_pages} analysee")
+                ocr_pages.append(page_text or "")
+                try:
+                    image.close()
+                except Exception:
+                    pass
+            images.clear()
+            text = "\n".join(ocr_pages).strip()
+        ocr_used = True
+
+    if not text:
+        raise ValueError("Aucun texte exploitable trouve dans le bon d'enlevement.")
+
+    return text, len(reader.pages), ocr_used
+
+
+def _clean_ocr_line(value):
+    return re.sub(r"\s+", " ", _as_text(value)).strip(" \t|")
+
+
+def _extract_enlevement_items(instructions_text):
+    """Extrait les items/references de la zone Instructions avec deduplication."""
+    lines = [_clean_ocr_line(x) for x in instructions_text.splitlines()]
+    lines = [x for x in lines if x]
+    items = []
+    seen_refs = set()
+
+    def previous_description(index):
+        for j in range(index - 1, max(-1, index - 4), -1):
+            candidate = lines[j]
+            if re.search(r"merci|rappel|storage|instruction|assur[eé]|valeur", candidate, re.I):
+                continue
+            if not re.search(r"\bREF\s*[:.-]", candidate, re.I):
+                return candidate
+        return ""
+
+    def add_item(reference, description="", dimensions=""):
+        ref = re.sub(r"^[^A-Za-z0-9]+|[^A-Za-z0-9_-]+$", "", reference or "")
+        if len(ref) < 2 or ref.upper() in seen_refs:
+            return
+        seen_refs.add(ref.upper())
+        qty = ""
+        designation = description.strip()
+        mqty = re.match(r"^\s*(\d+)\s*[xX]?\s+(.+)$", designation)
+        if mqty:
+            qty = mqty.group(1)
+            designation = mqty.group(2).strip()
+        items.append({
+            "reference": ref,
+            "quantite": qty,
+            "designation": designation,
+            "dimensions": dimensions.strip(),
+        })
+
+    # Cas explicite : REF : AN001
+    for i, line in enumerate(lines):
+        m = re.search(r"\bREF(?:ERENCE)?\s*[:.=-]\s*([A-Za-z0-9][A-Za-z0-9_-]{1,})", line, re.I)
+        if not m:
+            continue
+        dims = ""
+        if i + 1 < len(lines):
+            md = re.search(r"(\d+(?:[.,]\d+)?\s*[xX×]\s*\d+(?:[.,]\d+)?(?:\s*[xX×]\s*\d+(?:[.,]\d+)?)?\s*(?:cm|mm|m)?)", lines[i + 1], re.I)
+            if md:
+                dims = md.group(1)
+        add_item(m.group(1), previous_description(i), dims)
+
+    # Cas sans libelle REF : LDV_1047 // Dims. 114 x 71 cm
+    for i, line in enumerate(lines):
+        m = re.match(r"^([A-Za-z][A-Za-z0-9]*[_-][A-Za-z0-9_-]+)\b", line)
+        if not m:
+            continue
+        dims = ""
+        md = re.search(r"(?:Dims?\.?\s*)?([0-9]+(?:[.,][0-9]+)?\s*[xX×]\s*[0-9]+(?:[.,][0-9]+)?(?:\s*[xX×]\s*[0-9]+(?:[.,][0-9]+)?)?\s*(?:cm|mm|m)?)", line, re.I)
+        if md:
+            dims = md.group(1)
+        add_item(m.group(1), previous_description(i), dims)
+
+    return items
+
+
+def _extract_enlevement_pdf(pdf_bytes):
+    """Analyse un bon d'enlevement et retourne les donnees utiles au planning reception."""
+    text, page_count, ocr_used = _extract_enlevement_pdf_text(pdf_bytes)
+    clean_text = text.replace("\r", "")
+
+    def first_match(pattern, flags=re.I | re.M, group=1):
+        m = re.search(pattern, clean_text, flags)
+        return _clean_ocr_line(m.group(group)) if m else ""
+
+    numero_bon = first_match(
+        r"Num[eé]ro\s+de\s+r[eé]f[eé]r(?:ence)?\s*[:.-]?\s*([A-Za-z0-9_-]+)"
+    )
+    client = first_match(r"^\s*Client\s*[:.-]?\s*([^\n]+)$")
+    coordinateur = first_match(r"Coordinateur\s*[:.-]?\s*([^\n]+)")
+    exhibition = first_match(r"Exhibition\s*[:.-]?\s*([^\n]+)")
+
+    # Zone Programme du chantier : on prend en priorite la premiere date qui suit ce titre.
+    date_enlevement = ""
+    programme = re.search(r"Programme\s+du\s+chantier(.*?)(?:Instructions|OBSERVATIONS|Assur[eé]\s+par)", clean_text, re.I | re.S)
+    if programme:
+        md = re.search(r"\b([0-3]?\d/[01]?\d/(?:\d{2}|\d{4}))\b", programme.group(1))
+        if md:
+            date_enlevement = md.group(1)
+
+    # Bloc Instructions uniquement, pour ne pas confondre signatures et references.
+    instructions = ""
+    mi = re.search(
+        r"Instructions\s*(.*?)(?:Assur[eé]\s+par|OBSERVATIONS\s+ou\s+RESERVES|OBSERVATIONS|Valeur\s+assur[eé]e)",
+        clean_text, re.I | re.S
+    )
+    if mi:
+        instructions = mi.group(1).strip()
+
+    items = _extract_enlevement_items(instructions)
+
+    return {
+        "numero_bon": numero_bon,
+        "client": client,
+        "coordinateur": coordinateur,
+        "exhibition": exhibition,
+        "date_enlevement": date_enlevement,
+        "instructions": instructions,
+        "items": items,
+        "references": [x.get("reference") for x in items if x.get("reference")],
+        "page_count": page_count,
+        "ocr_used": ocr_used,
+        "raw_text": clean_text,
+    }
+
+
+def _analyse_enlevement_ticket_background(ticket_id, pdf_bytes):
+    """Analyse le bon apres creation du ticket, sans bloquer le demandeur."""
+    try:
+        print(f"[ENLEVEMENT] Analyse asynchrone demarree pour {ticket_id}")
+        parsed = _extract_enlevement_pdf(pdf_bytes)
+        ticket = load_ticket(ticket_id)
+        if not ticket:
+            print(f"[ENLEVEMENT] Ticket introuvable apres creation : {ticket_id}")
+            return
+
+        ticket["enlevement"] = {
+            **parsed,
+            "analysis_status": "ready",
+            "analysis_error": "",
+            "analysed_at": datetime.now().isoformat(),
+        }
+
+        # Recopie quelques champs dans le modele historique pour faciliter les listes existantes.
+        if parsed.get("client"):
+            ticket["dossier"] = parsed["client"]
+        if parsed.get("numero_bon"):
+            ticket["ref"] = parsed["numero_bon"]
+        if parsed.get("exhibition"):
+            ticket["expo"] = parsed["exhibition"]
+            ticket["objet"] = parsed["exhibition"]
+        if parsed.get("date_enlevement"):
+            try:
+                dt = datetime.strptime(parsed["date_enlevement"], "%d/%m/%y")
+                ticket["dateRdv"] = dt.strftime("%Y-%m-%d")
+            except ValueError:
+                try:
+                    dt = datetime.strptime(parsed["date_enlevement"], "%d/%m/%Y")
+                    ticket["dateRdv"] = dt.strftime("%Y-%m-%d")
+                except ValueError:
+                    pass
+
+        ticket["updatedAt"] = datetime.now().isoformat()
+        save_ticket(ticket)
+        print(
+            f"[ENLEVEMENT] Analyse terminee pour {ticket_id}: "
+            f"{len(parsed.get('items') or [])} item(s), OCR={parsed.get('ocr_used')}"
+        )
+    except Exception as e:
+        print(f"[ENLEVEMENT] Erreur analyse {ticket_id}: {e}")
+        try:
+            ticket = load_ticket(ticket_id)
+            if ticket:
+                current = ticket.get("enlevement") or {}
+                current.update({
+                    "analysis_status": "error",
+                    "analysis_error": str(e),
+                    "analysed_at": datetime.now().isoformat(),
+                })
+                ticket["enlevement"] = current
+                ticket["updatedAt"] = datetime.now().isoformat()
+                save_ticket(ticket)
+        except Exception as save_error:
+            print(f"[ENLEVEMENT] Impossible d'enregistrer l'erreur {ticket_id}: {save_error}")
 
 
 # -----------------------------------------------------------------------------
@@ -1388,7 +1642,32 @@ def api_reception_valider_bl():
 def api_create_ticket():
     form = request.form
     module = form.get('module','')
-    prefix = 'DEM' if module == 'Fiche de caisse' else ('DEV' if module == 'Demande de devis' else 'AV')
+
+    prefixes = {
+        'Fiche de caisse': 'DEM',
+        'Demande de devis': 'DEV',
+        'Demande Aller voir': 'AV',
+        'Demande d\'enlèvement': 'ENL',
+        'Demande d\'enlevement': 'ENL',
+    }
+    prefix = prefixes.get(module, 'AV')
+
+    incoming_files = [fs for fs in request.files.getlist('files') if fs and fs.filename]
+    is_enlevement = module in ("Demande d'enlèvement", "Demande d'enlevement")
+
+    # Pour une demande d'enlevement, le demandeur ne fait qu'une chose : deposer un PDF.
+    if is_enlevement:
+        if len(incoming_files) != 1:
+            return jsonify({
+                'ok': False,
+                'error': "La demande d'enlèvement doit contenir un seul bon PDF."
+            }), 400
+        if not incoming_files[0].filename.lower().endswith('.pdf'):
+            return jsonify({
+                'ok': False,
+                'error': "Le bon d'enlèvement doit être un fichier PDF."
+            }), 400
+
     ticket_id = next_id(prefix)
     ticket = {
         'id': ticket_id,
@@ -1413,13 +1692,23 @@ def api_create_ticket():
         'files': [],
         'managerSheets': []
     }
+
+    if is_enlevement:
+        ticket['enlevement'] = {
+            'analysis_status': 'pending',
+            'analysis_error': '',
+            'items': [],
+            'references': [],
+        }
+
     ticket_folder(ticket_id)  # conserve la création du dossier local historique
 
-    for fs in request.files.getlist('files'):
-        if not fs.filename:
-            continue
-
+    enlevement_pdf_bytes = None
+    for fs in incoming_files:
         content = fs.read()
+        if is_enlevement:
+            enlevement_pdf_bytes = content
+
         clean_name = safe_filename(fs.filename)
         storage_path = f"{ticket_id}/{datetime.now().strftime('%Y%m%d%H%M%S')}_{clean_name}"
 
@@ -1439,8 +1728,23 @@ def api_create_ticket():
             'path': storage_path
         })
 
+    # Le ticket est sauvegarde avant toute analyse : le demandeur n'attend jamais l'OCR.
     save_ticket(ticket)
-    return jsonify({'ok': True, 'id': ticket_id})
+
+    if is_enlevement and enlevement_pdf_bytes:
+        worker = threading.Thread(
+            target=_analyse_enlevement_ticket_background,
+            args=(ticket_id, enlevement_pdf_bytes),
+            daemon=True,
+            name=f"enlevement-{ticket_id}"
+        )
+        worker.start()
+
+    return jsonify({
+        'ok': True,
+        'id': ticket_id,
+        'analysis_status': 'pending' if is_enlevement else None
+    })
 
 
 @app.route('/api/tickets/<ticket_id>', methods=['PUT'])
