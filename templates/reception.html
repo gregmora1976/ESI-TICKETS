@@ -1155,8 +1155,11 @@ function updateStats(){
     }
   });
 
+  // Historique : 52 caisses réalisées en 2026 ne sont pas présentes dans l'application.
+  const historiqueCaisses2026 = year === 2026 ? 52 : 0;
+
   document.getElementById('statPending').textContent = pending;
-  document.getElementById('statDone').textContent = done;
+  document.getElementById('statDone').textContent = done + historiqueCaisses2026;
   document.getElementById('statDoneLabel').textContent = `Caisses réalisées en ${year}`;
 }
 
