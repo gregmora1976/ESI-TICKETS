@@ -594,6 +594,87 @@ def list_tickets(status=None, limit=None):
     return tickets
 
 
+
+_RECEPTION_MIGRATION_LOCK = threading.Lock()
+_RECEPTION_MIGRATION_DONE = False
+
+
+def migrate_caisses_avant_18_aout_2026():
+    """
+    Passe en statut Réceptionnée toutes les fiches de caisse dont la date de mise à dispo
+    est strictement antérieure au 18/08/2026.
+
+    Cette migration est idempotente : les caisses déjà réceptionnées sont ignorées.
+    """
+    global _RECEPTION_MIGRATION_DONE
+
+    with _RECEPTION_MIGRATION_LOCK:
+        if _RECEPTION_MIGRATION_DONE:
+            return
+
+        cutoff = datetime(2026, 8, 18)
+        updated = 0
+        skipped = 0
+        errors = 0
+
+        try:
+            all_tickets = list_tickets()
+        except Exception as e:
+            print(f"[RECEPTION MIGRATION] Lecture des tickets impossible : {e}")
+            return
+
+        for ticket in all_tickets:
+            try:
+                if ticket.get('module') != 'Fiche de caisse':
+                    continue
+
+                current_status = _as_text(ticket.get('status')).strip()
+                if current_status == 'Réceptionnée':
+                    skipped += 1
+                    continue
+
+                raw_date = _as_text(ticket.get('dateEmballage')).strip()
+                if not raw_date or raw_date == '-':
+                    continue
+
+                try:
+                    d = datetime.fromisoformat(raw_date[:10])
+                except Exception:
+                    continue
+
+                if d >= cutoff:
+                    continue
+
+                reception = dict(ticket.get('reception') or {})
+                reception.setdefault('receptionnee_le', d.isoformat())
+                reception.setdefault('mode', 'migration_2026_08_18')
+                ticket['reception'] = reception
+                ticket['status'] = 'Réceptionnée'
+                ticket['updatedAt'] = datetime.now().isoformat()
+
+                supabase_rest_request(
+                    "PATCH",
+                    "tickets",
+                    "id=eq." + urllib.parse.quote(ticket.get('id'), safe=''),
+                    {
+                        "status": "Réceptionnée",
+                        "updated_at": ticket['updatedAt'],
+                        "raw_json": ticket
+                    },
+                    prefer="return=minimal"
+                )
+                updated += 1
+            except Exception as e:
+                errors += 1
+                print(f"[RECEPTION MIGRATION] Erreur {ticket.get('id')}: {e}")
+
+        _RECEPTION_MIGRATION_DONE = True
+        print(
+            f"[RECEPTION MIGRATION] {updated} caisse(s) passée(s) à Réceptionnée, "
+            f"{skipped} déjà réceptionnée(s), {errors} erreur(s)"
+        )
+
+
 def next_id(prefix):
     safe_prefix = urllib.parse.quote(prefix + '-*', safe='*-')
     rows = supabase_rest_request(
@@ -2166,6 +2247,11 @@ def api_status():
 def api_tickets():
     status = request.args.get('status')
     limit = request.args.get('limit')
+
+    # Migration historique : toutes les caisses antérieures au 18/08/2026
+    # sont considérées comme réceptionnées.
+    migrate_caisses_avant_18_aout_2026()
+
     tickets = list_tickets(status=status, limit=limit)
     return jsonify(tickets)
 
@@ -2201,16 +2287,20 @@ def api_update_localisation(ticket_id):
     ticket['updatedAt'] = datetime.now().isoformat()
 
     # Une localisation renseignée acte également une réception manuelle.
-    # Si un BL avait déjà été associé, on le conserve.
+    # Le statut Réceptionnée devient la source de vérité pour le planning et les compteurs.
     reception = dict(ticket.get('reception') or {})
     if localisation:
         reception.setdefault('receptionnee_le', datetime.now().isoformat())
         reception.setdefault('mode', 'manuel')
         ticket['reception'] = reception
+        ticket['status'] = 'Réceptionnée'
     else:
-        # Effacer la localisation remet la caisse à recevoir et retire les métadonnées de réception.
+        # Effacer la localisation remet la caisse à recevoir.
+        # Une fiche déjà réalisée revient au statut Terminé.
         ticket.pop('reception', None)
         reception = {}
+        if ticket.get('module') == 'Fiche de caisse':
+            ticket['status'] = 'Terminé'
 
     try:
         supabase_rest_request(
@@ -2225,10 +2315,15 @@ def api_update_localisation(ticket_id):
             "PATCH",
             "tickets",
             "id=eq." + urllib.parse.quote(ticket_id, safe=''),
-            {"updated_at": ticket['updatedAt'], "raw_json": ticket},
+            {"updated_at": ticket['updatedAt'], "status": ticket['status'], "raw_json": ticket},
             prefer="return=minimal"
         )
-        return jsonify({'ok': True, 'localisation': localisation, 'reception': reception})
+        return jsonify({
+            'ok': True,
+            'localisation': localisation,
+            'reception': reception,
+            'status': ticket.get('status')
+        })
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 
@@ -2346,6 +2441,7 @@ def api_reception_valider_bl():
                 'bl_storage_path': bl_storage_path,
                 'bl_filename': bl_filename,
             }
+            ticket['status'] = 'Réceptionnée'
             ticket['updatedAt'] = datetime.now().isoformat()
 
             supabase_rest_request(
@@ -2360,7 +2456,7 @@ def api_reception_valider_bl():
                 "PATCH",
                 "tickets",
                 "id=eq." + urllib.parse.quote(ticket_id, safe=''),
-                {"updated_at": ticket['updatedAt'], "raw_json": ticket},
+                {"updated_at": ticket['updatedAt'], "status": ticket['status'], "raw_json": ticket},
                 prefer="return=minimal"
             )
 
