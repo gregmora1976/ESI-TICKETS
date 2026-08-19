@@ -2733,6 +2733,85 @@ def api_update_ticket(ticket_id):
     return jsonify({'ok': True})
 
 
+@app.route('/api/tickets/<ticket_id>/reception-avis-arrivee', methods=['POST'])
+def api_reception_avis_arrivee(ticket_id):
+    """Valide la réception physique des marchandises d'un avis d'arrivée."""
+    ticket = load_ticket(ticket_id)
+    if not ticket:
+        return jsonify({'ok': False, 'error': 'Ticket introuvable'}), 404
+
+    module_normalise = _as_text(ticket.get('module')).replace("’", "'").strip()
+    if module_normalise != "Avis d'arrivée" and not _as_text(ticket_id).startswith('ARR-'):
+        return jsonify({'ok': False, 'error': "Ce ticket n'est pas un avis d'arrivée"}), 400
+
+    data = request.get_json(silent=True) or {}
+    receptionne_par = _as_text(data.get('receptionne_par')).strip()
+    lieu_stockage = _as_text(data.get('lieu_stockage')).strip()
+    commentaire = _as_text(data.get('commentaire')).strip()
+    selected_indexes = data.get('selected_indexes') or []
+
+    if not receptionne_par:
+        return jsonify({'ok': False, 'error': 'Nom et prénom du réceptionnaire manquants'}), 400
+    if not lieu_stockage:
+        return jsonify({'ok': False, 'error': 'Lieu de stockage manquant'}), 400
+    if not isinstance(selected_indexes, list) or not selected_indexes:
+        return jsonify({'ok': False, 'error': 'Aucune marchandise sélectionnée'}), 400
+
+    avis = dict(ticket.get('avisArrivee') or ticket.get('avis_arrivee') or {})
+    items = list(avis.get('items') or [])
+    if not items:
+        return jsonify({'ok': False, 'error': "Aucune marchandise dans cet avis d'arrivée"}), 400
+
+    indexes = []
+    for value in selected_indexes:
+        try:
+            index = int(value)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < len(items) and index not in indexes:
+            indexes.append(index)
+
+    if not indexes:
+        return jsonify({'ok': False, 'error': 'Aucune marchandise sélectionnée valide'}), 400
+
+    now = datetime.now().isoformat()
+    for index, item in enumerate(items):
+        current = dict(item or {})
+        if index in indexes:
+            current['receptionne'] = True
+            current['receptionne_le'] = now
+            current['receptionne_par'] = receptionne_par
+            current['lieu_stockage'] = lieu_stockage
+        items[index] = current
+
+    avis['items'] = items
+    ticket['avisArrivee'] = avis
+
+    # Information logistique indépendante du statut métier du ticket.
+    reception = dict(ticket.get('receptionAvisArrivee') or {})
+    reception.update({
+        'receptionnee': True,
+        'receptionnee_le': now,
+        'receptionne_par': receptionne_par,
+        'lieu_stockage': lieu_stockage,
+        'commentaire': commentaire,
+        'selected_indexes': indexes,
+    })
+    ticket['receptionAvisArrivee'] = reception
+    ticket['updatedAt'] = now
+
+    # Ne change volontairement pas le statut du ticket.
+    save_ticket(ticket)
+
+    return jsonify({
+        'ok': True,
+        'ticket_id': ticket_id,
+        'reception': reception,
+        'items_receptionnes': len(indexes),
+        'status': ticket.get('status')
+    })
+
+
 @app.route('/api/tickets/<ticket_id>/enlevement', methods=['PATCH'])
 def api_update_enlevement(ticket_id):
     """Enregistre les corrections manuelles des champs d'une demande d'enlèvement."""
