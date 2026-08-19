@@ -3227,6 +3227,11 @@ def api_reception_avis_arrivee(ticket_id):
         reception_ref = f"RAR-{(max(existing_refs) if existing_refs else 0) + 1:04d}"
         colis_refs = _allocate_colis_numbers(numero_dossier, nombre_colis)
 
+        for selected_item in selected:
+            selected_item['reception_ref'] = reception_ref
+            selected_item['colis'] = list(colis_refs)
+            selected_item['lieu_stockage'] = lieu_stockage
+
         article_labels_bytes = _build_labels_pdf_bytes(article_labels, kind="article")
         article_labels_filename = f"{reception_ref}_etiquettes_articles.pdf"
         article_labels_path = f"{ticket_id}/receptions_avis/{now.strftime('%Y%m%d%H%M%S')}_{article_labels_filename}"
@@ -3254,6 +3259,7 @@ def api_reception_avis_arrivee(ticket_id):
             'date_reception': now.strftime("%d/%m/%Y %H:%M"),
             'nombre_colis': nombre_colis,
             'colis': colis_refs,
+            'article_esi_ids': list(reception_esi_ids),
             'commentaire': commentaire,
             'items': selected,
         }
@@ -3825,6 +3831,19 @@ def api_create_bon_livraison(ticket_id):
     lieu_stockage = _as_text(data.get('lieu_stockage')).strip()
     numero_dossier = _as_text(data.get('numero_dossier')).strip()
 
+    # Secours serveur : si l'interface n'envoie pas le N° dossier,
+    # on reprend automatiquement la référence principale du bon/ticket.
+    enl_for_dossier = dict(ticket.get('enlevement') or {})
+    if not numero_dossier:
+        numero_dossier = _as_text(
+            enl_for_dossier.get('numero_dossier')
+            or enl_for_dossier.get('dossier_numero')
+            or enl_for_dossier.get('numero_bon')
+            or ticket.get('numeroDossier')
+            or ticket.get('numero_dossier')
+            or ticket.get('ref')
+        ).strip()
+
     try:
         nombre_colis = int(data.get('nombre_colis') or 0)
     except (TypeError, ValueError):
@@ -3974,6 +3993,13 @@ def api_create_bon_livraison(ticket_id):
         blr_ref = _next_blr_reference()
         colis_refs = _allocate_colis_numbers(numero_dossier, nombre_colis)
 
+        # Lie explicitement chaque ligne réceptionnée au bon et aux colis générés.
+        # Les esi_ids identifient les unités physiques réellement réceptionnées.
+        for selected_item in selected:
+            selected_item['reception_ref'] = blr_ref
+            selected_item['colis'] = list(colis_refs)
+            selected_item['lieu_stockage'] = lieu_stockage
+
         bon = {
             'reference': blr_ref,
             'ticket_id': ticket_id,
@@ -3986,6 +4012,7 @@ def api_create_bon_livraison(ticket_id):
             'created_at': now.isoformat(),
             'nombre_colis': nombre_colis,
             'colis': colis_refs,
+            'article_esi_ids': list(reception_esi_ids),
             'items': selected,
         }
 
