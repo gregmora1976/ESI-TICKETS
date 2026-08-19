@@ -2200,6 +2200,18 @@ def api_update_localisation(ticket_id):
     ticket['fiche'] = fiche
     ticket['updatedAt'] = datetime.now().isoformat()
 
+    # Une localisation renseignée acte également une réception manuelle.
+    # Si un BL avait déjà été associé, on le conserve.
+    reception = dict(ticket.get('reception') or {})
+    if localisation:
+        reception.setdefault('receptionnee_le', datetime.now().isoformat())
+        reception.setdefault('mode', 'manuel')
+        ticket['reception'] = reception
+    else:
+        # Effacer la localisation remet la caisse à recevoir et retire les métadonnées de réception.
+        ticket.pop('reception', None)
+        reception = {}
+
     try:
         supabase_rest_request(
             "PATCH",
@@ -2208,15 +2220,15 @@ def api_update_localisation(ticket_id):
             {"localisation": localisation},
             prefer="return=minimal"
         )
-        # On met également à jour updated_at du ticket principal sans réécrire les fichiers.
+        # raw_json conserve les métadonnées de réception sans nouvelle colonne Supabase.
         supabase_rest_request(
             "PATCH",
             "tickets",
             "id=eq." + urllib.parse.quote(ticket_id, safe=''),
-            {"updated_at": ticket['updatedAt']},
+            {"updated_at": ticket['updatedAt'], "raw_json": ticket},
             prefer="return=minimal"
         )
-        return jsonify({'ok': True, 'localisation': localisation})
+        return jsonify({'ok': True, 'localisation': localisation, 'reception': reception})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 
@@ -2253,10 +2265,20 @@ def api_reception_analyse_bl():
         matches = _match_reception_refs_to_tickets(parsed["references"])
         print(f"[RECEPTION PDF] Rapprochement termine: {len(matches)} ligne(s)")
 
+        # Le PDF analysé est conservé dans Supabase afin de pouvoir le rouvrir
+        # depuis la fiche de la caisse après validation de la réception.
+        pdf_hash = hashlib.sha256(content).hexdigest()[:16]
+        bl_numero = parsed.get('bl_numero', '') or 'sans_numero'
+        bl_filename = safe_filename(fs.filename or f"BL_{bl_numero}.pdf")
+        bl_storage_path = f"reception_bls/{safe_filename(bl_numero)}_{pdf_hash}_{bl_filename}"
+        supabase_upload_bytes(bl_storage_path, content, "application/pdf")
+
         return jsonify({
             'ok': True,
             'bl_numero': parsed.get('bl_numero', ''),
             'bl_date': parsed.get('bl_date', ''),
+            'bl_storage_path': bl_storage_path,
+            'bl_filename': fs.filename or bl_filename,
             'page_count': parsed.get('page_count', 0),
             'ocr_used': parsed.get('ocr_used', False),
             'items': matches,
@@ -2272,13 +2294,14 @@ def api_reception_analyse_bl():
 
 @app.route('/api/reception/valider-bl', methods=['POST'])
 def api_reception_valider_bl():
-    """
-    Valide en lot la réception des caisses détectées.
-    Le fait de renseigner la localisation acte la réception.
-    """
+    """Valide en lot la réception et rattache le BL fournisseur à chaque caisse."""
     data = request.get_json(silent=True) or {}
     ticket_ids = data.get('ticket_ids') or []
     localisation = _as_text(data.get('localisation')).strip()
+    bl_numero = _as_text(data.get('bl_numero')).strip()
+    bl_date = _as_text(data.get('bl_date')).strip()
+    bl_storage_path = _as_text(data.get('bl_storage_path')).strip()
+    bl_filename = _as_text(data.get('bl_filename')).strip()
 
     if not localisation:
         return jsonify({
@@ -2289,8 +2312,12 @@ def api_reception_valider_bl():
     if not isinstance(ticket_ids, list) or not ticket_ids:
         return jsonify({'ok': False, 'error': 'Aucune caisse sélectionnée'}), 400
 
+    if not bl_storage_path:
+        return jsonify({'ok': False, 'error': 'Le PDF du BL analysé est manquant.'}), 400
+
     updated = []
     errors = []
+    receptionnee_le = datetime.now().isoformat()
 
     for ticket_id in dict.fromkeys(_as_text(x).strip() for x in ticket_ids if _as_text(x).strip()):
         try:
@@ -2308,6 +2335,19 @@ def api_reception_valider_bl():
                 errors.append({'ticket_id': ticket_id, 'error': 'Fiche de caisse introuvable'})
                 continue
 
+            fiche['localisation'] = localisation
+            ticket['fiche'] = fiche
+            ticket['reception'] = {
+                'receptionnee_le': receptionnee_le,
+                'localisation': localisation,
+                'mode': 'bl_fournisseur',
+                'bl_numero': bl_numero,
+                'bl_date': bl_date,
+                'bl_storage_path': bl_storage_path,
+                'bl_filename': bl_filename,
+            }
+            ticket['updatedAt'] = datetime.now().isoformat()
+
             supabase_rest_request(
                 "PATCH",
                 "fiches",
@@ -2320,7 +2360,7 @@ def api_reception_valider_bl():
                 "PATCH",
                 "tickets",
                 "id=eq." + urllib.parse.quote(ticket_id, safe=''),
-                {"updated_at": datetime.now().isoformat()},
+                {"updated_at": ticket['updatedAt'], "raw_json": ticket},
                 prefer="return=minimal"
             )
 
@@ -2335,8 +2375,37 @@ def api_reception_valider_bl():
         'updated_count': len(updated),
         'updated': updated,
         'errors': errors,
-        'localisation': localisation
+        'localisation': localisation,
+        'bl_numero': bl_numero,
+        'receptionnee_le': receptionnee_le,
     }), (200 if not errors else 207)
+
+
+@app.route('/api/tickets/<ticket_id>/reception-bl')
+def api_ticket_reception_bl(ticket_id):
+    """Ouvre le BL fournisseur associé à la réception d'une caisse."""
+    ticket = load_ticket(ticket_id)
+    if not ticket:
+        abort(404)
+
+    reception = ticket.get('reception') or {}
+    storage_path = _as_text(reception.get('bl_storage_path')).strip()
+    filename = _as_text(reception.get('bl_filename')).strip() or (
+        f"BL_{_as_text(reception.get('bl_numero')).strip() or ticket_id}.pdf"
+    )
+    if not storage_path:
+        abort(404)
+
+    try:
+        signed_url = supabase_signed_download_url(storage_path, expires_in=300)
+        return redirect(signed_url)
+    except Exception as e:
+        print(f"[RECEPTION BL] URL signée impossible, fallback Render : {e}")
+        try:
+            data = supabase_download_bytes(storage_path)
+        except Exception:
+            abort(404)
+        return send_file(BytesIO(data), mimetype='application/pdf', download_name=filename)
 
 
 @app.route('/api/tickets', methods=['POST'])
