@@ -29,27 +29,29 @@ body{
 .topbar{
   background:#fff;
   border-bottom:1px solid var(--line);
-  padding:14px 18px;
+  padding:10px 14px;
   display:flex;
   align-items:center;
-  justify-content:space-between;
   gap:14px;
   position:sticky;
   top:0;
   z-index:10;
 }
+.topbar-left{
+  display:flex;
+  align-items:center;
+  gap:14px;
+  flex:0 0 auto;
+}
 .title{
   font-size:22px;
   font-weight:900;
 }
-.sub{
-  color:var(--muted);
-  font-size:13px;
-  margin-top:3px;
-}
+.sub{display:none}
 .actions{
+  margin-left:auto;
   display:flex;
-  gap:10px;
+  gap:8px;
   align-items:center;
   flex-wrap:wrap;
 }
@@ -81,69 +83,85 @@ body{
   text-align:center;
 }
 .stats-wrap{
-  padding:14px 14px 0;
   display:flex;
-  gap:12px;
-  flex-wrap:wrap;
+  gap:8px;
+  flex-wrap:nowrap;
 }
 .stat-card{
-  width:240px;
-  min-height:94px;
-  background:#fff;
+  min-width:160px;
+  height:54px;
+  background:#f8fafc;
   border:1px solid #cfe0ee;
-  border-radius:18px;
-  padding:14px 16px;
+  border-radius:14px;
+  padding:7px 11px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
   box-shadow:0 1px 2px rgba(15,23,42,.02);
 }
 .stat-label{
   color:#35506b;
-  font-size:12px;
-  line-height:1.1;
-  font-weight:800;
+  font-size:10px;
+  line-height:1.15;
+  font-weight:900;
   text-transform:uppercase;
-  letter-spacing:.06em;
+  letter-spacing:.05em;
+  max-width:110px;
 }
 .stat-value{
-  margin-top:8px;
-  font-size:28px;
+  margin-top:0;
+  font-size:24px;
   line-height:1;
   font-weight:900;
 }
 .stat-value.pending{color:#c56a00}
 .stat-value.done{color:#16803a}
 .calendar-wrap{
-  padding:14px;
+  padding:8px 12px;
+  height:calc(100vh - 76px);
+  min-height:0;
+  overflow:hidden;
 }
 .calendar{
+  height:100%;
+  display:flex;
+  flex-direction:column;
   background:#fff;
   border:1px solid var(--line);
   border-radius:12px;
   overflow:hidden;
 }
 .week-head{
+  flex:0 0 34px;
   display:grid;
   grid-template-columns:repeat(5,1fr);
   border-bottom:1px solid var(--line);
   background:#f8fafc;
 }
 .week-head div{
-  padding:12px 10px;
+  padding:8px 10px;
   font-weight:900;
   text-transform:lowercase;
   border-right:1px solid var(--line);
 }
 .week-head div:last-child{border-right:none}
 .month-grid{
+  flex:1 1 auto;
+  min-height:0;
   display:grid;
   grid-template-columns:repeat(5,1fr);
+  grid-template-rows:repeat(6,minmax(0,1fr));
 }
 .day{
-  min-height:130px;
+  min-height:0;
   border-right:1px solid var(--line);
   border-bottom:1px solid var(--line);
-  padding:8px;
+  padding:5px 6px;
   position:relative;
   background:#fff;
+  overflow:auto;
+  scrollbar-width:thin;
 }
 .day:nth-child(5n){border-right:none}
 .day.other-month{
@@ -154,9 +172,9 @@ body{
   background:#eff6ff;
 }
 .day-number{
-  font-size:18px;
+  font-size:15px;
   font-weight:900;
-  margin-bottom:8px;
+  margin-bottom:4px;
 }
 .day-number.small{
   font-size:14px;
@@ -170,10 +188,10 @@ body{
   background:var(--event);
   color:#111827;
   border-radius:3px;
-  padding:5px 6px;
-  margin:4px 0;
-  font-size:13px;
-  line-height:1.25;
+  padding:3px 5px;
+  margin:2px 0;
+  font-size:11px;
+  line-height:1.15;
   text-align:left;
   cursor:pointer;
   font-weight:700;
@@ -191,9 +209,10 @@ body{
   font-weight:700;
 }
 .legend{
-  padding:10px 14px;
+  flex:0 0 auto;
+  padding:6px 10px;
   color:var(--muted);
-  font-size:13px;
+  font-size:11px;
   display:flex;
   justify-content:space-between;
   gap:10px;
@@ -430,38 +449,47 @@ body{
   .detail-value{margin-bottom:8px}
   .reception-info-row{grid-template-columns:1fr;gap:7px;padding:12px 0}
 }
+@media(max-width:1200px){
+  .topbar{align-items:flex-start;flex-wrap:wrap}
+  .topbar-left{width:100%;justify-content:space-between}
+  .actions{margin-left:0;width:100%}
+  .calendar-wrap{height:calc(100vh - 138px)}
+}
 @media(max-width:900px){
+  .calendar-wrap{height:auto;overflow:visible}
+  .calendar{height:auto}
   .month-grid,.week-head{grid-template-columns:1fr}
+  .month-grid{grid-template-rows:none}
   .week-head{display:none}
-  .day{min-height:auto;border-right:none}
+  .day{min-height:105px;border-right:none}
 }
 </style>
 </head>
 <body>
 <div class="topbar">
-  <div>
+  <div class="topbar-left">
     <div class="title">Planning caisserie</div>
-    <div class="sub">Fiches de caisse terminées et réceptionnées, classées par date de mise à dispo</div>
+
+    <div class="stats-wrap">
+      <div class="stat-card">
+        <div class="stat-label">Caisses à réceptionner</div>
+        <div class="stat-value pending" id="statPending">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label" id="statDoneLabel">Caisses réalisées en 2026</div>
+        <div class="stat-value done" id="statDone">0</div>
+      </div>
+    </div>
   </div>
+
   <div class="actions">
-    <button class="btn" id="prevMonth" type="button">‹ Mois précédent</button>
+    <button class="btn" id="prevMonth" type="button" aria-label="Mois précédent" title="Mois précédent">‹</button>
     <div class="month-label" id="monthLabel"></div>
-    <button class="btn" id="nextMonth" type="button">Mois suivant ›</button>
+    <button class="btn" id="nextMonth" type="button" aria-label="Mois suivant" title="Mois suivant">›</button>
     <button class="btn primary" id="todayBtn" type="button">Aujourd'hui</button>
     <input class="search" id="searchInput" type="search" placeholder="Rechercher un ticket..." />
     <button class="btn" id="refreshBtn" type="button">Rafraîchir</button>
     <button class="btn primary" id="importBlBtn" type="button">Importer BL PDF</button>
-  </div>
-</div>
-
-<div class="stats-wrap">
-  <div class="stat-card">
-    <div class="stat-label">Caisses à réceptionner</div>
-    <div class="stat-value pending" id="statPending">0</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label" id="statDoneLabel">Caisses réalisées en 2026</div>
-    <div class="stat-value done" id="statDone">0</div>
   </div>
 </div>
 
@@ -1015,17 +1043,8 @@ function eventText(t){
   const dimensions =
     `${fiche.longueur || '-'}x${fiche.largeur || '-'}x${fiche.hauteur || '-'}`;
   const caissierNom = fiche.choixCaissier || '-';
-  const chargeProjet = t.chargeProjet || '-';
-  const localisation = (fiche.localisation || '').trim();
 
-  let texte = `${t.dossier || '-'}-${t.ref || '-'} / ${dimensions} / ${caissierNom} / ${chargeProjet}`;
-
-  // Une localisation renseignée signifie que la caisse a été réceptionnée.
-  if(localisation){
-    texte += ` / ${localisation}`;
-  }
-
-  return texte;
+  return `${t.dossier || '-'}-${t.ref || '-'} / ${dimensions} / ${caissierNom}`;
 }
 function matchesSearch(t){
   if(!searchTerm) return true;
