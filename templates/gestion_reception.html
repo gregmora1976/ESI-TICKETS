@@ -33,6 +33,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .day:nth-child(5n){border-right:none}.day.other-month{background:#f8fafc;color:#94a3b8}.day.today{background:#eff6ff}
 .day-number{font-size:18px;font-weight:900;margin-bottom:8px}.day-number.small{font-size:14px;color:#94a3b8}
 .event{display:block;width:100%;border:none;border-left:5px solid var(--event-border);background:var(--event);color:#111827;border-radius:3px;padding:6px 7px;margin:4px 0;font-size:13px;line-height:1.25;text-align:left;cursor:pointer;font-weight:800;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.event.arrival-event{background:#fef3c7;border-left-color:#d97706;color:#78350f}
 .event:hover{filter:brightness(.97)}
 .legend{padding:10px 14px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#fff;border-top:1px solid var(--line)}
 .modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.42);display:none;align-items:center;justify-content:center;padding:20px;z-index:1000}.modal-backdrop.open{display:flex}
@@ -69,7 +70,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 <div class="topbar">
   <div>
     <div class="title">Gestion réception</div>
-    <div class="sub">Demandes d'enlèvement classées par date extraite du bon PDF</div>
+    <div class="sub">Demandes d'enlèvement et avis d'arrivée classés par date</div>
   </div>
   <div class="actions">
     <button class="btn" id="prevMonth" type="button">‹ Mois précédent</button>
@@ -93,7 +94,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
     <div class="week-head"><div>lundi</div><div>mardi</div><div>mercredi</div><div>jeudi</div><div>vendredi</div></div>
     <div class="month-grid" id="monthGrid"></div>
     <div class="legend">
-      <div>Affichage : demandes d'enlèvement</div>
+      <div>Affichage : demandes d'enlèvement + avis d'arrivée (jaune)</div>
       <div>Format : Client — Référence du bon</div>
     </div>
   </div>
@@ -190,9 +191,24 @@ function eventText(t){return `${val(client(t))} — ${val(bonRef(t))}`;}
 function matches(t){
   if(!searchTerm) return true;
   const refs=items(t).map(i=>`${i.reference||i.ref||''} ${i.designation||i.description||''}`).join(' ');
-  return `${t.id||''} ${client(t)} ${bonRef(t)} ${refs} ${JSON.stringify(extraction(t))}`.toLowerCase().includes(searchTerm.toLowerCase());
+  return `${t.id||''} ${client(t)} ${bonRef(t)} ${refs} ${JSON.stringify(extraction(t))} ${JSON.stringify(avisData(t))}`.toLowerCase().includes(searchTerm.toLowerCase());
 }
 function isEnlevement(t){return t.module==="Demande d'enlèvement"||t.module==='Demande d’enlèvement'||String(t.id||'').startsWith('ENL-');}
+function isAvisArrivee(t){return t.module==="Avis d'arrivée"||t.module==='Avis d’arrivée'||String(t.id||'').startsWith('ARR-');}
+function avisData(t){return t.avisArrivee||t.avis_arrivee||{};}
+function avisDate(t){
+  const a=avisData(t);
+  const v=String(a.date_reception_prevue||t.date_reception_prevue||t.dateEmballage||'').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(v)?v:'';
+}
+function planningDate(t){return isAvisArrivee(t)?avisDate(t):enlDate(t);}
+function planningEventText(t){
+  if(isAvisArrivee(t)){
+    const a=avisData(t);
+    return `AVIS ARRIVÉE — ${val(a.client||t.dossier)} — ${val(a.projet||t.expo||t.objet)}`;
+  }
+  return eventText(t);
+}
 function isCancelled(t){return String(t.status||'').trim().toLowerCase()==='annulé'||String(t.status||'').trim().toLowerCase()==='annule';}
 
 function fieldValue(t,key){
@@ -216,6 +232,48 @@ function editControl(key,value,multiline=false){
 function renderTicketModal(editing=false){
   if(!openedTicket) return;
   const t=openedTicket, its=items(t);
+
+  if(isAvisArrivee(t)){
+    const a=avisData(t), exp=a.expediteur||{}, tr=a.transporteur||{}, aitems=Array.isArray(a.items)?a.items:[];
+    document.getElementById('ticketModalTitle').textContent="Avis d'arrivée";
+    document.getElementById('ticketModalSub').textContent=`${val(a.client||t.dossier)} — ${val(a.projet||t.expo||t.objet)}`;
+    let html=`<div class="detail-grid">
+      <div class="detail-label">Réf. dossier</div><div class="detail-value">${esc(val(a.dossier_ref||t.dossier))}</div>
+      <div class="detail-label">Client</div><div class="detail-value">${esc(val(a.client))}</div>
+      <div class="detail-label">Projet / expo</div><div class="detail-value">${esc(val(a.projet||t.expo||t.objet))}</div>
+      <div class="detail-label">Réception prévue</div><div class="detail-value">${esc(val(a.date_reception_prevue||t.dateEmballage))}</div>
+      <div class="detail-label">Coordinateur</div><div class="detail-value">${esc(val(a.coordinateur||t.chargeProjet))}</div>
+      <div class="detail-label">Expéditeur</div><div class="detail-value">${esc(val(exp.nom))}</div>
+      <div class="detail-label">Adresse expéditeur</div><div class="detail-value">${esc(val(exp.adresse))}</div>
+      <div class="detail-label">Contact expéditeur</div><div class="detail-value">${esc(val(exp.contact))}</div>
+      <div class="detail-label">Transporteur</div><div class="detail-value">${esc(val(tr.nom))}</div>
+      <div class="detail-label">Adresse transporteur</div><div class="detail-value">${esc(val(tr.adresse))}</div>
+      <div class="detail-label">Contact transporteur</div><div class="detail-value">${esc(val(tr.contact))}</div>
+      <div class="detail-label">Référence transporteur</div><div class="detail-value">${esc(val(tr.reference||t.ref))}</div>
+    </div>`;
+    html+=`<div class="section"><div class="section-title">Marchandise</div>`;
+    if(aitems.length){
+      html+=`<table class="items-table"><thead><tr><th>Qté</th><th>Description</th><th>Référence</th><th>Dimensions</th><th>Poids</th></tr></thead><tbody>`;
+      aitems.forEach(i=>{
+        const dims=[i.longueur_cm,i.largeur_cm,i.hauteur_cm].filter(v=>v!==undefined&&v!==null&&String(v).trim()!=='').join(' x ');
+        html+=`<tr><td>${esc(val(i.quantite))}</td><td>${esc(val(i.description))}</td><td><strong>${esc(val(i.reference))}</strong></td><td>${esc(val(dims))}</td><td>${esc(val(i.poids_kg))}</td></tr>`;
+      });
+      html+=`</tbody></table>`;
+    }else html+=`<div>Aucune marchandise renseignée.</div>`;
+    html+=`</div><div class="section"><div class="section-title">Commentaire</div>${esc(val(a.commentaire||t.commentaire))}</div>`;
+    const files=(t.files||[]).filter(f=>f&&f.name);
+    html+=`<div class="section"><div class="section-title">Documents joints</div>${files.length?files.map(f=>`<a class="file-link" target="_blank" href="/api/tickets/${encodeURIComponent(t.id)}/download/${encodeURIComponent(f.name)}">${esc(f.name)}</a>`).join(''):'<div>Aucun document.</div>'}</div>`;
+    document.getElementById('ticketModalBody').innerHTML=html;
+    document.getElementById('ticketEditBtn').style.display='none';
+    document.getElementById('ticketDeliveryBtn').style.display='none';
+    document.getElementById('ticketSaveBtn').style.display='none';
+    document.getElementById('ticketEditCancelBtn').style.display='none';
+    document.getElementById('ticketModalCloseBottom').style.display='inline-block';
+    document.getElementById('ticketCancelBtn').style.display='none';
+    return;
+  }
+
+  document.getElementById('ticketModalTitle').textContent="Demande d'enlèvement";
   document.getElementById('ticketModalSub').textContent=`${val(client(t))} — ${val(bonRef(t))}`;
 
   const rows=[
@@ -435,7 +493,8 @@ function renderPending(){
 }
 function grouped(){
   const g={};
-  tickets.filter(t=>isEnlevement(t)&&!isCancelled(t)&&enlDate(t)&&matches(t)).forEach(t=>{const d=enlDate(t);(g[d]??=[]).push(t);});
+  tickets.filter(t=>(isEnlevement(t)||isAvisArrivee(t))&&!isCancelled(t)&&planningDate(t)&&matches(t))
+    .forEach(t=>{const d=planningDate(t);(g[d]??=[]).push(t);});
   return g;
 }
 function renderCalendar(){
@@ -448,7 +507,7 @@ function renderCalendar(){
       if(d.getMonth()!==currentDate.getMonth())day.classList.add('other-month');if(key===today)day.classList.add('today');
       const num=document.createElement('div');num.className=d.getMonth()!==currentDate.getMonth()?'day-number small':'day-number';
       num.textContent=d.getDate()===1?d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'}):d.getDate();day.appendChild(num);
-      (g[key]||[]).sort((a,b)=>eventText(a).localeCompare(eventText(b))).forEach(t=>{const e=document.createElement('button');e.className='event';e.type='button';e.textContent=eventText(t);e.title=e.textContent;e.addEventListener('click',()=>openTicket(t));day.appendChild(e);});
+      (g[key]||[]).sort((a,b)=>planningEventText(a).localeCompare(planningEventText(b))).forEach(t=>{const e=document.createElement('button');e.className=isAvisArrivee(t)?'event arrival-event':'event';e.type='button';e.textContent=planningEventText(t);e.title=e.textContent;e.addEventListener('click',()=>openTicket(t));day.appendChild(e);});
       grid.appendChild(day);
     }
     d.setDate(d.getDate()+1);
