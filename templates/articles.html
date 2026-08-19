@@ -16,6 +16,17 @@
 table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:12px}th{position:sticky;top:0;background:#f8fafc;font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.04em}
 .esi{font-weight:950;color:#0369a1;font-size:14px;white-space:nowrap}.muted{color:var(--muted)}.empty{padding:35px;text-align:center;color:var(--muted)}
 .badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#e0f2fe;color:#075985;font-weight:800}
+.select-col{width:44px;text-align:center}.row-check,.select-all{width:16px;height:16px;cursor:pointer}
+.esi-link{color:#0369a1;font-weight:950;text-decoration:none;white-space:nowrap}.esi-link:hover{text-decoration:underline}
+.modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.48);display:none;align-items:center;justify-content:center;padding:20px;z-index:1000}
+.modal-backdrop.open{display:flex}.modal{width:min(980px,96vw);max-height:92vh;overflow:auto;background:#fff;border-radius:18px;border:1px solid var(--line);box-shadow:0 24px 70px rgba(15,23,42,.25)}
+.modal-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding:18px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#fff;z-index:2}
+.modal-title{font-size:22px;font-weight:950}.modal-sub{font-size:12px;color:var(--muted);margin-top:4px}.modal-close{border:0;background:#f1f5f9;border-radius:10px;width:36px;height:36px;font-size:22px;cursor:pointer}
+.modal-body{padding:18px 20px 22px}.section{margin-top:16px;border:1px solid var(--line);border-radius:14px;padding:14px;background:#f8fafc}
+.section-title{font-size:12px;font-weight:950;text-transform:uppercase;color:var(--muted);letter-spacing:.05em;margin-bottom:10px}
+.detail-grid{display:grid;grid-template-columns:180px 1fr;gap:8px 14px}.detail-label{font-size:12px;color:var(--muted);font-weight:800}.detail-value{font-size:13px;font-weight:700;white-space:pre-wrap;overflow-wrap:anywhere}
+.history-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px}.history-title{font-weight:950}.file-link{display:inline-block;margin:5px 5px 0 0;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:#fff;color:#0369a1;font-weight:800;text-decoration:none}
+@media(max-width:700px){.detail-grid{grid-template-columns:1fr}.detail-value{margin-bottom:6px}}
 </style>
 </head>
 <body>
@@ -40,6 +51,7 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
     <div class="tablewrap">
       <table>
         <thead><tr>
+          <th class="select-col"><input class="select-all" id="selectAll" type="checkbox" title="Tout sélectionner"></th>
           <th>N° ESI</th><th>Référence</th><th>Description</th><th>Dossier</th><th>Client</th>
           <th>Projet</th><th>Dimensions</th><th>Poids</th><th>Stockage</th>
         </tr></thead>
@@ -49,8 +61,23 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
     </div>
   </div>
 </div>
+
+<div class="modal-backdrop" id="articleModalBackdrop" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title" id="articleModalTitle">Article</div>
+        <div class="modal-sub" id="articleModalSub">Historique complet</div>
+      </div>
+      <button class="modal-close" id="articleModalClose" type="button">×</button>
+    </div>
+    <div class="modal-body" id="articleModalBody"></div>
+  </div>
+</div>
+
 <script>
 const q=document.getElementById('q'),body=document.getElementById('body'),empty=document.getElementById('empty'),info=document.getElementById('info');
+let currentRows=[];
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 function dossierAuto(a){
   const direct=String(a.dossier||'').trim();
@@ -77,10 +104,14 @@ async function load(){
   const rows=await r.json();
   body.innerHTML='';
   empty.style.display=rows.length?'none':'block';
+  currentRows=rows;
+  document.getElementById('selectAll').checked=false;
   rows.forEach(a=>{
     const dims=[a.longueur_cm,a.largeur_cm,a.hauteur_cm].filter(Boolean).join(' x ');
     const tr=document.createElement('tr');
-    tr.innerHTML=`<td class="esi">${esc(a.esi_id)}</td><td><strong>${esc(a.reference||'-')}</strong></td>
+    tr.innerHTML=`<td class="select-col"><input class="row-check" type="checkbox" data-esi="${esc(a.esi_id)}"></td>
+      <td><a href="#" class="esi-link" data-esi="${esc(a.esi_id)}">${esc(a.esi_id)}</a></td>
+      <td><strong>${esc(a.reference||'-')}</strong></td>
       <td>${esc(a.description||'-')}</td><td>${esc(dossierAuto(a))}</td><td>${esc(a.client||'-')}</td>
       <td>${esc(a.projet||'-')}</td><td>${esc(dims||'-')}</td><td>${esc(a.poids_kg||'-')}</td>
       <td>${esc(a.lieu_stockage||'-')}</td>`;
@@ -102,6 +133,120 @@ document.getElementById('migrateBtn').onclick=async()=>{
   }catch(e){alert("Erreur lors de l'import.");}
   finally{b.disabled=false;b.textContent='Importer les articles existants';}
 };
+
+function detailRows(rows){
+  return `<div class="detail-grid">${rows.map(([l,v])=>`
+    <div class="detail-label">${esc(l)}</div><div class="detail-value">${esc(v||'-')}</div>`).join('')}</div>`;
+}
+function fmtDate(v){
+  if(!v) return '-';
+  const d=new Date(v);
+  return Number.isNaN(d.getTime())?String(v):d.toLocaleString('fr-FR');
+}
+function closeArticleModal(){
+  const b=document.getElementById('articleModalBackdrop');
+  b.classList.remove('open'); b.setAttribute('aria-hidden','true');
+}
+async function openArticleDetail(esi){
+  const b=document.getElementById('articleModalBackdrop');
+  const content=document.getElementById('articleModalBody');
+  document.getElementById('articleModalTitle').textContent=esi;
+  document.getElementById('articleModalSub').textContent='Historique complet de l’article';
+  content.innerHTML='<div class="muted">Chargement…</div>';
+  b.classList.add('open'); b.setAttribute('aria-hidden','false');
+
+  try{
+    const r=await fetch('/api/articles/'+encodeURIComponent(esi),{cache:'no-store'});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.error||'Article introuvable');
+    const a=d.article||{};
+    const dims=[a.longueur_cm,a.largeur_cm,a.hauteur_cm].filter(Boolean).join(' x ');
+
+    let html=`<div class="section"><div class="section-title">Identification article</div>${detailRows([
+      ['N° ESI',a.esi_id],['Référence',a.reference],['Description',a.description],['Dossier',dossierAuto(a)],
+      ['Client',a.client],['Projet / expo',a.projet],['Dimensions',dims],['Poids',a.poids_kg],
+      ['Volume',a.volume_m3],['Surface',a.surface_m2],['Réf. caisse',a.ref_caisse],
+      ['Stockage actuel',a.lieu_stockage],['Créé le',fmtDate(a.created_at)],['Dernière mise à jour',fmtDate(a.updated_at)]
+    ])}</div>`;
+
+    if(d.avis_arrivee){
+      const x=d.avis_arrivee, exp=x.expediteur||{}, tr=x.transporteur||{};
+      html+=`<div class="section"><div class="section-title">Avis d’arrivée lié</div>${detailRows([
+        ['Réf. dossier',x.dossier_ref],['Client',x.client],['Projet / expo',x.projet],
+        ['Réception prévue',x.date_reception_prevue],['Coordinateur',x.coordinateur],
+        ['Expéditeur',exp.nom],['Adresse expéditeur',exp.adresse],['Contact expéditeur',exp.contact],
+        ['Transporteur',tr.nom],['Adresse transporteur',tr.adresse],['Contact transporteur',tr.contact],
+        ['Référence transporteur',tr.reference],['Commentaire',x.commentaire]
+      ])}</div>`;
+    }
+
+    if(d.demande_enlevement){
+      const x=d.demande_enlevement;
+      html+=`<div class="section"><div class="section-title">Demande d’enlèvement liée</div>${detailRows([
+        ['N° bon enlèvement',x.numero_bon],['Client',x.client],['Projet / expo',x.projet],
+        ['Coordinateur',x.coordinateur],['Date enlèvement',x.date_enlevement],
+        ['Adresse départ',x.adresse_depart],['Adresse destination',x.adresse_destination],
+        ['Notes',x.notes],['Instructions',x.instructions]
+      ])}</div>`;
+    }
+
+    if((d.documents_source||[]).length){
+      html+=`<div class="section"><div class="section-title">Documents source</div>`;
+      (d.documents_source||[]).forEach(f=>{
+        html+=`<a class="file-link" target="_blank" href="${esc(f.url)}">${esc(f.name)}</a>`;
+      });
+      html+=`</div>`;
+    }
+
+    html+=`<div class="section"><div class="section-title">Historique des réceptions</div>`;
+    if((d.receptions||[]).length){
+      (d.receptions||[]).forEach(r=>{
+        html+=`<div class="history-card">
+          <div class="history-title">${esc(r.reference||'Réception')}</div>
+          ${detailRows([
+            ['Date',r.date_affichee||fmtDate(r.date)],['Réceptionné par',r.receptionne_par],
+            ['Quantité réceptionnée',r.quantite],['Lieu de stockage',r.lieu_stockage],
+            ['N° dossier',r.numero_dossier],['Nombre de colis',r.nombre_colis],
+            ['Colis',(r.colis||[]).join(', ')]
+          ])}`;
+        if((r.files||[]).length){
+          html+=`<div style="margin-top:8px">`;
+          (r.files||[]).forEach(f=>{
+            html+=`<a class="file-link" target="_blank" href="${esc(f.url)}">${esc(f.name)}</a>`;
+          });
+          html+=`</div>`;
+        }
+        html+=`</div>`;
+      });
+    }else{
+      html+=`<div class="muted">Aucune réception enregistrée pour cet article.</div>`;
+    }
+    html+=`</div>`;
+
+    content.innerHTML=html;
+  }catch(e){
+    content.innerHTML=`<div class="empty">${esc(e.message||'Impossible de charger l’article.')}</div>`;
+  }
+}
+
+document.getElementById('selectAll').addEventListener('change',e=>{
+  document.querySelectorAll('.row-check').forEach(cb=>cb.checked=e.target.checked);
+});
+body.addEventListener('change',e=>{
+  if(!e.target.classList.contains('row-check')) return;
+  const boxes=[...document.querySelectorAll('.row-check')];
+  document.getElementById('selectAll').checked=boxes.length>0&&boxes.every(x=>x.checked);
+});
+body.addEventListener('click',e=>{
+  const link=e.target.closest('.esi-link');
+  if(!link) return;
+  e.preventDefault();
+  openArticleDetail(link.dataset.esi);
+});
+document.getElementById('articleModalClose').onclick=closeArticleModal;
+document.getElementById('articleModalBackdrop').addEventListener('click',e=>{if(e.target.id==='articleModalBackdrop')closeArticleModal()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeArticleModal()});
+
 load();
 </script>
 </body>
