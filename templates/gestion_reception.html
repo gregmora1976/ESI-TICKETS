@@ -285,51 +285,74 @@ function renderTicketModal(editing=false){
     }else html+=`<div>Aucune marchandise renseignée.</div>`;
     html+=`</div><div class="section"><div class="section-title">Commentaire</div>${esc(val(a.commentaire||t.commentaire))}</div>`;
 
-    const receptionsAvis=(t.receptionsAvisArrivee||[]);
-    if(receptionsAvis.length){
-      html+=`<div class="section"><div class="section-title">Réceptions générées</div>`;
-      receptionsAvis.slice().reverse().forEach(r=>{
-        html+=`<div style="margin:10px 0 14px">
-          <div><strong>${esc(r.reference||'Réception')}</strong>
-          — ${esc(r.date_reception||'')} — ${esc(r.receptionne_par||'')} — ${esc(r.lieu_stockage||'')}</div>`;
-        if(r.colis&&r.colis.length){
-          html+=`<div class="delivery-meta">Colis : ${esc(r.colis.join(', '))}</div>`;
-        }
-        html+=`<div class="generated-links">`;
-        if(r.bon_reception_filename){
-          html+=`<a class="file-link" target="_blank"
-            href="/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(r.bon_reception_filename)}">
-            Bon de réception
-          </a>`;
-        }
-        if(r.etiquettes_articles_filename){
-          html+=`<a class="file-link" target="_blank"
-            href="/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(r.etiquettes_articles_filename)}">
-            Étiquettes articles
-          </a>`;
-        }
-        if(r.etiquettes_colis_filename){
-          html+=`<a class="file-link" target="_blank"
-            href="/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(r.etiquettes_colis_filename)}">
-            Étiquettes colis
-          </a>`;
-        }
-        html+=`</div></div>`;
-      });
-      html+=`</div>`;
-    }
-
     const files=(t.files||[]).filter(f=>f&&f.name);
     html+=`<div class="section"><div class="section-title">Documents joints</div>${files.length?files.map(f=>`<a class="file-link" target="_blank" href="/api/tickets/${encodeURIComponent(t.id)}/download/${encodeURIComponent(f.name)}">${esc(f.name)}</a>`).join(''):'<div>Aucun document.</div>'}</div>`;
-    document.getElementById('ticketModalBody').innerHTML=html;
+
     const arrivalAllReceived=aitems.length>0&&aitems.every(i=>receivedQty(i)>=plannedQty(i));
     if(arrivalAllReceived){
       html+=`<div class="section" style="background:#f0fdf4;border-color:#bbf7d0">
         <div class="section-title" style="color:#166534">Réception clôturée</div>
         <div style="font-weight:900;color:#166534">Tous les articles de cet avis d'arrivée ont été réceptionnés.</div>
       </div>`;
-      document.getElementById('ticketModalBody').innerHTML=html;
     }
+
+    const receptionsAvis=(t.receptionsAvisArrivee||[]);
+    if(receptionsAvis.length){
+      html+=`<div class="section"><div class="section-title">Bons de réception générés</div>`;
+      receptionsAvis.slice().reverse().forEach(r=>{
+        const ref=String(r.reference||'Réception');
+        const expectedBon=`${ref}.pdf`;
+        const expectedArticles=`${ref}_etiquettes_articles.pdf`;
+        const expectedColis=`${ref}_etiquettes_colis.pdf`;
+        const managerNames=(t.managerSheets||[]).map(f=>f&&f.name).filter(Boolean);
+
+        const bonFilename=r.bon_reception_filename||
+          (managerNames.includes(expectedBon)?expectedBon:'');
+        const articlesFilename=r.etiquettes_articles_filename||
+          (managerNames.includes(expectedArticles)?expectedArticles:'');
+        const colisFilename=r.etiquettes_colis_filename||
+          (managerNames.includes(expectedColis)?expectedColis:'');
+
+        html+=`<div style="margin:10px 0 14px">
+          <div>`;
+
+        if(bonFilename){
+          html+=`<a class="file-link" target="_blank"
+            href="/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(bonFilename)}">
+            <strong>${esc(ref)}</strong>
+          </a>`;
+        }else{
+          html+=`<strong>${esc(ref)}</strong>`;
+        }
+
+        html+=` — ${esc(r.date_reception||'')} — ${esc(r.receptionne_par||'')} — ${esc(r.lieu_stockage||'')}</div>`;
+
+        if(r.colis&&r.colis.length){
+          html+=`<div class="delivery-meta">Colis : ${esc(r.colis.join(', '))}</div>`;
+        }
+
+        if(articlesFilename||colisFilename){
+          html+=`<div class="generated-links">`;
+          if(articlesFilename){
+            html+=`<a class="file-link" target="_blank"
+              href="/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(articlesFilename)}">
+              Étiquettes articles
+            </a>`;
+          }
+          if(colisFilename){
+            html+=`<a class="file-link" target="_blank"
+              href="/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(colisFilename)}">
+              Étiquettes colis
+            </a>`;
+          }
+          html+=`</div>`;
+        }
+        html+=`</div>`;
+      });
+      html+=`</div>`;
+    }
+
+    document.getElementById('ticketModalBody').innerHTML=html;
     document.getElementById('ticketEditBtn').style.display='none';
     document.getElementById('ticketReceptionBtn').style.display=arrivalAllReceived?'none':'inline-block';
     document.getElementById('ticketDeliveryBtn').style.display='none';
