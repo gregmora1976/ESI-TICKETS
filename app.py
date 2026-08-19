@@ -2103,6 +2103,10 @@ def _format_ticket_notification_subject(ticket):
         suffix = " ".join([x for x in [dossier, lieu_rdv or projet] if x]).strip()
         return f"[ESI Tickets] Aller voir finalisé - {suffix}".strip()
 
+    if module == "Avis d'arrivée":
+        suffix = " ".join([x for x in [dossier, projet] if x]).strip()
+        return f"[ESI Tickets] Avis d'arrivée terminé - {suffix}".strip()
+
     suffix = dossier or projet or ref
     return f"[ESI Tickets] Ticket terminé - {suffix}".strip()
 
@@ -2564,11 +2568,35 @@ def api_create_ticket():
         'Demande Aller voir': 'AV',
         'Demande d\'enlèvement': 'ENL',
         'Demande d\'enlevement': 'ENL',
+        "Avis d'arrivée": 'ARR',
     }
     prefix = prefixes.get(module, 'AV')
 
     incoming_files = [fs for fs in request.files.getlist('files') if fs and fs.filename]
     is_enlevement = module in ("Demande d'enlèvement", "Demande d'enlevement")
+    is_avis_arrivee = module == "Avis d'arrivée"
+    avis_arrivee = None
+    if is_avis_arrivee:
+        raw_avis = form.get('avisArrivee', '')
+        try:
+            avis_arrivee = json.loads(raw_avis) if raw_avis else {}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return jsonify({'ok': False, 'error': "Données de l'avis d'arrivée invalides."}), 400
+        if not isinstance(avis_arrivee, dict):
+            return jsonify({'ok': False, 'error': "Données de l'avis d'arrivée invalides."}), 400
+
+        required = {
+            'dossier_ref': 'Réf. dossier',
+            'client': 'Nom du client',
+            'projet': 'Projet ou expo',
+            'date_reception_prevue': 'Date de réception prévue',
+            'coordinateur': 'Nom du coordinateur',
+        }
+        missing = [label for key, label in required.items() if not _as_text(avis_arrivee.get(key)).strip()]
+        if missing:
+            return jsonify({'ok': False, 'error': 'Champ(s) obligatoire(s) manquant(s) : ' + ', '.join(missing)}), 400
+        if not isinstance(avis_arrivee.get('items'), list) or not avis_arrivee.get('items'):
+            return jsonify({'ok': False, 'error': "Ajoute au moins une ligne de marchandise."}), 400
 
     # Pour une demande d'enlevement, le demandeur ne fait qu'une chose : deposer un PDF.
     if is_enlevement:
@@ -2615,6 +2643,11 @@ def api_create_ticket():
             'items': [],
             'references': [],
         }
+
+    if is_avis_arrivee:
+        # Les données spécifiques restent dans raw_json : aucune nouvelle colonne Supabase n'est nécessaire.
+        # Les champs historiques ci-dessus restent remplis pour que l'avis apparaisse dans les listes existantes.
+        ticket['avisArrivee'] = avis_arrivee
 
     ticket_folder(ticket_id)  # conserve la création du dossier local historique
 
