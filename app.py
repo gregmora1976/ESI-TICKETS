@@ -3502,10 +3502,23 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
         left_block = [clean(enl.get('adresse_depart')), '-', '-']
         right_block = [clean(enl.get('adresse_destination')), '-', '-', clean(enl.get('numero_bon') or ticket.get('ref'))]
 
-    # Header.
-    rect(30, 752, 118, 62, fill=NAVY)
-    txt(50, 779, 'esi', 26, True, WHITE)
-    txt(86, 770, 'fine art', 9, True, WHITE)
+    # Header avec le vrai logo ESI depuis static/logo.png.
+    logo_path = APP_DIR / 'static' / 'logo.png'
+    logo_image_bytes = None
+    logo_w = logo_h = None
+    if logo_path.exists():
+        try:
+            from PIL import Image
+            with Image.open(logo_path) as im:
+                if im.mode not in ('RGB', 'L'):
+                    im = im.convert('RGB')
+                logo_w, logo_h = im.size
+                buf = io.BytesIO()
+                im.save(buf, format='JPEG', quality=92)
+                logo_image_bytes = buf.getvalue()
+        except Exception as e:
+            print(f'[PDF] Logo ESI non charge: {e}')
+
     txt(168, 786, 'BON DE RECEPTION', 21, True, TEXT)
     txt(168, 767, 'Controle et enregistrement de la marchandise', 10, False, (0.35,0.40,0.45))
     line(30, 744, 565, 744, CYAN, 1.6)
@@ -3587,15 +3600,47 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
     txt(30, 35, f"Reference : {clean(bon.get('reference'))}  |  Colis : {clean(', '.join(bon.get('colis') or []))}", 7, False, (0.35,0.40,0.45))
     txt(430, 35, 'Groupe ESI - Bon de reception', 7, False, (0.35,0.40,0.45))
 
+    if logo_image_bytes and logo_w and logo_h:
+        box_x, box_y, box_w, box_h = 30, 752, 118, 62
+        scale = min(box_w / float(logo_w), box_h / float(logo_h))
+        draw_w = logo_w * scale
+        draw_h = logo_h * scale
+        draw_x = box_x + (box_w - draw_w) / 2
+        draw_y = box_y + (box_h - draw_h) / 2
+        ops.extend([
+            'q',
+            f'{draw_w:.2f} 0 0 {draw_h:.2f} {draw_x:.2f} {draw_y:.2f} cm',
+            '/Im1 Do',
+            'Q',
+        ])
+    else:
+        rect(30, 752, 118, 62, fill=NAVY)
+        txt(50, 779, 'ESI', 24, True, WHITE)
+
     stream = '\n'.join(ops).encode('latin-1', errors='replace')
-    objects = [
-        b'<< /Type /Catalog /Pages 2 0 R >>',
-        b'<< /Type /Pages /Kids [5 0 R] /Count 1 >>',
-        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
-        f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PAGE_W} {PAGE_H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 6 0 R >>'.encode('latin-1'),
-        f'<< /Length {len(stream)} >>\nstream\n'.encode('latin-1') + stream + b'\nendstream',
-    ]
+    if logo_image_bytes and logo_w and logo_h:
+        image_obj = (
+            f'<< /Type /XObject /Subtype /Image /Width {logo_w} /Height {logo_h} '
+            f'/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {len(logo_image_bytes)} >>\nstream\n'
+        ).encode('latin-1') + logo_image_bytes + b'\nendstream'
+        objects = [
+            b'<< /Type /Catalog /Pages 2 0 R >>',
+            b'<< /Type /Pages /Kids [5 0 R] /Count 1 >>',
+            b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+            b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
+            f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PAGE_W} {PAGE_H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> /XObject << /Im1 7 0 R >> >> /Contents 6 0 R >>'.encode('latin-1'),
+            f'<< /Length {len(stream)} >>\nstream\n'.encode('latin-1') + stream + b'\nendstream',
+            image_obj,
+        ]
+    else:
+        objects = [
+            b'<< /Type /Catalog /Pages 2 0 R >>',
+            b'<< /Type /Pages /Kids [5 0 R] /Count 1 >>',
+            b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+            b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
+            f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PAGE_W} {PAGE_H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 6 0 R >>'.encode('latin-1'),
+            f'<< /Length {len(stream)} >>\nstream\n'.encode('latin-1') + stream + b'\nendstream',
+        ]
     out = io.BytesIO(); out.write(b'%PDF-1.4\n')
     offsets=[]
     for i,obj in enumerate(objects,1):
