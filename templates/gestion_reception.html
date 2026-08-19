@@ -119,7 +119,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
       <button class="btn danger" id="ticketCancelBtn" type="button">Annuler le ticket</button>
       <div class="edit-actions">
         <button class="btn primary" id="ticketReceptionBtn" type="button" style="display:none">RECEPTION</button>
-        <button class="btn delivery" id="ticketDeliveryBtn" type="button">Bon de livraison</button>
+        <button class="btn delivery" id="ticketDeliveryBtn" type="button">Bon de réception</button>
         <button class="btn" id="ticketEditBtn" type="button">Modifier</button>
         <button class="btn success" id="ticketSaveBtn" type="button" style="display:none">Enregistrer</button>
         <button class="btn" id="ticketEditCancelBtn" type="button" style="display:none">Annuler les modifications</button>
@@ -150,7 +150,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
   <div class="ticket-modal" role="dialog" aria-modal="true">
     <div class="ticket-modal-head">
       <div>
-        <div class="ticket-modal-title">Bon de livraison / Réception</div>
+        <div class="ticket-modal-title">BON DE RECEPTION</div>
         <div class="ticket-modal-sub" id="deliveryModalSub">-</div>
       </div>
       <button class="modal-close" id="deliveryModalClose" type="button">×</button>
@@ -394,7 +394,7 @@ function renderTicketModal(editing=false){
 
   const bons=(extraction(t).bons_livraison||[]);
   if(bons.length){
-    html+=`<div class="section"><div class="section-title">Bons de livraison générés</div>`;
+    html+=`<div class="section"><div class="section-title">Bons de réception générés</div>`;
     bons.slice().reverse().forEach(b=>{
       const filename=b.filename||((b.reference||'')+'.pdf');
       const href=`/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(filename)}`;
@@ -700,7 +700,8 @@ function guessDossierNumber(ticket){
   const enl=extraction(ticket);
   const direct=String(
     enl.numero_dossier||enl.dossier_numero||enl.dossier||
-    ticket.numeroDossier||ticket.numero_dossier||''
+    ticket.numeroDossier||ticket.numero_dossier||
+    enl.numero_bon||ticket.ref||''
   ).trim();
   if(direct && direct!=='-') return direct;
 
@@ -718,6 +719,21 @@ function closeDeliveryModal(){
   const b=document.getElementById('deliveryModalBackdrop');
   b.classList.remove('open');b.setAttribute('aria-hidden','true');
 }
+function recalcDeliveryPackageCount(){
+  const packageInput=document.getElementById('deliveryPackageCount');
+  if(!packageInput) return;
+
+  let total=0;
+  document.querySelectorAll('.delivery-check:checked:not(:disabled)').forEach(cb=>{
+    const index=Number(cb.dataset.index);
+    const qty=document.querySelector(`.delivery-qty[data-index="${index}"]`);
+    const n=Number(qty?.value||0);
+    if(Number.isFinite(n)&&n>0) total+=Math.floor(n);
+  });
+
+  packageInput.value=Math.max(total,1);
+}
+
 function openDeliveryModal(){
   if(!openedTicket) return;
   const its=items(openedTicket);
@@ -806,8 +822,18 @@ function openDeliveryModal(){
     cb.addEventListener('change',()=>{
       const qty=document.querySelector(`.delivery-qty[data-index="${cb.dataset.index}"]`);
       if(qty) qty.disabled=!cb.checked;
+      recalcDeliveryPackageCount();
     });
   });
+
+  document.querySelectorAll('.delivery-qty').forEach(qty=>{
+    qty.addEventListener('input',recalcDeliveryPackageCount);
+    qty.addEventListener('change',recalcDeliveryPackageCount);
+  });
+
+  // Valeur initiale = quantité totale des articles actuellement sélectionnés.
+  // Le champ reste ensuite librement modifiable par l'utilisateur.
+  recalcDeliveryPackageCount();
 
   const b=document.getElementById('deliveryModalBackdrop');
   b.classList.add('open');b.setAttribute('aria-hidden','false');
