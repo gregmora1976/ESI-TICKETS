@@ -202,6 +202,14 @@ body{
 .event:hover{
   filter:brightness(.97);
 }
+.event.received{
+  background:var(--received);
+  border-left-color:var(--received-border);
+}
+.event.pending{
+  background:var(--event);
+  border-left-color:var(--event-border);
+}
 .empty{
   padding:24px;
   text-align:center;
@@ -925,8 +933,9 @@ function renderReceptionInfo(t){
   const reception = (t && t.reception) || {};
   const fiche = (t && t.fiche) || {};
   const hasLocalisation = !!String(fiche.localisation || '').trim();
+  const receptionnee = isReceived(t);
 
-  if(!hasLocalisation && !reception.receptionnee_le){
+  if(!receptionnee){
     const empty = document.createElement('span');
     empty.className = 'reception-empty';
     empty.textContent = 'Non réceptionnée';
@@ -1083,8 +1092,20 @@ function groupTickets(){
   return grouped;
 }
 function isReceived(t){
-  const reception = (t && t.reception) || {};
-  return reception.receptionnee === true || !!reception.receptionnee_le;
+  if(!t) return false;
+
+  const reception = t.reception || {};
+  const fiche = t.fiche || {};
+
+  // Source principale : métadonnées de réception.
+  if(reception.receptionnee === true) return true;
+  if(String(reception.receptionnee_le || '').trim()) return true;
+
+  // Compatibilité avec les réceptions historiques/manuelles :
+  // une localisation enregistrée signifie que la caisse a été réceptionnée.
+  if(String(fiche.localisation || '').trim()) return true;
+
+  return false;
 }
 
 function normalizeStatus(value){
@@ -1192,15 +1213,8 @@ function renderCalendar(){
           event.textContent = eventText(t);
           event.title = event.textContent;
 
-          // Vert = statut Réceptionnée.
-          // Jaune = caisse encore à réceptionner.
-          if(isReceivedNow){
-            event.style.background = 'var(--received)';
-            event.style.borderLeft = '5px solid var(--received-border)';
-          }else{
-            event.style.background = 'var(--event)';
-            event.style.borderLeft = '5px solid var(--event-border)';
-          }
+          // Même règle partout : réception logistique indépendante du statut ticket.
+          event.classList.add(isReceivedNow ? 'received' : 'pending');
 
           event.addEventListener('click',()=>openTicketModal(t));
           day.appendChild(event);
