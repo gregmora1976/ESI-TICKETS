@@ -13,8 +13,8 @@
 .actions{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid var(--line);background:#fff;border-radius:12px;padding:10px 14px;font-weight:800;cursor:pointer}.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
 .searchbar{padding:18px 24px;display:flex;gap:10px;flex-wrap:wrap}.searchbar input{flex:1;min-width:260px;border:1px solid #bfd4e3;background:#eaf6ff;border-radius:14px;padding:13px 15px;font-size:15px}
 .info{padding:0 24px 14px;color:var(--muted);font-size:12px}.tablewrap{overflow:auto;border-top:1px solid var(--line)}
-table{width:100%;border-collapse:collapse;min-width:1250px}th,td{padding:11px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:12px}th{position:sticky;top:0;background:#f8fafc;font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.04em}
-.esi{font-weight:950;color:#0369a1;font-size:14px}.muted{color:var(--muted)}.empty{padding:35px;text-align:center;color:var(--muted)}
+table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:12px}th{position:sticky;top:0;background:#f8fafc;font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.04em}
+.esi{font-weight:950;color:#0369a1;font-size:14px;white-space:nowrap}.muted{color:var(--muted)}.empty{padding:35px;text-align:center;color:var(--muted)}
 .badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#e0f2fe;color:#075985;font-weight:800}
 </style>
 </head>
@@ -32,7 +32,7 @@ table{width:100%;border-collapse:collapse;min-width:1250px}th,td{padding:11px 10
       </div>
     </div>
     <div class="searchbar">
-      <input id="q" placeholder="Rechercher : ESI-125, référence, dossier, client, projet, description, stockage, colis...">
+      <input id="q" placeholder="Rechercher : ESI-125, référence, dossier, client, projet, description, stockage...">
       <button class="btn primary" id="searchBtn">Rechercher</button>
       <button class="btn" id="resetBtn">Tout afficher</button>
     </div>
@@ -41,8 +41,7 @@ table{width:100%;border-collapse:collapse;min-width:1250px}th,td{padding:11px 10
       <table>
         <thead><tr>
           <th>N° ESI</th><th>Référence</th><th>Description</th><th>Dossier</th><th>Client</th>
-          <th>Projet</th><th>Dimensions</th><th>Poids</th><th>Stockage</th><th>Colis</th>
-          <th>Statut</th><th>Source</th>
+          <th>Projet</th><th>Dimensions</th><th>Poids</th><th>Stockage</th>
         </tr></thead>
         <tbody id="body"></tbody>
       </table>
@@ -53,6 +52,25 @@ table{width:100%;border-collapse:collapse;min-width:1250px}th,td{padding:11px 10
 <script>
 const q=document.getElementById('q'),body=document.getElementById('body'),empty=document.getElementById('empty'),info=document.getElementById('info');
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+function dossierAuto(a){
+  const direct=String(a.dossier||'').trim();
+  if(direct && direct!=='-') return direct;
+
+  // Secours : les numéros de colis sont de la forme DOSSIER-001.
+  const colis=String(a.dernier_colis||'').trim();
+  if(colis){
+    const first=colis.split(',')[0].trim();
+    const m=first.match(/^(.+)-\d{3}$/);
+    if(m && m[1]) return m[1];
+  }
+
+  // Autres champs éventuellement déjà disponibles dans le référentiel.
+  for(const v of [a.numero_dossier,a.dossier_numero,a.transporteur_ref]){
+    const s=String(v||'').trim();
+    if(s && s!=='-') return s;
+  }
+  return '-';
+}
 async function load(){
   info.textContent='Recherche…';
   const r=await fetch('/api/articles?q='+encodeURIComponent(q.value.trim())+'&limit=500');
@@ -63,11 +81,9 @@ async function load(){
     const dims=[a.longueur_cm,a.largeur_cm,a.hauteur_cm].filter(Boolean).join(' x ');
     const tr=document.createElement('tr');
     tr.innerHTML=`<td class="esi">${esc(a.esi_id)}</td><td><strong>${esc(a.reference||'-')}</strong></td>
-      <td>${esc(a.description||'-')}</td><td>${esc(a.dossier||'-')}</td><td>${esc(a.client||'-')}</td>
+      <td>${esc(a.description||'-')}</td><td>${esc(dossierAuto(a))}</td><td>${esc(a.client||'-')}</td>
       <td>${esc(a.projet||'-')}</td><td>${esc(dims||'-')}</td><td>${esc(a.poids_kg||'-')}</td>
-      <td>${esc(a.lieu_stockage||'-')}</td><td>${esc(a.dernier_colis||'-')}</td>
-      <td><span class="badge">${esc(a.statut_logistique||'-')}</span></td>
-      <td class="muted">${esc(a.source_module||'-')}<br>${esc(a.ticket_id||'-')}</td>`;
+      <td>${esc(a.lieu_stockage||'-')}</td>`;
     body.appendChild(tr);
   });
   info.textContent=`${rows.length} article(s) affiché(s)`;
