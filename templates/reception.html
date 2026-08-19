@@ -80,6 +80,37 @@ body{
   min-width:180px;
   text-align:center;
 }
+.stats-wrap{
+  padding:14px 14px 0;
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+}
+.stat-card{
+  width:240px;
+  min-height:94px;
+  background:#fff;
+  border:1px solid #cfe0ee;
+  border-radius:18px;
+  padding:14px 16px;
+  box-shadow:0 1px 2px rgba(15,23,42,.02);
+}
+.stat-label{
+  color:#35506b;
+  font-size:12px;
+  line-height:1.1;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+}
+.stat-value{
+  margin-top:8px;
+  font-size:28px;
+  line-height:1;
+  font-weight:900;
+}
+.stat-value.pending{color:#c56a00}
+.stat-value.done{color:#16803a}
 .calendar-wrap{
   padding:14px;
 }
@@ -407,6 +438,17 @@ body{
     <input class="search" id="searchInput" type="search" placeholder="Rechercher un ticket..." />
     <button class="btn" id="refreshBtn" type="button">Rafraîchir</button>
     <button class="btn primary" id="importBlBtn" type="button">Importer BL PDF</button>
+  </div>
+</div>
+
+<div class="stats-wrap">
+  <div class="stat-card">
+    <div class="stat-label">Caisses à réceptionner</div>
+    <div class="stat-value pending" id="statPending">0</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label" id="statDoneLabel">Caisses réalisées en 2026</div>
+    <div class="stat-value done" id="statDone">0</div>
   </div>
 </div>
 
@@ -942,9 +984,61 @@ function groupTickets(){
     });
   return grouped;
 }
+function normalizeStatus(value){
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function updateStats(){
+  const year = new Date().getFullYear();
+  let pending = 0;
+  let done = 0;
+
+  tickets.forEach(t=>{
+    if(t.module !== 'Fiche de caisse') return;
+
+    const status = normalizeStatus(t.status);
+
+    // À réceptionner = demande créée + en cours.
+    if(
+      status === 'demande creee' ||
+      status === 'demande crees' ||
+      status === 'en cours'
+    ){
+      pending++;
+    }
+
+    // Réalisées = terminées depuis le début de l'année.
+    if(status === 'termine' || status === 'terminee' || status === 'terminees'){
+      const rawDate =
+        t.dateEmballage ||
+        t.dateTerminee ||
+        t.dateTermine ||
+        t.updated_at ||
+        t.created_at ||
+        '';
+
+      if(rawDate){
+        const d = new Date(rawDate);
+        if(!Number.isNaN(d.getTime()) && d.getFullYear() === year){
+          done++;
+        }
+      }
+    }
+  });
+
+  document.getElementById('statPending').textContent = pending;
+  document.getElementById('statDone').textContent = done;
+  document.getElementById('statDoneLabel').textContent = `Caisses réalisées en ${year}`;
+}
+
 async function loadTickets(){
   const res = await fetch('/api/tickets');
   tickets = await res.json();
+  updateStats();
   renderCalendar();
 }
 function renderCalendar(){
