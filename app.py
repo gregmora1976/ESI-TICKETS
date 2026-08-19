@@ -2735,7 +2735,7 @@ def api_update_ticket(ticket_id):
 
 @app.route('/api/tickets/<ticket_id>/reception-avis-arrivee', methods=['POST'])
 def api_reception_avis_arrivee(ticket_id):
-    """Valide la réception physique des marchandises d'un avis d'arrivée."""
+    """Valide une réception partielle/totale d'un avis d'arrivée et génère les étiquettes."""
     ticket = load_ticket(ticket_id)
     if not ticket:
         return jsonify({'ok': False, 'error': 'Ticket introuvable'}), 404
@@ -2747,67 +2747,256 @@ def api_reception_avis_arrivee(ticket_id):
     data = request.get_json(silent=True) or {}
     receptionne_par = _as_text(data.get('receptionne_par')).strip()
     lieu_stockage = _as_text(data.get('lieu_stockage')).strip()
+    numero_dossier = _as_text(data.get('numero_dossier')).strip()
     commentaire = _as_text(data.get('commentaire')).strip()
+
+    try:
+        nombre_colis = int(data.get('nombre_colis') or 0)
+    except (TypeError, ValueError):
+        nombre_colis = 0
+
+    items_reception = data.get('items_reception')
     selected_indexes = data.get('selected_indexes') or []
 
     if not receptionne_par:
         return jsonify({'ok': False, 'error': 'Nom et prénom du réceptionnaire manquants'}), 400
     if not lieu_stockage:
         return jsonify({'ok': False, 'error': 'Lieu de stockage manquant'}), 400
-    if not isinstance(selected_indexes, list) or not selected_indexes:
-        return jsonify({'ok': False, 'error': 'Aucune marchandise sélectionnée'}), 400
+    if not numero_dossier:
+        return jsonify({'ok': False, 'error': 'N° dossier obligatoire pour numéroter les colis'}), 400
+    if nombre_colis < 1:
+        return jsonify({'ok': False, 'error': 'Le nombre total de colis doit être supérieur ou égal à 1'}), 400
 
     avis = dict(ticket.get('avisArrivee') or ticket.get('avis_arrivee') or {})
     items = list(avis.get('items') or [])
     if not items:
         return jsonify({'ok': False, 'error': "Aucune marchandise dans cet avis d'arrivée"}), 400
 
-    indexes = []
-    for value in selected_indexes:
-        try:
-            index = int(value)
-        except (TypeError, ValueError):
-            continue
-        if 0 <= index < len(items) and index not in indexes:
-            indexes.append(index)
+    # Compatibilité ancienne interface
+    if not isinstance(items_reception, list):
+        items_reception = []
+        for raw_idx in selected_indexes if isinstance(selected_indexes, list) else []:
+            try:
+                items_reception.append({'index': int(raw_idx), 'quantite_recue': None})
+            except Exception:
+                pass
 
-    if not indexes:
+    if not items_reception:
+        return jsonify({'ok': False, 'error': 'Aucune marchandise sélectionnée'}), 400
+
+    def _qty_int(value, default=0):
+        try:
+            return max(0, int(float(str(value).replace(',', '.'))))
+        except Exception:
+            return default
+
+    def _item_fully_received(item):
+        planned = max(1, _qty_int(item.get('quantite') or 1, 1))
+        received = _qty_int(item.get('quantite_recue_totale'), -1)
+        if received < 0:
+            received = planned if item.get('receptionne') else 0
+        return received >= planned
+
+    if all_items and all(_item_fully_received(dict(x or {})) for x in all_items):
+        return jsonify({
+            'ok': False,
+            'error': 'Réception clôturée : tous les articles ont déjà été réceptionnés.'
+        }), 409
+
+    now = datetime.now()
+    selected = []
+    article_labels = []
+
+    for entry in items_reception:
+        if not isinstance(entry, dict):
+            continue
+
+        try:
+            idx = int(entry.get('index'))
+        except Exception:
+            continue
+
+        if idx < 0 or idx >= len(items):
+            continue
+
+        item = dict(items[idx] or {})
+        planned = max(1, _qty_int(item.get('quantite') or 1, 1))
+
+        previous = _qty_int(item.get('quantite_recue_totale'), -1)
+        if previous < 0:
+            previous = planned if item.get('receptionne') else 0
+
+        remaining = max(planned - previous, 0)
+        if remaining <= 0:
+            continue
+
+        requested = entry.get('quantite_recue')
+        qty_received = remaining if requested in (None, '', 0, '0') else _qty_int(requested, 0)
+
+        if qty_received < 1:
+            continue
+
+        if qty_received > remaining:
+            return jsonify({
+                'ok': False,
+                'error': f"Quantité reçue trop élevée pour {item.get('reference') or idx} : reste {remaining}"
+            }), 400
+
+        new_total = previous + qty_received
+
+        history = list(item.get('receptions') or [])
+        history.append({
+            'date': now.isoformat(),
+            'quantite': qty_received,
+            'receptionne_par': receptionne_par,
+            'lieu_stockage': lieu_stockage,
+        })
+
+        item['quantite_recue_totale'] = new_total
+        item['receptionne'] = new_total >= planned
+        item['receptionne_le'] = now.isoformat()
+        item['receptionne_par'] = receptionne_par
+        item['lieu_stockage'] = lieu_stockage
+        item['receptions'] = history
+        items[idx] = item
+
+        selected_item = {
+            'index': idx,
+            'quantite': str(qty_received),
+            'quantite_prevue': str(planned),
+            'quantite_deja_recue': str(previous),
+            'quantite_recue_totale': str(new_total),
+            'reference': _as_text(item.get('reference')).strip(),
+            'designation': _as_text(item.get('description')).strip(),
+        }
+        selected.append(selected_item)
+
+        for unit_no in range(1, qty_received + 1):
+            article_labels.append({
+                'titre': 'ARTICLE',
+                'principal': _as_text(item.get('reference')).strip() or 'Sans reference',
+                'dossier': numero_dossier,
+                'client': avis.get('client') or ticket.get('dossier') or '',
+                'reference': _as_text(item.get('reference')).strip(),
+                'designation': _as_text(item.get('description')).strip(),
+                'quantite': f"{unit_no}/{qty_received}",
+                'lieu': lieu_stockage,
+            })
+
+    if not selected:
         return jsonify({'ok': False, 'error': 'Aucune marchandise sélectionnée valide'}), 400
 
-    now = datetime.now().isoformat()
-    for index, item in enumerate(items):
-        current = dict(item or {})
-        if index in indexes:
-            current['receptionne'] = True
-            current['receptionne_le'] = now
-            current['receptionne_par'] = receptionne_par
-            current['lieu_stockage'] = lieu_stockage
-        items[index] = current
+    with _BLR_LOCK:
+        # Référence propre aux réceptions d'avis
+        existing_refs = []
+        try:
+            for t in list_tickets():
+                for r in t.get('receptionsAvisArrivee') or []:
+                    ref = _as_text(r.get('reference')).strip()
+                    m = re.fullmatch(r"RAR-(\d+)", ref, re.I)
+                    if m:
+                        existing_refs.append(int(m.group(1)))
+        except Exception as e:
+            print(f"[RAR] Lecture historique impossible: {e}")
 
-    avis['items'] = items
-    ticket['avisArrivee'] = avis
+        reception_ref = f"RAR-{(max(existing_refs) if existing_refs else 0) + 1:04d}"
+        colis_refs = _allocate_colis_numbers(numero_dossier, nombre_colis)
 
-    # Information logistique indépendante du statut métier du ticket.
-    reception = dict(ticket.get('receptionAvisArrivee') or {})
-    reception.update({
-        'receptionnee': True,
-        'receptionnee_le': now,
-        'receptionne_par': receptionne_par,
-        'lieu_stockage': lieu_stockage,
-        'commentaire': commentaire,
-        'selected_indexes': indexes,
-    })
-    ticket['receptionAvisArrivee'] = reception
-    ticket['updatedAt'] = now
+        article_labels_bytes = _build_labels_pdf_bytes(article_labels, kind="article")
+        article_labels_filename = f"{reception_ref}_etiquettes_articles.pdf"
+        article_labels_path = f"{ticket_id}/receptions_avis/{now.strftime('%Y%m%d%H%M%S')}_{article_labels_filename}"
 
-    # Ne change volontairement pas le statut du ticket.
-    save_ticket(ticket)
+        colis_labels = [{
+            'titre': 'COLIS',
+            'principal': colis_ref,
+            'dossier': numero_dossier,
+            'client': avis.get('client') or ticket.get('dossier') or '',
+            'colis': colis_ref,
+            'lieu': lieu_stockage,
+            'bon': reception_ref,
+        } for colis_ref in colis_refs]
+
+        colis_labels_bytes = _build_labels_pdf_bytes(colis_labels, kind="colis")
+        colis_labels_filename = f"{reception_ref}_etiquettes_colis.pdf"
+        colis_labels_path = f"{ticket_id}/receptions_avis/{now.strftime('%Y%m%d%H%M%S')}_{colis_labels_filename}"
+
+        reception_pdf_data = {
+            'reference': reception_ref,
+            'ticket_id': ticket_id,
+            'numero_dossier': numero_dossier,
+            'receptionne_par': receptionne_par,
+            'lieu_stockage': lieu_stockage,
+            'date_reception': now.strftime("%d/%m/%Y %H:%M"),
+            'nombre_colis': nombre_colis,
+            'colis': colis_refs,
+            'commentaire': commentaire,
+            'items': selected,
+        }
+        reception_pdf_bytes = _build_reception_form_pdf_bytes(ticket, reception_pdf_data, source_type='avis')
+        reception_pdf_filename = f"{reception_ref}_bon_reception.pdf"
+        reception_pdf_path = f"{ticket_id}/receptions_avis/{now.strftime('%Y%m%d%H%M%S')}_{reception_pdf_filename}"
+
+        try:
+            supabase_upload_bytes(reception_pdf_path, reception_pdf_bytes, "application/pdf")
+            supabase_upload_bytes(article_labels_path, article_labels_bytes, "application/pdf")
+            supabase_upload_bytes(colis_labels_path, colis_labels_bytes, "application/pdf")
+        except Exception as e:
+            print(f"[RAR] Erreur upload étiquettes: {e}")
+            return jsonify({'ok': False, 'error': f'Impossible d’enregistrer les PDF d’étiquettes : {e}'}), 500
+
+        avis['items'] = items
+        ticket['avisArrivee'] = avis
+
+        reception = {
+            'reference': reception_ref,
+            'ticket_id': ticket_id,
+            'receptionnee': True,
+            'receptionnee_le': now.isoformat(),
+            'date_reception': now.strftime("%d/%m/%Y %H:%M"),
+            'receptionne_par': receptionne_par,
+            'lieu_stockage': lieu_stockage,
+            'numero_dossier': numero_dossier,
+            'nombre_colis': nombre_colis,
+            'colis': colis_refs,
+            'commentaire': commentaire,
+            'items': selected,
+            'bon_reception_filename': reception_pdf_filename,
+            'bon_reception_path': reception_pdf_path,
+            'etiquettes_articles_filename': article_labels_filename,
+            'etiquettes_articles_path': article_labels_path,
+            'etiquettes_colis_filename': colis_labels_filename,
+            'etiquettes_colis_path': colis_labels_path,
+        }
+
+        receptions = list(ticket.get('receptionsAvisArrivee') or [])
+        receptions.append(reception)
+        ticket['receptionsAvisArrivee'] = receptions
+
+        # Compatibilité avec l'ancien champ de synthèse
+        ticket['receptionAvisArrivee'] = reception
+
+        manager_sheets = list(ticket.get('managerSheets') or [])
+        for name, size, path in [
+            (reception_pdf_filename, len(reception_pdf_bytes), reception_pdf_path),
+            (article_labels_filename, len(article_labels_bytes), article_labels_path),
+            (colis_labels_filename, len(colis_labels_bytes), colis_labels_path),
+        ]:
+            manager_sheets.append({'name': name, 'size': size, 'path': path})
+
+        ticket['managerSheets'] = manager_sheets
+        ticket['updatedAt'] = now.isoformat()
+
+        save_ticket(ticket)
 
     return jsonify({
         'ok': True,
         'ticket_id': ticket_id,
+        'reference': reception_ref,
         'reception': reception,
-        'items_receptionnes': len(indexes),
+        'colis': colis_refs,
+        'bon_reception_filename': reception_pdf_filename,
+        'etiquettes_articles_filename': article_labels_filename,
+        'etiquettes_colis_filename': colis_labels_filename,
         'status': ticket.get('status')
     })
 
@@ -2904,122 +3093,183 @@ def _next_blr_reference():
     return f"BLR-{highest + 1:04d}"
 
 
-def _build_blr_pdf_bytes(ticket, bon):
-    """Construit un PDF simple du bon de livraison/réception, sans dépendance supplémentaire."""
+def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
+    """Bon de reception A4 inspire de la trame ESI Avis d'arrivee fournie."""
     import io
     import textwrap as _tw
 
-    enl = ticket.get("enlevement") or {}
-    items = bon.get("items") or []
+    PAGE_W, PAGE_H = 595, 842
+    NAVY = (0.035, 0.145, 0.235)
+    CYAN = (0.05, 0.55, 0.76)
+    PALE = (0.965, 0.975, 0.982)
+    LINE = (0.62, 0.70, 0.76)
+    WHITE = (1, 1, 1)
+    TEXT = (0.06, 0.10, 0.16)
 
-    def clean(v):
-        return _as_text(v, "-").replace("\r", " ").replace("\n", " ").strip() or "-"
+    def clean(v, default='-'):
+        s = _as_text(v).replace('\r', ' ').replace('\n', ' ').strip()
+        return s or default
 
-    lines = [
-        "ESI FINE ART - BON DE LIVRAISON / RECEPTION",
-        "=" * 70,
-        "",
-        f"Reference du bon : {clean(bon.get('reference'))}",
-        f"Date de reception : {clean(bon.get('date_reception'))}",
-        f"Receptionne par : {clean(bon.get('receptionne_par'))}",
-        f"Lieu de stockage : {clean(bon.get('lieu_stockage'))}",
-        f"Numero dossier : {clean(bon.get('numero_dossier'))}",
-        f"Nombre de colis : {clean(bon.get('nombre_colis'))}",
-        f"Colis : {clean(', '.join(bon.get('colis') or []))}",
-        "",
-        f"Client : {clean(enl.get('client') or ticket.get('dossier'))}",
-        f"Bon d'enlevement : {clean(enl.get('numero_bon') or ticket.get('ref'))}",
-        f"Ticket lie : {clean(ticket.get('id'))}",
-        "",
-        "ARTICLES RECEPTIONNES",
-        "-" * 70,
-    ]
+    def esc(v):
+        return clean(v, '').replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
 
-    for idx, item in enumerate(items, start=1):
-        ref = clean(item.get("reference"))
-        qty = clean(item.get("quantite"))
-        designation = clean(item.get("designation"))
-        dims = clean(item.get("dimensions"))
-        wrapped = _tw.wrap(
-            f"{idx}. Qte {qty} | Ref {ref} | {designation} | Dim. {dims}",
-            width=82
-        ) or [f"{idx}. Ref {ref}"]
-        lines.extend(wrapped)
+    def rgb(c, stroke=False):
+        return f"{c[0]:.3f} {c[1]:.3f} {c[2]:.3f} {'RG' if stroke else 'rg'}"
 
-    lines += [
-        "",
-        "-" * 70,
-        "Validation de la reception effectuee dans ESI TICKETS.",
-    ]
+    ops = []
+    def rect(x, y, w, h, fill=None, stroke=None, lw=0.6):
+        if fill is not None:
+            ops.append(rgb(fill))
+        if stroke is not None:
+            ops.append(rgb(stroke, True))
+        ops.append(f"{lw:.2f} w")
+        mode = 'B' if fill is not None and stroke is not None else ('f' if fill is not None else 'S')
+        ops.append(f"{x:.1f} {y:.1f} {w:.1f} {h:.1f} re {mode}")
 
-    def pdf_escape(value):
-        value = str(value)
-        return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    def line(x1, y1, x2, y2, color=LINE, lw=0.6):
+        ops.append(rgb(color, True)); ops.append(f"{lw:.2f} w")
+        ops.append(f"{x1:.1f} {y1:.1f} m {x2:.1f} {y2:.1f} l S")
 
-    page_width, page_height = 595, 842
-    margin_left = 42
-    y_start = 800
-    line_height = 14
-    max_lines = 53
-    chunks = [lines[i:i + max_lines] for i in range(0, len(lines), max_lines)] or [["Bon vide"]]
+    def txt(x, y, value, size=8, bold=False, color=TEXT):
+        value = esc(value)
+        ops.append(rgb(color))
+        ops.append('BT')
+        ops.append(f"/{'F2' if bold else 'F1'} {size:.1f} Tf")
+        ops.append(f"{x:.1f} {y:.1f} Td")
+        ops.append(f"({value}) Tj")
+        ops.append('ET')
 
+    def fit_txt(x, y, value, width, size=8, bold=False, max_lines=2, leading=10, color=TEXT):
+        approx = max(8, int(width / max(size * 0.62, 1)))
+        wrapped = _tw.wrap(clean(value, ''), width=approx) or ['']
+        for n, part in enumerate(wrapped[:max_lines]):
+            txt(x, y - n * leading, part, size=size, bold=bold, color=color)
+
+    avis = ticket.get('avisArrivee') or ticket.get('avis_arrivee') or {}
+    enl = ticket.get('enlevement') or {}
+    if source_type == 'avis':
+        dossier = clean(bon.get('numero_dossier') or avis.get('dossier_ref') or ticket.get('dossier'))
+        client = clean(avis.get('client') or ticket.get('dossier'))
+        projet = clean(avis.get('projet') or ticket.get('expo') or ticket.get('objet'))
+        coordinateur = clean(avis.get('coordinateur') or ticket.get('chargeProjet'))
+        exp = avis.get('expediteur') or {}
+        tr = avis.get('transporteur') or {}
+        left_block = [clean(exp.get('nom')), clean(exp.get('adresse')), clean(exp.get('contact'))]
+        right_block = [clean(tr.get('nom')), clean(tr.get('adresse')), clean(tr.get('contact')), clean(tr.get('reference'))]
+    else:
+        dossier = clean(bon.get('numero_dossier'))
+        client = clean(enl.get('client') or ticket.get('dossier'))
+        projet = clean(enl.get('exhibition') or ticket.get('expo') or ticket.get('objet'))
+        coordinateur = clean(enl.get('coordinateur') or ticket.get('chargeProjet'))
+        left_block = [clean(enl.get('adresse_depart')), '-', '-']
+        right_block = [clean(enl.get('adresse_destination')), '-', '-', clean(enl.get('numero_bon') or ticket.get('ref'))]
+
+    # Header.
+    rect(30, 752, 118, 62, fill=NAVY)
+    txt(50, 779, 'esi', 26, True, WHITE)
+    txt(86, 770, 'fine art', 9, True, WHITE)
+    txt(168, 786, 'BON DE RECEPTION', 21, True, TEXT)
+    txt(168, 767, 'Controle et enregistrement de la marchandise', 10, False, (0.35,0.40,0.45))
+    line(30, 744, 565, 744, CYAN, 1.6)
+
+    txt(30, 726, 'INFORMATIONS DOSSIER', 10, True, CYAN)
+    rect(30, 695, 535, 24, fill=NAVY)
+    txt(40, 704, 'DOSSIER', 9, True, WHITE)
+
+    # Four dossier cells.
+    cols = [(30,132,'Ref. dossier',dossier),(162,132,'Nom du client',client),(294,132,'Projet ou expo',projet),(426,139,'Date de reception',bon.get('date_reception'))]
+    for x,w,label,value in cols:
+        rect(x, 652, w, 43, fill=PALE, stroke=LINE)
+        txt(x+5, 680, label, 6.5, True, (0.25,0.32,0.38))
+        fit_txt(x+5, 663, value, w-10, size=8, bold=True, max_lines=2, leading=9)
+
+    # Side blocks, visually matching the source template.
+    rect(30, 623, 260, 22, fill=NAVY); txt(38, 631, 'EXPEDITEUR / DEPART', 8, True, WHITE)
+    rect(305, 623, 260, 22, fill=NAVY); txt(313, 631, 'TRANSPORTEUR / DESTINATION', 8, True, WHITE)
+    left_labels = ['Nom / adresse','Adresse','Contact']
+    right_labels = ['Nom / adresse','Adresse','Contact','Reference']
+    y = 603
+    for i, label in enumerate(left_labels):
+        rect(30, y-20*i, 62, 20, fill=PALE, stroke=LINE); txt(35, y+7-20*i, label, 6.2, True)
+        rect(92, y-20*i, 198, 20, stroke=LINE); fit_txt(97, y+7-20*i, left_block[i], 188, 6.5, False, 1, 8)
+    for i, label in enumerate(right_labels):
+        rect(305, y-20*i, 62, 20, fill=PALE, stroke=LINE); txt(310, y+7-20*i, label, 6.2, True)
+        rect(367, y-20*i, 198, 20, stroke=LINE); fit_txt(372, y+7-20*i, right_block[i], 188, 6.5, False, 1, 8)
+
+    # Goods table.
+    table_top = 517
+    widths = [78, 202, 82, 55, 55, 63]
+    headers = ['Ref. item','Description de la marchandise','Dimensions','Qte prevue','Qte recue','Stockage']
+    x = 30
+    for w, h in zip(widths, headers):
+        rect(x, table_top-38, w, 38, fill=NAVY, stroke=WHITE, lw=0.4)
+        fit_txt(x+4, table_top-17, h, w-8, 6.7, True, 2, 8, WHITE)
+        x += w
+
+    rows = bon.get('items') or []
+    row_h = 29
+    max_rows = 8
+    for ridx in range(max_rows):
+        y0 = table_top - 38 - (ridx+1)*row_h
+        x = 30
+        fill = (0.99, 0.985, 0.955)
+        row = rows[ridx] if ridx < len(rows) else {}
+        planned = row.get('quantite_prevue') or row.get('quantite') or ''
+        received = row.get('quantite') or ''
+        vals = [row.get('reference'), row.get('designation') or row.get('description'), row.get('dimensions'), planned, received, bon.get('lieu_stockage') if row else '']
+        for w, value in zip(widths, vals):
+            rect(x, y0, w, row_h, fill=fill, stroke=LINE)
+            fit_txt(x+4, y0+18, value, w-8, 6.6, False, 2, 8)
+            x += w
+
+    table_bottom = table_top - 38 - max_rows*row_h
+    rect(30, table_bottom-22, 535, 22, fill=PALE, stroke=LINE)
+    txt(350, table_bottom-14, 'TOTAL ARTICLES RECEPTIONNES', 7, True)
+    total_received = sum(int(float(str(i.get('quantite') or 0).replace(',','.'))) for i in rows if str(i.get('quantite') or '').strip())
+    txt(515, table_bottom-14, str(total_received), 8, True)
+
+    # Comment and reception details.
+    comment_y = table_bottom - 74
+    rect(30, comment_y, 535, 46, stroke=LINE)
+    rect(30, comment_y+30, 535, 16, fill=PALE, stroke=LINE)
+    txt(38, comment_y+35, 'Commentaire :', 7.2, True)
+    fit_txt(38, comment_y+19, bon.get('commentaire') or '-', 515, 7, False, 2, 9)
+
+    sig_y = 72
+    txt(30, sig_y+78, 'Etabli par (coordinateur) :', 9, True)
+    txt(30, sig_y+57, 'Date :', 8); txt(73, sig_y+57, clean(ticket.get('createdAt'))[:10], 8)
+    txt(30, sig_y+36, 'Nom :', 8); txt(73, sig_y+36, coordinateur, 8)
+    txt(30, sig_y+15, 'Signature : __________________________', 8)
+
+    txt(305, sig_y+78, "Reception / controle a l'arrivee :", 9, True)
+    txt(305, sig_y+57, 'Date :', 8); txt(350, sig_y+57, clean(bon.get('date_reception')), 8)
+    txt(305, sig_y+36, 'Nom :', 8); txt(350, sig_y+36, clean(bon.get('receptionne_par')), 8)
+    txt(305, sig_y+15, 'Signature : __________________________', 8)
+
+    txt(30, 35, f"Reference : {clean(bon.get('reference'))}  |  Colis : {clean(', '.join(bon.get('colis') or []))}", 7, False, (0.35,0.40,0.45))
+    txt(430, 35, 'Groupe ESI - Bon de reception', 7, False, (0.35,0.40,0.45))
+
+    stream = '\n'.join(ops).encode('latin-1', errors='replace')
     objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        None,
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+        b'<< /Type /Catalog /Pages 2 0 R >>',
+        b'<< /Type /Pages /Kids [5 0 R] /Count 1 >>',
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
+        f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PAGE_W} {PAGE_H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 6 0 R >>'.encode('latin-1'),
+        f'<< /Length {len(stream)} >>\nstream\n'.encode('latin-1') + stream + b'\nendstream',
     ]
-    page_refs = []
+    out = io.BytesIO(); out.write(b'%PDF-1.4\n')
+    offsets=[]
+    for i,obj in enumerate(objects,1):
+        offsets.append(out.tell()); out.write(f'{i} 0 obj\n'.encode('latin-1')); out.write(obj); out.write(b'\nendobj\n')
+    xref=out.tell(); out.write(f'xref\n0 {len(objects)+1}\n'.encode('latin-1')); out.write(b'0000000000 65535 f \n')
+    for off in offsets: out.write(f'{off:010d} 00000 n \n'.encode('latin-1'))
+    out.write(f'trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF'.encode('latin-1'))
+    return out.getvalue()
 
-    for chunk in chunks:
-        content_obj_num = len(objects) + 1
-        content_lines = ["BT", "/F1 10 Tf", f"{margin_left} {y_start} Td"]
-        first = True
-        for line in chunk:
-            if not first:
-                content_lines.append(f"0 -{line_height} Td")
-            first = False
-            content_lines.append(f"({pdf_escape(line)}) Tj")
-        content_lines.append("ET")
 
-        stream = "\n".join(content_lines).encode("latin-1", errors="replace")
-        objects.append(
-            f"<< /Length {len(stream)} >>\nstream\n".encode("latin-1")
-            + stream + b"\nendstream"
-        )
-        page_obj_num = len(objects) + 1
-        page = (
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width} {page_height}] "
-            f"/Resources << /Font << /F1 3 0 R >> >> /Contents {content_obj_num} 0 R >>"
-        )
-        objects.append(page.encode("latin-1"))
-        page_refs.append(f"{page_obj_num} 0 R")
-
-    objects[1] = (
-        f"<< /Type /Pages /Kids [{' '.join(page_refs)}] /Count {len(page_refs)} >>"
-    ).encode("latin-1")
-
-    pdf = io.BytesIO()
-    pdf.write(b"%PDF-1.4\n")
-    offsets = []
-    for i, obj in enumerate(objects, start=1):
-        offsets.append(pdf.tell())
-        pdf.write(f"{i} 0 obj\n".encode("latin-1"))
-        pdf.write(obj)
-        pdf.write(b"\nendobj\n")
-
-    xref_pos = pdf.tell()
-    pdf.write(f"xref\n0 {len(objects)+1}\n".encode("latin-1"))
-    pdf.write(b"0000000000 65535 f \n")
-    for offset in offsets:
-        pdf.write(f"{offset:010d} 00000 n \n".encode("latin-1"))
-
-    trailer = (
-        f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\n"
-        f"startxref\n{xref_pos}\n%%EOF"
-    )
-    pdf.write(trailer.encode("latin-1"))
-    return pdf.getvalue()
-
+def _build_blr_pdf_bytes(ticket, bon):
+    return _build_reception_form_pdf_bytes(ticket, bon, source_type='enlevement')
 
 
 def _build_labels_pdf_bytes(labels, kind="article"):
@@ -3224,6 +3474,19 @@ def api_create_bon_livraison(ticket_id):
             return max(0, int(float(str(value).replace(',', '.'))))
         except Exception:
             return default
+
+    def _item_fully_received(item):
+        planned = max(1, _qty_int(item.get('quantite') or 1, 1))
+        received = _qty_int(item.get('quantite_recue_totale'), -1)
+        if received < 0:
+            received = planned if item.get('receptionne') else 0
+        return received >= planned
+
+    if all_items and all(_item_fully_received(dict(x or {})) for x in all_items):
+        return jsonify({
+            'ok': False,
+            'error': 'Réception clôturée : tous les articles ont déjà été réceptionnés.'
+        }), 409
 
     for entry in items_reception:
         if not isinstance(entry, dict):
