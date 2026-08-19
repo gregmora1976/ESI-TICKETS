@@ -283,11 +283,54 @@ function renderTicketModal(editing=false){
       html+=`</tbody></table>`;
     }else html+=`<div>Aucune marchandise renseignée.</div>`;
     html+=`</div><div class="section"><div class="section-title">Commentaire</div>${esc(val(a.commentaire||t.commentaire))}</div>`;
+
+    const receptionsAvis=(t.receptionsAvisArrivee||[]);
+    if(receptionsAvis.length){
+      html+=`<div class="section"><div class="section-title">Réceptions générées</div>`;
+      receptionsAvis.slice().reverse().forEach(r=>{
+        html+=`<div style="margin:10px 0 14px">
+          <div><strong>${esc(r.reference||'Réception')}</strong>
+          — ${esc(r.date_reception||'')} — ${esc(r.receptionne_par||'')} — ${esc(r.lieu_stockage||'')}</div>`;
+        if(r.colis&&r.colis.length){
+          html+=`<div class="delivery-meta">Colis : ${esc(r.colis.join(', '))}</div>`;
+        }
+        html+=`<div class="generated-links">`;
+        if(r.bon_reception_filename){
+          html+=`<a class="file-link" target="_blank"
+            href="/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(r.bon_reception_filename)}">
+            Bon de réception
+          </a>`;
+        }
+        if(r.etiquettes_articles_filename){
+          html+=`<a class="file-link" target="_blank"
+            href="/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(r.etiquettes_articles_filename)}">
+            Étiquettes articles
+          </a>`;
+        }
+        if(r.etiquettes_colis_filename){
+          html+=`<a class="file-link" target="_blank"
+            href="/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(r.etiquettes_colis_filename)}">
+            Étiquettes colis
+          </a>`;
+        }
+        html+=`</div></div>`;
+      });
+      html+=`</div>`;
+    }
+
     const files=(t.files||[]).filter(f=>f&&f.name);
     html+=`<div class="section"><div class="section-title">Documents joints</div>${files.length?files.map(f=>`<a class="file-link" target="_blank" href="/api/tickets/${encodeURIComponent(t.id)}/download/${encodeURIComponent(f.name)}">${esc(f.name)}</a>`).join(''):'<div>Aucun document.</div>'}</div>`;
     document.getElementById('ticketModalBody').innerHTML=html;
+    const arrivalAllReceived=aitems.length>0&&aitems.every(i=>receivedQty(i)>=plannedQty(i));
+    if(arrivalAllReceived){
+      html+=`<div class="section" style="background:#f0fdf4;border-color:#bbf7d0">
+        <div class="section-title" style="color:#166534">Réception clôturée</div>
+        <div style="font-weight:900;color:#166534">Tous les articles de cet avis d'arrivée ont été réceptionnés.</div>
+      </div>`;
+      document.getElementById('ticketModalBody').innerHTML=html;
+    }
     document.getElementById('ticketEditBtn').style.display='none';
-    document.getElementById('ticketReceptionBtn').style.display='inline-block';
+    document.getElementById('ticketReceptionBtn').style.display=arrivalAllReceived?'none':'inline-block';
     document.getElementById('ticketDeliveryBtn').style.display='none';
     document.getElementById('ticketSaveBtn').style.display='none';
     document.getElementById('ticketEditCancelBtn').style.display='none';
@@ -340,6 +383,14 @@ function renderTicketModal(editing=false){
   html+=files.length?files.map(f=>`<a class="file-link" target="_blank" href="/api/tickets/${encodeURIComponent(t.id)}/download/${encodeURIComponent(f.name)}">${esc(f.name)}</a>`).join(''):`<div>Aucun PDF disponible.</div>`;
   html+=`</div>`;
 
+  const allItemsReceivedForNotice=its.length>0&&its.every(i=>receivedQty(i)>=plannedQty(i));
+  if(allItemsReceivedForNotice){
+    html+=`<div class="section" style="background:#f0fdf4;border-color:#bbf7d0">
+      <div class="section-title" style="color:#166534">Réception clôturée</div>
+      <div style="font-weight:900;color:#166534">Tous les articles ont été réceptionnés.</div>
+    </div>`;
+  }
+
   const bons=(extraction(t).bons_livraison||[]);
   if(bons.length){
     html+=`<div class="section"><div class="section-title">Bons de livraison générés</div>`;
@@ -384,9 +435,10 @@ function renderTicketModal(editing=false){
   }
 
   document.getElementById('ticketModalBody').innerHTML=html;
+  const allItemsReceived=its.length>0&&its.every(i=>receivedQty(i)>=plannedQty(i));
   document.getElementById('ticketReceptionBtn').style.display='none';
   document.getElementById('ticketEditBtn').style.display=editing?'none':'inline-block';
-  document.getElementById('ticketDeliveryBtn').style.display=editing?'none':'inline-block';
+  document.getElementById('ticketDeliveryBtn').style.display=(editing||allItemsReceived)?'none':'inline-block';
   document.getElementById('ticketSaveBtn').style.display=editing?'inline-block':'none';
   document.getElementById('ticketEditCancelBtn').style.display=editing?'inline-block':'none';
   document.getElementById('ticketModalCloseBottom').style.display=editing?'none':'inline-block';
@@ -443,25 +495,45 @@ async function saveTicketEdits(){
 function closeReceptionModal(){
   const b=document.getElementById('receptionModalBackdrop');
   b.classList.remove('open');b.setAttribute('aria-hidden','true');
+  document.getElementById('receptionValidateBtn').style.display='inline-block';
 }
 function openReceptionModal(){
   if(!openedTicket || !isAvisArrivee(openedTicket)) return;
   const a=avisData(openedTicket), aitems=Array.isArray(a.items)?a.items:[];
+  const allFullyReceived=aitems.length>0&&aitems.every(i=>receivedQty(i)>=plannedQty(i));
   document.getElementById('receptionModalSub').textContent=
     `${val(a.dossier_ref||openedTicket.dossier)} - ${val(a.client)} - ${val(a.projet||openedTicket.expo||openedTicket.objet)}`;
 
-  let html=`<div class="section-title">Marchandises réceptionnées</div><div class="delivery-list">`;
+  let html=`<div class="section-title">Articles à réceptionner</div><div class="delivery-list">`;
+
   if(aitems.length){
     aitems.forEach((i,index)=>{
-      html+=`<label class="delivery-item">
-        <input type="checkbox" class="arrival-reception-check" data-index="${index}" checked>
-        <div><strong>${esc(i.reference||'-')}</strong> — ${esc(i.description||'-')}
-        <div class="delivery-meta">Qté : ${esc(i.quantite||'1')}</div></div>
-      </label>`;
+      const planned=plannedQty(i);
+      const received=receivedQty(i);
+      const remaining=Math.max(planned-received,0);
+      const fullyReceived=remaining<=0;
+      const checked=fullyReceived?'':' checked';
+      const disabled=fullyReceived?' disabled':'';
+
+      html+=`<div class="delivery-item${fullyReceived?' received':''}">
+        <input type="checkbox" class="arrival-reception-check" data-index="${index}"${checked}${disabled}>
+        <div>
+          <div class="delivery-line">
+            <div><strong>${esc(i.reference||'-')}</strong> — ${esc(i.description||'-')}</div>
+            ${fullyReceived?'':`<div class="delivery-qty-wrap">Qté réceptionnée
+              <input class="delivery-qty arrival-reception-qty" data-index="${index}" type="number"
+                min="1" max="${remaining}" step="1" value="${remaining}">
+            </div>`}
+          </div>
+          <div class="delivery-meta">Qté prévue : ${esc(planned)} · Déjà reçue : ${esc(received)} · Reste : ${esc(remaining)}</div>
+          ${fullyReceived?`<div class="delivery-meta"><strong>Déjà réceptionné en totalité</strong>${i.lieu_stockage?` · ${esc(i.lieu_stockage)}`:''}${i.receptionne_par?` · ${esc(i.receptionne_par)}`:''}</div>`:''}
+        </div>
+      </div>`;
     });
   }else{
     html+=`<div class="pending-empty">Aucune marchandise renseignée.</div>`;
   }
+
   html+=`</div>
     <div class="form-row">
       <label for="arrivalReceptionReceiver">Nom et prénom de la personne qui réceptionne</label>
@@ -469,29 +541,109 @@ function openReceptionModal(){
     </div>
     <div class="form-row">
       <label for="arrivalReceptionLocation">Lieu de stockage</label>
-      <input id="arrivalReceptionLocation" type="text" placeholder="Ex. Stock A, réserve 2...">
+      <input id="arrivalReceptionLocation" type="text" placeholder="Ex. Stock A, rack B12, réserve 2...">
+    </div>
+    <div class="form-row">
+      <label for="arrivalReceptionDossierNumber">N° dossier pour les étiquettes colis</label>
+      <input id="arrivalReceptionDossierNumber" type="text"
+        value="${esc(a.dossier_ref||openedTicket.dossier||'')}" placeholder="Ex. 960130">
+    </div>
+    <div class="form-row">
+      <label for="arrivalReceptionPackageCount">Nombre total de colis pour cette réception</label>
+      <input id="arrivalReceptionPackageCount" type="number" min="1" step="1" value="1">
     </div>
     <div class="form-row">
       <label for="arrivalReceptionComment">Commentaire de réception</label>
       <input id="arrivalReceptionComment" type="text" placeholder="Commentaire facultatif">
     </div>`;
+
+  const receptions=(openedTicket.receptionsAvisArrivee||[]);
+  if(receptions.length){
+    html+=`<div class="section"><div class="section-title">Réceptions déjà générées</div>`;
+    receptions.slice().reverse().forEach(r=>{
+      html+=`<div style="margin:8px 0 12px">
+        <div><strong>${esc(r.reference||'Réception')}</strong>
+        — ${esc(r.date_reception||'')} — ${esc(r.receptionne_par||'')} — ${esc(r.lieu_stockage||'')}</div>`;
+      if(r.colis&&r.colis.length){
+        html+=`<div class="delivery-meta">Colis : ${esc(r.colis.join(', '))}</div>`;
+      }
+      html+=`<div class="generated-links">`;
+      if(r.bon_reception_filename){
+        html+=`<a class="file-link" target="_blank"
+          href="/api/tickets/${encodeURIComponent(openedTicket.id)}/download-sheet/${encodeURIComponent(r.bon_reception_filename)}">
+          Bon de réception
+        </a>`;
+      }
+      if(r.etiquettes_articles_filename){
+        html+=`<a class="file-link" target="_blank"
+          href="/api/tickets/${encodeURIComponent(openedTicket.id)}/download-sheet/${encodeURIComponent(r.etiquettes_articles_filename)}">
+          Étiquettes articles
+        </a>`;
+      }
+      if(r.etiquettes_colis_filename){
+        html+=`<a class="file-link" target="_blank"
+          href="/api/tickets/${encodeURIComponent(openedTicket.id)}/download-sheet/${encodeURIComponent(r.etiquettes_colis_filename)}">
+          Étiquettes colis
+        </a>`;
+      }
+      html+=`</div></div>`;
+    });
+    html+=`</div>`;
+  }
+
+  if(allFullyReceived){
+    html+=`<div class="section" style="background:#f0fdf4;border-color:#bbf7d0">
+      <div class="section-title" style="color:#166534">Réception clôturée</div>
+      <div style="font-weight:900;color:#166534">Tous les articles de cet avis d'arrivée ont déjà été réceptionnés.</div>
+      <div class="delivery-meta" style="margin-top:6px">Aucune nouvelle réception ne peut être créée.</div>
+    </div>`;
+  }
+
   document.getElementById('receptionModalBody').innerHTML=html;
+  document.getElementById('receptionValidateBtn').style.display=allFullyReceived?'none':'inline-block';
+
+  document.querySelectorAll('.arrival-reception-check:not(:disabled)').forEach(cb=>{
+    cb.addEventListener('change',()=>{
+      const qty=document.querySelector(`.arrival-reception-qty[data-index="${cb.dataset.index}"]`);
+      if(qty) qty.disabled=!cb.checked;
+    });
+  });
+
   const b=document.getElementById('receptionModalBackdrop');
   b.classList.add('open');b.setAttribute('aria-hidden','false');
 }
+
 async function validateArrivalReception(){
   if(!openedTicket || !isAvisArrivee(openedTicket)) return;
+
   const receiver=document.getElementById('arrivalReceptionReceiver')?.value.trim()||'';
   const location=document.getElementById('arrivalReceptionLocation')?.value.trim()||'';
+  const dossierNumber=document.getElementById('arrivalReceptionDossierNumber')?.value.trim()||'';
+  const packageCount=Number(document.getElementById('arrivalReceptionPackageCount')?.value||0);
   const comment=document.getElementById('arrivalReceptionComment')?.value.trim()||'';
-  const selected=[...document.querySelectorAll('.arrival-reception-check:checked')].map(el=>Number(el.dataset.index));
+
+  const selected=[...document.querySelectorAll('.arrival-reception-check:checked:not(:disabled)')].map(el=>{
+    const index=Number(el.dataset.index);
+    const qtyEl=document.querySelector(`.arrival-reception-qty[data-index="${index}"]`);
+    return {
+      index,
+      quantite_recue:Number(qtyEl?.value||0)
+    };
+  });
 
   if(!receiver){alert("Renseigne le nom et prénom de la personne qui réceptionne.");return;}
   if(!location){alert("Renseigne le lieu de stockage.");return;}
+  if(!dossierNumber){alert("Renseigne le N° dossier utilisé pour numéroter les colis.");return;}
+  if(!Number.isInteger(packageCount)||packageCount<1){alert("Renseigne un nombre total de colis supérieur ou égal à 1.");return;}
   if(!selected.length){alert("Sélectionne au moins une marchandise réceptionnée.");return;}
+  if(selected.some(x=>!Number.isInteger(x.quantite_recue)||x.quantite_recue<1)){
+    alert("Chaque article sélectionné doit avoir une quantité réceptionnée valide.");
+    return;
+  }
 
   const btn=document.getElementById('receptionValidateBtn');
-  btn.disabled=true;btn.textContent='Validation...';
+  btn.disabled=true;btn.textContent='Génération des étiquettes...';
+
   try{
     const ticketId=openedTicket.id;
     const res=await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/reception-avis-arrivee`,{
@@ -500,16 +652,27 @@ async function validateArrivalReception(){
       body:JSON.stringify({
         receptionne_par:receiver,
         lieu_stockage:location,
+        numero_dossier:dossierNumber,
+        nombre_colis:packageCount,
         commentaire:comment,
-        selected_indexes:selected
+        items_reception:selected,
+        selected_indexes:selected.map(x=>x.index)
       })
     });
+
     const data=await res.json().catch(()=>({}));
     if(!res.ok||!data.ok) throw new Error(data.error||"Impossible de valider la réception");
-    closeReceptionModal();
-    closeTicket();
+
     await loadTickets();
-    alert("Réception de l'avis validée.");
+    const refreshed=tickets.find(t=>t.id===ticketId);
+    if(refreshed){
+      openedTicket=refreshed;
+      renderTicketModal(false);
+    }
+    closeReceptionModal();
+
+    const colis=(data.colis||[]).join(', ');
+    alert(`Réception validée.\nRéférence : ${data.reference||'-'}\nColis : ${colis||'-'}\nLes PDF d'étiquettes sont disponibles dans le ticket.`);
   }catch(e){
     alert(e.message||"Impossible de valider la réception");
   }finally{
@@ -520,6 +683,7 @@ async function validateArrivalReception(){
 function closeDeliveryModal(){
   const b=document.getElementById('deliveryModalBackdrop');
   b.classList.remove('open');b.setAttribute('aria-hidden','true');
+  document.getElementById('deliveryValidateBtn').style.display='inline-block';
 }
 function plannedQty(item){
   const raw=Number(String(item.quantite||item.qty||'1').replace(',','.'));
@@ -563,6 +727,7 @@ function openDeliveryModal(){
 
   document.getElementById('deliveryModalSub').textContent=`${val(client(openedTicket))} — ${val(bonRef(openedTicket))}`;
 
+  const allFullyReceived=its.length>0&&its.every(i=>receivedQty(i)>=plannedQty(i));
   let html=`<div class="section-title">Articles à réceptionner</div><div class="delivery-list">`;
   its.forEach((i,index)=>{
     const planned=plannedQty(i);
@@ -571,7 +736,7 @@ function openDeliveryModal(){
     const fullyReceived=remaining<=0;
     const checked=fullyReceived?'':' checked';
     const disabled=fullyReceived?' disabled':'';
-    html+=`<label class="delivery-item${fullyReceived?' received':''}">
+    html+=`<div class="delivery-item${fullyReceived?' received':''}">
       <input type="checkbox" class="delivery-check" data-index="${index}"${checked}${disabled}>
       <div>
         <div class="delivery-line">
@@ -583,7 +748,7 @@ function openDeliveryModal(){
         <div class="delivery-meta">Qté prévue : ${esc(planned)} · Déjà reçue : ${esc(received)} · Reste : ${esc(remaining)}${i.dimensions?` · Dimensions : ${esc(i.dimensions)}`:''}</div>
         ${fullyReceived?`<div class="delivery-meta"><strong>Déjà réceptionné en totalité</strong>${i.lieu_stockage?` · ${esc(i.lieu_stockage)}`:''}${i.receptionne_par?` · ${esc(i.receptionne_par)}`:''}</div>`:''}
       </div>
-    </label>`;
+    </div>`;
   });
   html+=`</div>
     <div class="form-row">
@@ -625,7 +790,16 @@ function openDeliveryModal(){
     html+=`</div>`;
   }
 
+  if(allFullyReceived){
+    html+=`<div class="section" style="background:#f0fdf4;border-color:#bbf7d0">
+      <div class="section-title" style="color:#166534">Réception clôturée</div>
+      <div style="font-weight:900;color:#166534">Tous les articles de ce ticket ont déjà été réceptionnés.</div>
+      <div class="delivery-meta" style="margin-top:6px">Aucune nouvelle réception ne peut être créée.</div>
+    </div>`;
+  }
+
   document.getElementById('deliveryModalBody').innerHTML=html;
+  document.getElementById('deliveryValidateBtn').style.display=allFullyReceived?'none':'inline-block';
 
   document.querySelectorAll('.delivery-check:not(:disabled)').forEach(cb=>{
     cb.addEventListener('change',()=>{
