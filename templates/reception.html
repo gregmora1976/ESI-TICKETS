@@ -1070,7 +1070,7 @@ function groupTickets(){
       const status = normalizeStatus(t.status);
       return (
         t.module === 'Fiche de caisse' &&
-        (status === 'termine' || status === 'terminee' || status === 'receptionnee') &&
+        (status === 'termine' || status === 'terminee' || status === 'terminees') &&
         t.dateEmballage &&
         t.dateEmballage !== '-' &&
         matchesSearch(t)
@@ -1082,6 +1082,11 @@ function groupTickets(){
     });
   return grouped;
 }
+function isReceived(t){
+  const reception = (t && t.reception) || {};
+  return reception.receptionnee === true || !!reception.receptionnee_le;
+}
+
 function normalizeStatus(value){
   return String(value || '')
     .trim()
@@ -1099,20 +1104,19 @@ function updateStats(){
     if(t.module !== 'Fiche de caisse') return;
 
     const status = normalizeStatus(t.status);
+    const ticketTermine =
+      status === 'termine' ||
+      status === 'terminee' ||
+      status === 'terminees';
 
-    // À réceptionner = toutes les fiches de caisse qui ne sont pas encore réceptionnées.
-    // Les tickets annulés sont exclus.
-    if(status !== 'receptionnee' && status !== 'annule' && status !== 'annulee'){
+    // À réceptionner = fiches terminées mais pas encore réceptionnées.
+    if(ticketTermine && !isReceived(t)){
       pending++;
     }
 
-    // Réalisées = terminées ou réceptionnées avec une date de mise à dispo sur l'année en cours.
-    if(
-      status === 'termine' ||
-      status === 'terminee' ||
-      status === 'terminees' ||
-      status === 'receptionnee'
-    ){
+    // Réalisées = fiches terminées depuis le début de l'année,
+    // indépendamment de leur état de réception.
+    if(ticketTermine){
       const rawDate =
         t.dateEmballage ||
         t.dateTerminee ||
@@ -1183,14 +1187,14 @@ function renderCalendar(){
             `${fiche.longueur || '-'}x${fiche.largeur || '-'}x${fiche.hauteur || '-'}`;
 
           const localisation = (fiche.localisation || '').trim();
-          const isReceived = normalizeStatus(t.status) === 'receptionnee';
+          const isReceivedNow = isReceived(t);
 
           event.textContent = eventText(t);
           event.title = event.textContent;
 
           // Vert = statut Réceptionnée.
           // Jaune = caisse encore à réceptionner.
-          if(isReceived){
+          if(isReceivedNow){
             event.style.background = 'var(--received)';
             event.style.borderLeft = '5px solid var(--received-border)';
           }else{
