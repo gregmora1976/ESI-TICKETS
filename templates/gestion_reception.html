@@ -346,10 +346,39 @@ function renderTicketModal(editing=false){
     bons.slice().reverse().forEach(b=>{
       const filename=b.filename||((b.reference||'')+'.pdf');
       const href=`/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(filename)}`;
-      html+=`<div style="margin:6px 0">
-        <a class="file-link" target="_blank" href="${href}"><strong>${esc(b.reference||filename)}</strong></a>
-        — ${esc(b.date_reception||'')} — ${esc(b.receptionne_par||'')} — ${esc(b.lieu_stockage||'')}
-      </div>`;
+
+      const expectedArticles=`${b.reference||''}_etiquettes_articles.pdf`;
+      const expectedColis=`${b.reference||''}_etiquettes_colis.pdf`;
+      const managerNames=(t.managerSheets||[]).map(f=>f&&f.name).filter(Boolean);
+
+      const articlesFilename=b.etiquettes_articles_filename||
+        (managerNames.includes(expectedArticles)?expectedArticles:'');
+      const colisFilename=b.etiquettes_colis_filename||
+        (managerNames.includes(expectedColis)?expectedColis:'');
+
+      html+=`<div style="margin:10px 0 14px">
+        <div>
+          <a class="file-link" target="_blank" href="${href}"><strong>${esc(b.reference||filename)}</strong></a>
+          — ${esc(b.date_reception||'')} — ${esc(b.receptionne_par||'')} — ${esc(b.lieu_stockage||'')}
+        </div>`;
+
+      if(articlesFilename||colisFilename){
+        html+=`<div class="generated-links">`;
+        if(articlesFilename){
+          html+=`<a class="file-link" target="_blank"
+            href="/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(articlesFilename)}">
+            Étiquettes articles
+          </a>`;
+        }
+        if(colisFilename){
+          html+=`<a class="file-link" target="_blank"
+            href="/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(colisFilename)}">
+            Étiquettes colis
+          </a>`;
+        }
+        html+=`</div>`;
+      }
+      html+=`</div>`;
     });
     html+=`</div>`;
   }
