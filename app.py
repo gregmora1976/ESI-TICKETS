@@ -600,15 +600,170 @@ def api_articles():
     return jsonify([_article_row_to_public(row) for row in rows])
 
 
+def _article_file_link(ticket_id, file_info, kind):
+    if not isinstance(file_info, dict) or not file_info.get("name"):
+        return None
+    filename = _as_text(file_info.get("name")).strip()
+    if not filename:
+        return None
+    base = "download-sheet" if kind == "gestionnaire" else "download"
+    return {
+        "name": filename,
+        "kind": kind,
+        "url": f"/api/tickets/{urllib.parse.quote(ticket_id, safe='')}/{base}/{urllib.parse.quote(filename, safe='')}",
+    }
+
+
+def _article_reception_history_from_ticket(ticket, article):
+    esi_id = _as_text(article.get("esi_id")).strip()
+    history = []
+
+    module = _as_text(ticket.get("module")).replace("’", "'").strip()
+    if module == "Avis d'arrivée":
+        receptions = ticket.get("receptionsAvisArrivee") or []
+    else:
+        receptions = (ticket.get("enlevement") or {}).get("bons_livraison") or []
+
+    for reception in receptions:
+        items = reception.get("items") or []
+        linked_item = None
+        for item in items:
+            if esi_id in [str(x).strip() for x in (item.get("esi_ids") or [])]:
+                linked_item = item
+                break
+        if not linked_item:
+            continue
+
+        files = []
+        candidates = [
+            reception.get("bon_reception_filename"),
+            reception.get("filename"),
+            reception.get("etiquettes_articles_filename"),
+            reception.get("etiquettes_colis_filename"),
+        ]
+        seen = set()
+        for filename in candidates:
+            filename = _as_text(filename).strip()
+            if not filename or filename in seen:
+                continue
+            seen.add(filename)
+            files.append({
+                "name": filename,
+                "kind": "gestionnaire",
+                "url": f"/api/tickets/{urllib.parse.quote(ticket.get('id') or '', safe='')}/download-sheet/{urllib.parse.quote(filename, safe='')}",
+            })
+
+        history.append({
+            "type": "Réception",
+            "reference": reception.get("reference") or "",
+            "date": reception.get("receptionnee_le") or reception.get("created_at") or reception.get("date_reception") or "",
+            "date_affichee": reception.get("date_reception") or "",
+            "receptionne_par": reception.get("receptionne_par") or "",
+            "lieu_stockage": reception.get("lieu_stockage") or linked_item.get("lieu_stockage") or "",
+            "numero_dossier": reception.get("numero_dossier") or article.get("dossier") or "",
+            "nombre_colis": reception.get("nombre_colis") or "",
+            "colis": reception.get("colis") or linked_item.get("colis") or [],
+            "quantite": linked_item.get("quantite") or "",
+            "files": files,
+        })
+
+    return history
+
+
 @app.route('/api/articles/<esi_id>')
 def api_article_detail(esi_id):
-    safe_esi = urllib.parse.quote(_as_text(esi_id).strip(), safe='-')
+    esi_id = _as_text(esi_id).strip()
+    safe_esi = urllib.parse.quote(esi_id, safe='-')
     rows = supabase_rest_request(
         "GET", "articles", f"select=*&esi_id=eq.{safe_esi}&limit=1"
     ) or []
     if not rows:
         return jsonify({"error": "Article introuvable"}), 404
-    return jsonify(_article_row_to_public(rows[0]))
+
+    article = _article_row_to_public(rows[0])
+    ticket_id = _as_text(article.get("ticket_id")).strip()
+    ticket = load_ticket(ticket_id) if ticket_id else None
+
+    detail = {
+        "article": article,
+        "ticket": None,
+        "avis_arrivee": None,
+        "demande_enlevement": None,
+        "receptions": [],
+        "documents_source": [],
+    }
+
+    if ticket:
+        detail["ticket"] = {
+            "id": ticket.get("id"),
+            "module": ticket.get("module"),
+            "status": ticket.get("status"),
+            "created_at": ticket.get("createdAt"),
+            "updated_at": ticket.get("updatedAt"),
+            "dossier": ticket.get("dossier"),
+            "ref": ticket.get("ref"),
+            "client": ticket.get("dossier"),
+            "projet": ticket.get("expo") or ticket.get("objet"),
+            "charge_projet": ticket.get("chargeProjet"),
+        }
+
+        for f in ticket.get("files") or []:
+            link = _article_file_link(ticket_id, f, "demandeur")
+            if link:
+                detail["documents_source"].append(link)
+
+        module = _as_text(ticket.get("module")).replace("’", "'").strip()
+        if module == "Avis d'arrivée":
+            avis = ticket.get("avisArrivee") or ticket.get("avis_arrivee") or {}
+            detail["avis_arrivee"] = {
+                "dossier_ref": avis.get("dossier_ref") or "",
+                "client": avis.get("client") or "",
+                "projet": avis.get("projet") or "",
+                "date_reception_prevue": avis.get("date_reception_prevue") or "",
+                "coordinateur": avis.get("coordinateur") or "",
+                "commentaire": avis.get("commentaire") or ticket.get("commentaire") or "",
+                "expediteur": avis.get("expediteur") or {},
+                "transporteur": avis.get("transporteur") or {},
+            }
+        else:
+            enl = ticket.get("enlevement") or {}
+            detail["demande_enlevement"] = {
+                "numero_bon": enl.get("numero_bon") or ticket.get("ref") or "",
+                "client": enl.get("client") or ticket.get("dossier") or "",
+                "projet": enl.get("exhibition") or ticket.get("expo") or ticket.get("objet") or "",
+                "coordinateur": enl.get("coordinateur") or ticket.get("chargeProjet") or "",
+                "date_enlevement": enl.get("date_enlevement") or "",
+                "adresse_depart": enl.get("adresse_depart") or "",
+                "adresse_destination": enl.get("adresse_destination") or "",
+                "notes": enl.get("notes") or "",
+                "instructions": enl.get("instructions") or "",
+            }
+
+        detail["receptions"] = _article_reception_history_from_ticket(ticket, article)
+
+    raw = article.get("raw_json") if isinstance(article.get("raw_json"), dict) else {}
+    raw_receptions = raw.get("receptions") or []
+    if raw_receptions:
+        known_refs = {str(x.get("reference") or "") for x in detail["receptions"]}
+        for r in raw_receptions:
+            ref = _as_text(r.get("reception_ref")).strip()
+            if ref and ref in known_refs:
+                continue
+            detail["receptions"].append({
+                "type": "Réception",
+                "reference": ref,
+                "date": r.get("date") or "",
+                "date_affichee": "",
+                "receptionne_par": r.get("receptionne_par") or "",
+                "lieu_stockage": r.get("lieu_stockage") or "",
+                "numero_dossier": article.get("dossier") or "",
+                "nombre_colis": "",
+                "colis": r.get("colis") or [],
+                "quantite": "1",
+                "files": [],
+            })
+
+    return jsonify(detail)
 
 
 @app.route('/api/articles/migrate', methods=['POST'])
