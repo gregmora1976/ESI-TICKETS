@@ -41,6 +41,22 @@
     .file-btn{border:none;background:#e0f2fe;color:#0369a1;padding:8px 12px;border-radius:12px;font-weight:700;cursor:pointer}
     .empty{padding:16px;border:1px dashed var(--line);border-radius:16px;color:var(--muted);background:#f8fafc}
 
+    .arrival-block{border:1px solid var(--line);background:#f8fafc;border-radius:20px;padding:16px;margin-top:14px}
+    .arrival-block h3{font-size:14px;color:var(--blue-dark);margin:0 0 12px}
+    .arrival-table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:16px;background:#fff}
+    .arrival-table{width:100%;border-collapse:collapse;min-width:1080px}
+    .arrival-table th,.arrival-table td{border-bottom:1px solid var(--line);border-right:1px solid var(--line);padding:7px;vertical-align:middle}
+    .arrival-table th:last-child,.arrival-table td:last-child{border-right:none}
+    .arrival-table tr:last-child td{border-bottom:none}
+    .arrival-table th{background:#0f3153;color:#fff;font-size:11px;text-align:center;white-space:nowrap}
+    .arrival-table .input{border-radius:10px;padding:9px 8px;background:#fff;min-width:76px}
+    .arrival-table .item-description{min-width:230px}
+    .arrival-table .item-ref{min-width:110px}
+    .arrival-table .readonly{background:#f1f5f9;color:#475569}
+    .arrival-remove{border:none;background:#fee2e2;color:#b91c1c;border-radius:10px;padding:8px 10px;font-weight:900;cursor:pointer}
+    .arrival-summary{display:flex;gap:12px;justify-content:flex-end;flex-wrap:wrap;margin-top:10px}
+    .arrival-total{background:#e0f2fe;color:#075985;border-radius:12px;padding:9px 12px;font-size:13px;font-weight:800}
+
     .modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:center;justify-content:center;padding:18px;z-index:50}
     .modal-backdrop.show{display:flex}
     .modal-card{background:#fff;border:1px solid var(--line);border-radius:26px;box-shadow:0 25px 80px rgba(0,0,0,.25);width:min(980px,100%);max-height:92vh;overflow:auto}
@@ -95,6 +111,7 @@
               <button class="tab" id="tab-devis" type="button">Demande de devis</button>
               <button class="tab" id="tab-aller-voir" type="button">Demande Aller voir</button>
               <button class="tab" id="tab-enlevement" type="button">Demande d’enlèvement</button>
+              <button class="tab" id="tab-avis-arrivee" type="button">Avis d’arrivée</button>
             </div>
             <div class="folder-state" id="folderState">Dossier de sauvegarde automatique : chargement...</div>
           </div>
@@ -222,6 +239,89 @@
               <div style="height:18px"></div>
               <div class="actions"><button class="btn primary" id="sendEnlevement" type="button">Valider la demande</button></div>
             </form>
+
+            <form id="form-avis-arrivee" class="card hidden">
+              <div class="section-title">Avis d’arrivée</div>
+              <div class="small">Notification d’arrivée de marchandise. Le volume et la surface sont calculés automatiquement à partir des dimensions en cm.</div>
+
+              <div class="arrival-block">
+                <h3>Informations dossier</h3>
+                <div class="grid">
+                  <div class="field"><label>Réf. dossier</label><input class="input" id="avis-dossier" /></div>
+                  <div class="field"><label>Nom du client</label><input class="input" id="avis-client" autocomplete="off" /></div>
+                  <div class="field"><label>Projet ou expo</label><input class="input" id="avis-projet" /></div>
+                  <div class="field"><label>Date de réception prévue</label><input class="input" id="avis-date-reception" type="date" /></div>
+                  <div class="field" style="grid-column:1 / -1"><label>Nom du coordinateur</label><input class="input" id="avis-coordinateur" autocomplete="off" /></div>
+                </div>
+              </div>
+
+              <div class="grid">
+                <div class="arrival-block">
+                  <h3>Expéditeur</h3>
+                  <div class="field"><label>Nom</label><input class="input" id="avis-expediteur-nom" /></div>
+                  <div style="height:10px"></div>
+                  <div class="field"><label>Adresse</label><textarea class="textarea" id="avis-expediteur-adresse" style="min-height:72px"></textarea></div>
+                  <div style="height:10px"></div>
+                  <div class="field"><label>Contact</label><input class="input" id="avis-expediteur-contact" /></div>
+                </div>
+                <div class="arrival-block">
+                  <h3>Transporteur</h3>
+                  <div class="field"><label>Nom</label><input class="input" id="avis-transporteur-nom" /></div>
+                  <div style="height:10px"></div>
+                  <div class="field"><label>Adresse</label><textarea class="textarea" id="avis-transporteur-adresse" style="min-height:72px"></textarea></div>
+                  <div style="height:10px"></div>
+                  <div class="grid">
+                    <div class="field"><label>Contact</label><input class="input" id="avis-transporteur-contact" /></div>
+                    <div class="field"><label>Référence</label><input class="input" id="avis-transporteur-reference" /></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="arrival-block">
+                <div class="row" style="margin-bottom:12px">
+                  <h3 style="margin:0">Détail de la marchandise</h3>
+                  <button class="btn secondary" id="addAvisItem" type="button">+ Ajouter une ligne</button>
+                </div>
+                <div class="arrival-table-wrap">
+                  <table class="arrival-table">
+                    <thead>
+                      <tr>
+                        <th>Réf. item</th><th>Description de la marchandise</th>
+                        <th>Long. (cm)</th><th>Larg. (cm)</th><th>Haut. (cm)</th>
+                        <th>Vol. (m³)</th><th>Surf. (m²)</th><th>Poids (kg)</th><th>Qté</th><th></th>
+                      </tr>
+                    </thead>
+                    <tbody id="avisItemsBody"></tbody>
+                  </table>
+                </div>
+                <div class="arrival-summary">
+                  <div class="arrival-total">Volume total : <span id="avisTotalVolume">0.000</span> m³</div>
+                  <div class="arrival-total">Surface totale : <span id="avisTotalSurface">0.000</span> m²</div>
+                  <div class="arrival-total">Poids total : <span id="avisTotalPoids">0.00</span> kg</div>
+                  <div class="arrival-total">Quantité totale : <span id="avisTotalQte">0</span></div>
+                </div>
+              </div>
+
+              <div style="height:14px"></div>
+              <div class="field"><label>Commentaire</label><textarea class="textarea" id="avis-commentaire"></textarea></div>
+
+              <div style="height:14px"></div>
+              <div class="drop" id="dropAvisArrivee">
+                <div class="section-title" style="margin-bottom:0">Documents joints</div>
+                <div class="drop-inner" id="dropInnerAvisArrivee">
+                  <div style="font-size:18px;font-weight:700;">Glisse des fichiers ici</div>
+                  <div class="sub">ou clique pour les sélectionner</div>
+                  <input type="file" id="fileInputAvisArrivee" class="hidden" multiple />
+                  <div class="actions" style="justify-content:center;margin-top:14px">
+                    <button class="btn secondary" id="chooseAvisArriveeFiles" type="button">Choisir des fichiers</button>
+                  </div>
+                  <div class="files" id="filesAvisArrivee" style="margin-top:18px"></div>
+                </div>
+              </div>
+
+              <div style="height:18px"></div>
+              <div class="actions"><button class="btn primary" id="sendAvisArrivee" type="button">Envoyer l’avis d’arrivée</button></div>
+            </form>
           </div>
 
           <div class="card">
@@ -266,6 +366,7 @@ const state = {
   filesDevis:[],
   filesAllerVoir:[],
   filesEnlevement:[],
+  filesAvisArrivee:[],
   doneSearch:'',
   directTicketId: urlParams.get('ticket') || '',
   directTicketOpened: false
@@ -276,18 +377,22 @@ const els = {
   tabDevis: document.getElementById('tab-devis'),
   tabAllerVoir: document.getElementById('tab-aller-voir'),
   tabEnlevement: document.getElementById('tab-enlevement'),
+  tabAvisArrivee: document.getElementById('tab-avis-arrivee'),
   formCaisse: document.getElementById('form-caisse'),
   formDevis: document.getElementById('form-devis'),
   formAllerVoir: document.getElementById('form-aller-voir'),
   formEnlevement: document.getElementById('form-enlevement'),
+  formAvisArrivee: document.getElementById('form-avis-arrivee'),
   filesCaisse: document.getElementById('filesCaisse'),
   filesDevis: document.getElementById('filesDevis'),
   filesAllerVoir: document.getElementById('filesAllerVoir'),
   filesEnlevement: document.getElementById('filesEnlevement'),
+  filesAvisArrivee: document.getElementById('filesAvisArrivee'),
   fileInputCaisse: document.getElementById('fileInputCaisse'),
   fileInputDevis: document.getElementById('fileInputDevis'),
   fileInputAllerVoir: document.getElementById('fileInputAllerVoir'),
   fileInputEnlevement: document.getElementById('fileInputEnlevement'),
+  fileInputAvisArrivee: document.getElementById('fileInputAvisArrivee'),
   notice: document.getElementById('notice'),
   successBox: document.getElementById('successBox'),
   doneList: document.getElementById('doneList'),
@@ -312,21 +417,25 @@ function activateModule(module){
   const isDevis = module === 'devis';
   const isAllerVoir = module === 'aller-voir';
   const isEnlevement = module === 'enlevement';
+  const isAvisArrivee = module === 'avis-arrivee';
   els.tabCaisse.classList.toggle('active', isCaisse);
   els.tabDevis.classList.toggle('active', isDevis);
   els.tabAllerVoir.classList.toggle('active', isAllerVoir);
   els.tabEnlevement.classList.toggle('active', isEnlevement);
+  els.tabAvisArrivee.classList.toggle('active', isAvisArrivee);
   els.formCaisse.classList.toggle('hidden', !isCaisse);
   els.formDevis.classList.toggle('hidden', !isDevis);
   els.formAllerVoir.classList.toggle('hidden', !isAllerVoir);
   els.formEnlevement.classList.toggle('hidden', !isEnlevement);
+  els.formAvisArrivee.classList.toggle('hidden', !isAvisArrivee);
   els.successBox.classList.remove('show');
 }
 function moduleKeyFromTicketModule(module){
   if(module === 'Fiche de caisse') return 'caisse';
   if(module === 'Demande de devis') return 'devis';
   if(module === 'Demande Aller voir') return 'aller-voir';
-  if(module === 'Demande d’enlèvement') return 'enlevement';
+  if(module === 'Demande d’enlèvement' || module === "Demande d'enlèvement") return 'enlevement';
+  if(module === "Avis d'arrivée" || module === 'Avis d’arrivée') return 'avis-arrivee';
   return 'caisse';
 }
 function escapeHtml(str){
@@ -480,6 +589,7 @@ function setupAllReferenceAutocompletes(){
     setupReferenceAutocomplete(id, () => referentielCache.projectManagers, pmConfig)
   );
   setupReferenceAutocomplete('devis-client', () => referentielCache.clients, clientConfig);
+  setupReferenceAutocomplete('avis-client', () => referentielCache.clients, clientConfig);
   setupReferenceAutocomplete('aller-lieu-rdv', () => referentielCache.clients, clientLieuConfig);
   setupReferenceAutocomplete('aller-contact-rdv', () => referentielCache.contacts, contactConfig);
 }
@@ -506,6 +616,7 @@ function renderAllFiles(){
   renderFiles(els.filesDevis, state.filesDevis);
   renderFiles(els.filesAllerVoir, state.filesAllerVoir);
   renderFiles(els.filesEnlevement, state.filesEnlevement);
+  renderFiles(els.filesAvisArrivee, state.filesAvisArrivee);
 }
 function addFiles(target, fileList){
   const files = Array.from(fileList || []).filter(file => file && file.name);
@@ -715,6 +826,158 @@ async function sendAllerVoir(){
 }
 
 
+function avisNumber(value){
+  const n = Number(String(value || '').replace(',', '.'));
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+function recalcAvisItems(){
+  let totalVolume = 0, totalSurface = 0, totalPoids = 0, totalQte = 0;
+  document.querySelectorAll('#avisItemsBody tr').forEach(row => {
+    const l = avisNumber(row.querySelector('.item-longueur').value);
+    const w = avisNumber(row.querySelector('.item-largeur').value);
+    const h = avisNumber(row.querySelector('.item-hauteur').value);
+    const poids = avisNumber(row.querySelector('.item-poids').value);
+    const qte = avisNumber(row.querySelector('.item-qte').value);
+    const volume = (l && w && h) ? (l * w * h / 1000000) : 0;
+    const surface = (l && w) ? (l * w / 10000) : 0;
+    row.querySelector('.item-volume').value = volume ? volume.toFixed(3) : '';
+    row.querySelector('.item-surface').value = surface ? surface.toFixed(3) : '';
+    totalVolume += volume * (qte || 1);
+    totalSurface += surface * (qte || 1);
+    totalPoids += poids * (qte || 1);
+    totalQte += qte;
+  });
+  document.getElementById('avisTotalVolume').textContent = totalVolume.toFixed(3);
+  document.getElementById('avisTotalSurface').textContent = totalSurface.toFixed(3);
+  document.getElementById('avisTotalPoids').textContent = totalPoids.toFixed(2);
+  document.getElementById('avisTotalQte').textContent = String(totalQte || 0);
+}
+
+function addAvisItemRow(item={}){
+  const tbody = document.getElementById('avisItemsBody');
+  const row = document.createElement('tr');
+  row.innerHTML = `
+    <td><input class="input item-ref" value="${escapeHtml(item.reference || '')}"></td>
+    <td><input class="input item-description" value="${escapeHtml(item.description || '')}"></td>
+    <td><input class="input item-longueur" type="number" min="0" step="any" value="${escapeHtml(item.longueur || '')}"></td>
+    <td><input class="input item-largeur" type="number" min="0" step="any" value="${escapeHtml(item.largeur || '')}"></td>
+    <td><input class="input item-hauteur" type="number" min="0" step="any" value="${escapeHtml(item.hauteur || '')}"></td>
+    <td><input class="input item-volume readonly" readonly></td>
+    <td><input class="input item-surface readonly" readonly></td>
+    <td><input class="input item-poids" type="number" min="0" step="any" value="${escapeHtml(item.poids || '')}"></td>
+    <td><input class="input item-qte" type="number" min="0" step="1" value="${escapeHtml(item.quantite || '1')}"></td>
+    <td><button class="arrival-remove" type="button" title="Supprimer la ligne">×</button></td>`;
+  row.querySelectorAll('input').forEach(input => input.addEventListener('input', recalcAvisItems));
+  row.querySelector('.arrival-remove').addEventListener('click', () => {
+    if(tbody.querySelectorAll('tr').length > 1){
+      row.remove();
+    }else{
+      row.querySelectorAll('input:not([readonly])').forEach(input => input.value = input.classList.contains('item-qte') ? '1' : '');
+    }
+    recalcAvisItems();
+  });
+  tbody.appendChild(row);
+  recalcAvisItems();
+}
+
+function collectAvisItems(){
+  return [...document.querySelectorAll('#avisItemsBody tr')].map(row => ({
+    reference: row.querySelector('.item-ref').value.trim(),
+    description: row.querySelector('.item-description').value.trim(),
+    longueur_cm: row.querySelector('.item-longueur').value.trim(),
+    largeur_cm: row.querySelector('.item-largeur').value.trim(),
+    hauteur_cm: row.querySelector('.item-hauteur').value.trim(),
+    volume_m3: row.querySelector('.item-volume').value.trim(),
+    surface_m2: row.querySelector('.item-surface').value.trim(),
+    poids_kg: row.querySelector('.item-poids').value.trim(),
+    quantite: row.querySelector('.item-qte').value.trim() || '1'
+  })).filter(item => item.reference || item.description);
+}
+
+function resetAvisArriveeForm(){
+  document.getElementById('form-avis-arrivee').reset();
+  const tbody = document.getElementById('avisItemsBody');
+  tbody.innerHTML = '';
+  addAvisItemRow();
+  state.filesAvisArrivee.length = 0;
+  renderAllFiles();
+}
+
+async function sendAvisArrivee(){
+  const dossier = document.getElementById('avis-dossier').value.trim();
+  const client = document.getElementById('avis-client').value.trim();
+  const projet = document.getElementById('avis-projet').value.trim();
+  const dateReception = document.getElementById('avis-date-reception').value;
+  const coordinateur = document.getElementById('avis-coordinateur').value.trim();
+  const items = collectAvisItems();
+
+  if(!dossier || !client || !projet || !dateReception || !coordinateur){
+    showNotice('Merci de renseigner la référence dossier, le client, le projet, la date de réception prévue et le coordinateur.');
+    return;
+  }
+  if(!items.length){
+    showNotice('Merci d’ajouter au moins une ligne de marchandise.');
+    return;
+  }
+
+  const payload = {
+    dossier_ref: dossier,
+    client,
+    projet,
+    date_reception_prevue: dateReception,
+    coordinateur,
+    expediteur: {
+      nom: document.getElementById('avis-expediteur-nom').value.trim(),
+      adresse: document.getElementById('avis-expediteur-adresse').value.trim(),
+      contact: document.getElementById('avis-expediteur-contact').value.trim()
+    },
+    transporteur: {
+      nom: document.getElementById('avis-transporteur-nom').value.trim(),
+      adresse: document.getElementById('avis-transporteur-adresse').value.trim(),
+      contact: document.getElementById('avis-transporteur-contact').value.trim(),
+      reference: document.getElementById('avis-transporteur-reference').value.trim()
+    },
+    items,
+    totaux: {
+      volume_m3: document.getElementById('avisTotalVolume').textContent,
+      surface_m2: document.getElementById('avisTotalSurface').textContent,
+      poids_kg: document.getElementById('avisTotalPoids').textContent,
+      quantite: document.getElementById('avisTotalQte').textContent
+    },
+    commentaire: document.getElementById('avis-commentaire').value.trim()
+  };
+
+  try{
+    const fd = new FormData();
+    fd.append('module', "Avis d'arrivée");
+    fd.append('dossier', dossier);
+    fd.append('ref', payload.transporteur.reference || '-');
+    fd.append('preteur', payload.expediteur.nom || '-');
+    fd.append('expo', projet);
+    fd.append('objet', projet);
+    fd.append('chargeProjet', coordinateur);
+    fd.append('typeCaisse', '-');
+    fd.append('dimensions', '-');
+    fd.append('dateEmballage', dateReception);
+    fd.append('prixDevis', '-');
+    fd.append('commentaire', payload.commentaire);
+    fd.append('avisArrivee', JSON.stringify(payload));
+    state.filesAvisArrivee.forEach(file => fd.append('files', file));
+
+    const res = await fetch('/api/tickets', {method:'POST', body:fd});
+    const data = await res.json();
+    if(!res.ok){ showNotice(data.error || 'Erreur enregistrement'); return; }
+
+    resetAvisArriveeForm();
+    await renderDoneTickets();
+    showSuccess(`Votre avis d’arrivée ${data.id} a bien été enregistré.`);
+    window.scrollTo({top:0, behavior:'smooth'});
+  }catch(e){
+    showNotice(`Échec enregistrement : ${e.message || e}`);
+  }
+}
+
 async function sendEnlevement(){
   if(state.filesEnlevement.length !== 1){
     showNotice('Merci de déposer un seul bon d’enlèvement au format PDF.');
@@ -842,6 +1105,42 @@ function openDoneTicketDetails(ticket){
         </div>
       </div>
     `;
+  } else if(module === "Avis d'arrivée" || module === 'Avis d’arrivée'){
+    const avis = ticket.avisArrivee || {};
+    const expediteur = avis.expediteur || {};
+    const transporteur = avis.transporteur || {};
+    const items = avis.items || [];
+    title.textContent = `${displayValue(avis.dossier_ref || ticket.dossier)} - ${displayValue(avis.projet || ticket.expo)}`;
+    html += `
+      <div class="modal-section">
+        <h3>Avis d’arrivée</h3>
+        <div class="info-grid">
+          ${infoBox('Réf. dossier', avis.dossier_ref || ticket.dossier)}
+          ${infoBox('Nom du client', avis.client)}
+          ${infoBox('Projet ou expo', avis.projet || ticket.expo)}
+          ${infoBox('Date de réception prévue', avis.date_reception_prevue || ticket.dateEmballage)}
+          ${infoBox('Coordinateur', avis.coordinateur || ticket.chargeProjet)}
+          ${infoBox('Réf. transporteur', transporteur.reference || ticket.ref)}
+        </div>
+      </div>
+      <div class="modal-section">
+        <h3>Expéditeur / Transporteur</h3>
+        <div class="info-grid">
+          ${infoBox('Expéditeur', expediteur.nom)}
+          ${infoBox('Adresse expéditeur', expediteur.adresse)}
+          ${infoBox('Contact expéditeur', expediteur.contact)}
+          ${infoBox('Transporteur', transporteur.nom)}
+          ${infoBox('Adresse transporteur', transporteur.adresse)}
+          ${infoBox('Contact transporteur', transporteur.contact)}
+        </div>
+      </div>
+      <div class="modal-section">
+        <h3>Marchandise</h3>
+        ${items.length ? `<div style="overflow-x:auto"><table class="arrival-table" style="min-width:900px"><thead><tr><th>Réf.</th><th>Description</th><th>L</th><th>l</th><th>H</th><th>Vol.</th><th>Surf.</th><th>Poids</th><th>Qté</th></tr></thead><tbody>${items.map(x => `<tr><td>${escapeHtml(displayValue(x.reference))}</td><td>${escapeHtml(displayValue(x.description))}</td><td>${escapeHtml(displayValue(x.longueur_cm))}</td><td>${escapeHtml(displayValue(x.largeur_cm))}</td><td>${escapeHtml(displayValue(x.hauteur_cm))}</td><td>${escapeHtml(displayValue(x.volume_m3))}</td><td>${escapeHtml(displayValue(x.surface_m2))}</td><td>${escapeHtml(displayValue(x.poids_kg))}</td><td>${escapeHtml(displayValue(x.quantite))}</td></tr>`).join('')}</tbody></table></div>` : '<div class="small">Aucune marchandise renseignée.</div>'}
+        <div style="height:10px"></div>
+        <div class="info-box"><div class="info-label">Commentaire</div><div class="info-value">${escapeHtml(displayValue(avis.commentaire || ticket.commentaire))}</div></div>
+      </div>
+    `;
   } else {
     html += `
       <div class="modal-section">
@@ -902,10 +1201,14 @@ async function renderDoneTickets(){
       }
     }
 
-    const expectedModule =
-      state.currentModule === 'caisse'
-        ? 'Fiche de caisse'
-        : (state.currentModule === 'devis' ? 'Demande de devis' : (state.currentModule === 'aller-voir' ? 'Demande Aller voir' : 'Demande d’enlèvement'));
+    const expectedModuleByKey = {
+      'caisse': 'Fiche de caisse',
+      'devis': 'Demande de devis',
+      'aller-voir': 'Demande Aller voir',
+      'enlevement': 'Demande d’enlèvement',
+      'avis-arrivee': "Avis d'arrivée"
+    };
+    const expectedModule = expectedModuleByKey[state.currentModule] || 'Fiche de caisse';
 
     let done = (allTickets || []).filter(t => (t.status || '') === 'Terminé' && t.module === expectedModule);
 
@@ -950,7 +1253,9 @@ async function renderDoneTickets(){
             ? `${ticket.dossier || '-'} - ${ticket.expo || ticket.objet || '-'}`
             : ticket.module === 'Demande Aller voir'
               ? `${ticket.dossier || '-'} - ${ticket.lieuRdv || '-'}`
-              : `${ticket.dossier || '-'} - ${ticket.expo || ticket.objet || ticket.ref || '-'}`;
+              : (ticket.module === "Avis d'arrivée" || ticket.module === 'Avis d’arrivée')
+                ? `${ticket.dossier || '-'} - ${ticket.expo || ticket.objet || '-'}`
+                : `${ticket.dossier || '-'} - ${ticket.expo || ticket.objet || ticket.ref || '-'}`;
 
       item.innerHTML = `
         <div class="done-title">${escapeHtml(doneTitle)}</div>
@@ -960,7 +1265,9 @@ async function renderDoneTickets(){
           : ticket.module === 'Demande de devis'
             ? `<div class="done-line">Titre : <strong>${escapeHtml(ticket.expo || ticket.objet || '-')}</strong></div>
                <div class="done-line">Chargé : <strong>${escapeHtml(ticket.chargeProjet || '-')}</strong></div>`
-            : `<div class="done-line">Dims : <strong>${escapeHtml(dimensions)}</strong></div><div class="done-line">Prix cession : <strong>${escapeHtml(prixCession)}</strong></div><div class="done-line">Caissier : <strong>${escapeHtml(nomCaissier)}</strong></div>`}
+            : (ticket.module === "Avis d'arrivée" || ticket.module === 'Avis d’arrivée')
+              ? `<div class="done-line">Client : <strong>${escapeHtml((ticket.avisArrivee || {}).client || '-')}</strong></div><div class="done-line">Réception prévue : <strong>${escapeHtml((ticket.avisArrivee || {}).date_reception_prevue || ticket.dateEmballage || '-')}</strong></div>`
+              : `<div class="done-line">Dims : <strong>${escapeHtml(dimensions)}</strong></div><div class="done-line">Prix cession : <strong>${escapeHtml(prixCession)}</strong></div><div class="done-line">Caissier : <strong>${escapeHtml(nomCaissier)}</strong></div>`}
       `;
 
       item.addEventListener('click', () => openDoneTicketDetails(ticket));
@@ -1033,6 +1340,14 @@ const referenceFieldConfigs = {
     searchFields: ['nom'],
     main: item => item.nom || '',
     sub: item => [item.email, item.telephone].filter(Boolean).join(' · '),
+    value: item => item.nom || ''
+  },
+  'avis-client': {
+    cacheKey: 'clients',
+    endpoint: '/api/referentiels/clients',
+    searchFields: ['nom'],
+    main: item => item.nom || '',
+    sub: item => [item.adresse, item.contact_nom, item.contact_telephone].filter(Boolean).join(' · '),
     value: item => item.nom || ''
   },
   'devis-client': {
@@ -1193,14 +1508,18 @@ els.tabCaisse.addEventListener('click', ()=>{activateModule('caisse'); refreshRe
 els.tabDevis.addEventListener('click', ()=>{activateModule('devis'); refreshReferenceAutocompleteBindings(); renderDoneTickets();});
 els.tabAllerVoir.addEventListener('click', ()=>{activateModule('aller-voir'); refreshReferenceAutocompleteBindings(); renderDoneTickets();});
 els.tabEnlevement.addEventListener('click', ()=>{activateModule('enlevement'); renderDoneTickets();});
+els.tabAvisArrivee.addEventListener('click', ()=>{activateModule('avis-arrivee'); refreshReferenceAutocompleteBindings(); renderDoneTickets();});
 document.getElementById('chooseCaisseFiles').addEventListener('click', (e)=>{e.stopPropagation(); els.fileInputCaisse.click();});
 document.getElementById('chooseDevisFiles').addEventListener('click', (e)=>{e.stopPropagation(); els.fileInputDevis.click();});
 document.getElementById('chooseAllerVoirFiles').addEventListener('click', (e)=>{e.stopPropagation(); els.fileInputAllerVoir.click();});
 document.getElementById('chooseEnlevementFile').addEventListener('click', (e)=>{e.stopPropagation(); els.fileInputEnlevement.click();});
+document.getElementById('chooseAvisArriveeFiles').addEventListener('click', (e)=>{e.stopPropagation(); els.fileInputAvisArrivee.click();});
 document.getElementById('sendCaisse').addEventListener('click', sendCaisse);
 document.getElementById('sendDevis').addEventListener('click', sendDevis);
 document.getElementById('sendAllerVoir').addEventListener('click', sendAllerVoir);
 document.getElementById('sendEnlevement').addEventListener('click', sendEnlevement);
+document.getElementById('sendAvisArrivee').addEventListener('click', sendAvisArrivee);
+document.getElementById('addAvisItem').addEventListener('click', ()=>addAvisItemRow());
 document.getElementById('openManager').addEventListener('click', ()=>window.open('/login','_blank'));
 document.getElementById('planningCaisserie').addEventListener('click', () => {
   window.open('/reception', '_blank');
@@ -1211,6 +1530,8 @@ setupDrop('dropCaisse','dropInnerCaisse',els.fileInputCaisse,state.filesCaisse);
 setupDrop('dropDevis','dropInnerDevis',els.fileInputDevis,state.filesDevis);
 setupDrop('dropAllerVoir','dropInnerAllerVoir',els.fileInputAllerVoir,state.filesAllerVoir);
 setupDrop('dropEnlevement','dropInnerEnlevement',els.fileInputEnlevement,state.filesEnlevement);
+setupDrop('dropAvisArrivee','dropInnerAvisArrivee',els.fileInputAvisArrivee,state.filesAvisArrivee);
+addAvisItemRow();
 
 activateModule('caisse');
 renderAllFiles();
