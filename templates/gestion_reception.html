@@ -113,12 +113,30 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
     <div class="ticket-modal-foot" style="justify-content:space-between;gap:10px">
       <button class="btn danger" id="ticketCancelBtn" type="button">Annuler le ticket</button>
       <div class="edit-actions">
+        <button class="btn primary" id="ticketReceptionBtn" type="button" style="display:none">RECEPTION</button>
         <button class="btn delivery" id="ticketDeliveryBtn" type="button">Bon de livraison</button>
         <button class="btn" id="ticketEditBtn" type="button">Modifier</button>
         <button class="btn success" id="ticketSaveBtn" type="button" style="display:none">Enregistrer</button>
         <button class="btn" id="ticketEditCancelBtn" type="button" style="display:none">Annuler les modifications</button>
         <button class="btn" id="ticketModalCloseBottom" type="button">Fermer</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="receptionModalBackdrop" aria-hidden="true">
+  <div class="ticket-modal" role="dialog" aria-modal="true">
+    <div class="ticket-modal-head">
+      <div>
+        <div class="ticket-modal-title">Réception de l'avis d'arrivée</div>
+        <div class="ticket-modal-sub" id="receptionModalSub">-</div>
+      </div>
+      <button class="modal-close" id="receptionModalClose" type="button">×</button>
+    </div>
+    <div class="ticket-modal-body" id="receptionModalBody"></div>
+    <div class="ticket-modal-foot" style="justify-content:space-between;gap:10px">
+      <button class="btn" id="receptionCancelBtn" type="button">Annuler</button>
+      <button class="btn success" id="receptionValidateBtn" type="button">Valider la réception</button>
     </div>
   </div>
 </div>
@@ -205,7 +223,7 @@ function planningDate(t){return isAvisArrivee(t)?avisDate(t):enlDate(t);}
 function planningEventText(t){
   if(isAvisArrivee(t)){
     const a=avisData(t);
-    return `AVIS ARRIVÉE — ${val(a.client||t.dossier)} — ${val(a.projet||t.expo||t.objet)}`;
+    return `${val(a.dossier_ref||t.dossier)} - ${val(a.client)} - ${val(a.projet||t.expo||t.objet)}`;
   }
   return eventText(t);
 }
@@ -265,6 +283,7 @@ function renderTicketModal(editing=false){
     html+=`<div class="section"><div class="section-title">Documents joints</div>${files.length?files.map(f=>`<a class="file-link" target="_blank" href="/api/tickets/${encodeURIComponent(t.id)}/download/${encodeURIComponent(f.name)}">${esc(f.name)}</a>`).join(''):'<div>Aucun document.</div>'}</div>`;
     document.getElementById('ticketModalBody').innerHTML=html;
     document.getElementById('ticketEditBtn').style.display='none';
+    document.getElementById('ticketReceptionBtn').style.display='inline-block';
     document.getElementById('ticketDeliveryBtn').style.display='none';
     document.getElementById('ticketSaveBtn').style.display='none';
     document.getElementById('ticketEditCancelBtn').style.display='none';
@@ -332,6 +351,7 @@ function renderTicketModal(editing=false){
   }
 
   document.getElementById('ticketModalBody').innerHTML=html;
+  document.getElementById('ticketReceptionBtn').style.display='none';
   document.getElementById('ticketEditBtn').style.display=editing?'none':'inline-block';
   document.getElementById('ticketDeliveryBtn').style.display=editing?'none':'inline-block';
   document.getElementById('ticketSaveBtn').style.display=editing?'inline-block':'none';
@@ -385,6 +405,84 @@ async function saveTicketEdits(){
   }
 }
 
+
+
+function closeReceptionModal(){
+  const b=document.getElementById('receptionModalBackdrop');
+  b.classList.remove('open');b.setAttribute('aria-hidden','true');
+}
+function openReceptionModal(){
+  if(!openedTicket || !isAvisArrivee(openedTicket)) return;
+  const a=avisData(openedTicket), aitems=Array.isArray(a.items)?a.items:[];
+  document.getElementById('receptionModalSub').textContent=
+    `${val(a.dossier_ref||openedTicket.dossier)} - ${val(a.client)} - ${val(a.projet||openedTicket.expo||openedTicket.objet)}`;
+
+  let html=`<div class="section-title">Marchandises réceptionnées</div><div class="delivery-list">`;
+  if(aitems.length){
+    aitems.forEach((i,index)=>{
+      html+=`<label class="delivery-item">
+        <input type="checkbox" class="arrival-reception-check" data-index="${index}" checked>
+        <div><strong>${esc(i.reference||'-')}</strong> — ${esc(i.description||'-')}
+        <div class="delivery-meta">Qté : ${esc(i.quantite||'1')}</div></div>
+      </label>`;
+    });
+  }else{
+    html+=`<div class="pending-empty">Aucune marchandise renseignée.</div>`;
+  }
+  html+=`</div>
+    <div class="form-row">
+      <label for="arrivalReceptionReceiver">Nom et prénom de la personne qui réceptionne</label>
+      <input id="arrivalReceptionReceiver" type="text" autocomplete="name" placeholder="Nom Prénom">
+    </div>
+    <div class="form-row">
+      <label for="arrivalReceptionLocation">Lieu de stockage</label>
+      <input id="arrivalReceptionLocation" type="text" placeholder="Ex. Stock A, réserve 2...">
+    </div>
+    <div class="form-row">
+      <label for="arrivalReceptionComment">Commentaire de réception</label>
+      <input id="arrivalReceptionComment" type="text" placeholder="Commentaire facultatif">
+    </div>`;
+  document.getElementById('receptionModalBody').innerHTML=html;
+  const b=document.getElementById('receptionModalBackdrop');
+  b.classList.add('open');b.setAttribute('aria-hidden','false');
+}
+async function validateArrivalReception(){
+  if(!openedTicket || !isAvisArrivee(openedTicket)) return;
+  const receiver=document.getElementById('arrivalReceptionReceiver')?.value.trim()||'';
+  const location=document.getElementById('arrivalReceptionLocation')?.value.trim()||'';
+  const comment=document.getElementById('arrivalReceptionComment')?.value.trim()||'';
+  const selected=[...document.querySelectorAll('.arrival-reception-check:checked')].map(el=>Number(el.dataset.index));
+
+  if(!receiver){alert("Renseigne le nom et prénom de la personne qui réceptionne.");return;}
+  if(!location){alert("Renseigne le lieu de stockage.");return;}
+  if(!selected.length){alert("Sélectionne au moins une marchandise réceptionnée.");return;}
+
+  const btn=document.getElementById('receptionValidateBtn');
+  btn.disabled=true;btn.textContent='Validation...';
+  try{
+    const ticketId=openedTicket.id;
+    const res=await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/reception-avis-arrivee`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        receptionne_par:receiver,
+        lieu_stockage:location,
+        commentaire:comment,
+        selected_indexes:selected
+      })
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok||!data.ok) throw new Error(data.error||"Impossible de valider la réception");
+    closeReceptionModal();
+    closeTicket();
+    await loadTickets();
+    alert("Réception de l'avis validée.");
+  }catch(e){
+    alert(e.message||"Impossible de valider la réception");
+  }finally{
+    btn.disabled=false;btn.textContent='Valider la réception';
+  }
+}
 
 function closeDeliveryModal(){
   const b=document.getElementById('deliveryModalBackdrop');
@@ -549,6 +647,11 @@ document.getElementById('ticketCancelBtn').addEventListener('click',async()=>{
     btn.textContent='Annuler le ticket';
   }
 });
+document.getElementById('ticketReceptionBtn').addEventListener('click',openReceptionModal);
+document.getElementById('receptionModalClose').addEventListener('click',closeReceptionModal);
+document.getElementById('receptionCancelBtn').addEventListener('click',closeReceptionModal);
+document.getElementById('receptionValidateBtn').addEventListener('click',validateArrivalReception);
+document.getElementById('receptionModalBackdrop').addEventListener('click',e=>{if(e.target.id==='receptionModalBackdrop')closeReceptionModal();});
 document.getElementById('ticketDeliveryBtn').addEventListener('click',openDeliveryModal);
 document.getElementById('deliveryModalClose').addEventListener('click',closeDeliveryModal);
 document.getElementById('deliveryCancelBtn').addEventListener('click',closeDeliveryModal);
