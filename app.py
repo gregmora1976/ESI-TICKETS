@@ -2289,6 +2289,15 @@ def api_tickets():
     migrate_caisses_avant_18_aout_2026()
 
     tickets = list_tickets(status=status, limit=limit)
+
+    # Expose un indicateur logistique normalisé pour le planning.
+    # Cela ne modifie jamais le statut métier du ticket.
+    for ticket in tickets:
+        if ticket.get('module') == 'Fiche de caisse':
+            reception = dict(ticket.get('reception') or {})
+            reception['receptionnee'] = _is_caisse_receptionnee(ticket)
+            ticket['reception'] = reception
+
     return jsonify(tickets)
 
 
