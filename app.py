@@ -341,6 +341,302 @@ def _as_text(value, default=''):
     return str(value)
 
 
+# -----------------------------------------------------------------------------
+# Référentiel global des articles ESI
+# -----------------------------------------------------------------------------
+_ARTICLE_LOCK = threading.Lock()
+
+
+def _article_quantity(value, default=1):
+    try:
+        n = int(float(str(value or default).replace(",", ".")))
+        return max(1, n)
+    except Exception:
+        return default
+
+
+def _article_search_text(article):
+    """Concatène toutes les données connues afin qu'une seule recherche retrouve l'article."""
+    values = []
+    for key, value in (article or {}).items():
+        if key == "raw_json":
+            try:
+                values.append(json.dumps(value, ensure_ascii=False, sort_keys=True))
+            except Exception:
+                values.append(_as_text(value))
+        elif isinstance(value, (dict, list)):
+            try:
+                values.append(json.dumps(value, ensure_ascii=False, sort_keys=True))
+            except Exception:
+                values.append(_as_text(value))
+        else:
+            values.append(_as_text(value))
+    return " | ".join(x.strip() for x in values if _as_text(x).strip())
+
+
+def _article_payload_from_item(ticket, item, source_module=None, source_index=None, unit_index=1):
+    """Transforme une ligne de marchandise en article physique (quantité = 1)."""
+    item = dict(item or {})
+    module = source_module or ticket.get("module") or ""
+    avis = ticket.get("avisArrivee") or ticket.get("avis_arrivee") or {}
+    enl = ticket.get("enlevement") or {}
+
+    if module == "Avis d'arrivée":
+        dossier = avis.get("dossier_ref") or ticket.get("dossier") or ""
+        client = avis.get("client") or ticket.get("dossier") or ""
+        projet = avis.get("projet") or ticket.get("expo") or ticket.get("objet") or ""
+        reference = item.get("reference") or ""
+        description = item.get("description") or ""
+        poids = item.get("poids_kg") or ""
+        longueur = item.get("longueur_cm") or ""
+        largeur = item.get("largeur_cm") or ""
+        hauteur = item.get("hauteur_cm") or ""
+        volume = item.get("volume_m3") or ""
+        surface = item.get("surface_m2") or ""
+        ref_caisse = item.get("ref_caisse") or ""
+        transporteur_ref = ((avis.get("transporteur") or {}).get("reference") or "")
+    else:
+        dossier = ticket.get("numeroDossier") or ticket.get("numero_dossier") or ""
+        client = enl.get("client") or ticket.get("dossier") or ""
+        projet = enl.get("exhibition") or ticket.get("expo") or ticket.get("objet") or ""
+        reference = item.get("reference") or item.get("ref") or ""
+        description = item.get("designation") or item.get("description") or ""
+        poids = item.get("poids_kg") or item.get("poids") or ""
+        dims = _as_text(item.get("dimensions")).strip()
+        longueur = item.get("longueur_cm") or ""
+        largeur = item.get("largeur_cm") or ""
+        hauteur = item.get("hauteur_cm") or ""
+        if dims and not any((longueur, largeur, hauteur)):
+            parts = [x.strip() for x in re.split(r"[xX×]", dims)]
+            if len(parts) >= 1: longueur = parts[0]
+            if len(parts) >= 2: largeur = parts[1]
+            if len(parts) >= 3: hauteur = parts[2]
+        volume = item.get("volume_m3") or ""
+        surface = item.get("surface_m2") or ""
+        ref_caisse = item.get("ref_caisse") or ""
+        transporteur_ref = enl.get("numero_bon") or ticket.get("ref") or ""
+
+    created_at = ticket.get("createdAt") or datetime.now().isoformat()
+    payload = {
+        "ticket_id": _as_text(ticket.get("id")).strip(),
+        "source_module": _as_text(module).strip(),
+        "source_index": int(source_index) if source_index is not None else None,
+        "unit_index": int(unit_index),
+        "reference": _as_text(reference).strip(),
+        "description": _as_text(description).strip(),
+        "dossier": _as_text(dossier).strip(),
+        "client": _as_text(client).strip(),
+        "projet": _as_text(projet).strip(),
+        "ref_caisse": _as_text(ref_caisse).strip(),
+        "transporteur_ref": _as_text(transporteur_ref).strip(),
+        "longueur_cm": _as_text(longueur).strip(),
+        "largeur_cm": _as_text(largeur).strip(),
+        "hauteur_cm": _as_text(hauteur).strip(),
+        "volume_m3": _as_text(volume).strip(),
+        "surface_m2": _as_text(surface).strip(),
+        "poids_kg": _as_text(poids).strip(),
+        "lieu_stockage": _as_text(item.get("lieu_stockage")).strip(),
+        "statut_logistique": "Créé",
+        "created_at": _as_text(created_at).strip(),
+        "updated_at": datetime.now().isoformat(),
+        "raw_json": {
+            "ticket_id": ticket.get("id"),
+            "module": module,
+            "source_index": source_index,
+            "unit_index": unit_index,
+            "item": item,
+        },
+    }
+    payload["search_text"] = _article_search_text(payload)
+    return payload
+
+
+def _article_row_to_public(row):
+    row = dict(row or {})
+    article_no = row.get("article_no")
+    if not row.get("esi_id") and article_no is not None:
+        row["esi_id"] = f"ESI-{article_no}"
+    return row
+
+
+def _create_article_record(payload):
+    """Insère un article et retourne sa ligne avec son identifiant ESI."""
+    rows = supabase_rest_request(
+        "POST",
+        "articles",
+        "",
+        [payload],
+        prefer="return=representation"
+    ) or []
+    if not rows:
+        raise RuntimeError("Supabase n'a pas retourné l'article créé.")
+    return _article_row_to_public(rows[0])
+
+
+def _ensure_articles_for_ticket(ticket, save=True):
+    """
+    Attribue des ESI-x à toutes les unités des lignes de marchandise d'un ticket.
+    Idempotent : une ligne possédant déjà ses esi_ids n'est pas recréée.
+    """
+    module = _as_text(ticket.get("module")).replace("’", "'").strip()
+    if module == "Avis d'arrivée":
+        container = dict(ticket.get("avisArrivee") or ticket.get("avis_arrivee") or {})
+        items = list(container.get("items") or [])
+        container_key = "avisArrivee"
+    elif module in ("Demande d'enlèvement", "Demande d'enlevement"):
+        container = dict(ticket.get("enlevement") or {})
+        items = list(container.get("items") or [])
+        container_key = "enlevement"
+    else:
+        return []
+
+    created = []
+    changed = False
+
+    with _ARTICLE_LOCK:
+        for index, original in enumerate(items):
+            item = dict(original or {})
+            qty = _article_quantity(item.get("quantite"), 1)
+            existing = [str(x).strip() for x in (item.get("esi_ids") or []) if str(x).strip()]
+
+            # Si l'ancienne structure stocke un seul identifiant.
+            if not existing and item.get("esi_id"):
+                existing = [_as_text(item.get("esi_id")).strip()]
+
+            while len(existing) < qty:
+                unit_index = len(existing) + 1
+                payload = _article_payload_from_item(
+                    ticket, item, source_module=module, source_index=index, unit_index=unit_index
+                )
+                article = _create_article_record(payload)
+                existing.append(article["esi_id"])
+                created.append(article)
+
+            if item.get("esi_ids") != existing:
+                item["esi_ids"] = existing
+                item["esi_id"] = existing[0] if existing else ""
+                items[index] = item
+                changed = True
+
+        if changed:
+            container["items"] = items
+            ticket[container_key] = container
+            ticket["updatedAt"] = datetime.now().isoformat()
+            if save:
+                save_ticket(ticket)
+
+    return created
+
+
+def _update_article_logistics(esi_ids, lieu_stockage="", statut_logistique="Réceptionné",
+                              colis=None, reception_ref="", receptionne_par=""):
+    """Met à jour la fiche globale des articles après une réception."""
+    for esi_id in esi_ids or []:
+        esi_id = _as_text(esi_id).strip()
+        if not esi_id:
+            continue
+
+        safe_esi = urllib.parse.quote(esi_id, safe='-')
+        rows = supabase_rest_request(
+            "GET", "articles", f"select=*&esi_id=eq.{safe_esi}&limit=1"
+        ) or []
+        if not rows:
+            continue
+
+        current = dict(rows[0])
+        raw = current.get("raw_json") if isinstance(current.get("raw_json"), dict) else {}
+        raw = dict(raw or {})
+        history = list(raw.get("receptions") or [])
+        history.append({
+            "date": datetime.now().isoformat(),
+            "lieu_stockage": lieu_stockage,
+            "colis": list(colis or []),
+            "reception_ref": reception_ref,
+            "receptionne_par": receptionne_par,
+        })
+        raw["receptions"] = history
+
+        patch = {
+            "lieu_stockage": _as_text(lieu_stockage).strip(),
+            "statut_logistique": _as_text(statut_logistique).strip(),
+            "dernier_colis": ", ".join(colis or []),
+            "derniere_reception_ref": _as_text(reception_ref).strip(),
+            "updated_at": datetime.now().isoformat(),
+            "raw_json": raw,
+        }
+        merged = dict(current)
+        merged.update(patch)
+        patch["search_text"] = _article_search_text(merged)
+
+        supabase_rest_request(
+            "PATCH", "articles", f"esi_id=eq.{safe_esi}", patch, prefer="return=minimal"
+        )
+
+
+def _article_ids_for_received_units(item, previous_qty, qty_received):
+    """Retourne les ESI-x correspondant précisément aux unités reçues dans cette opération."""
+    ids = [str(x).strip() for x in (item.get("esi_ids") or []) if str(x).strip()]
+    start = max(0, int(previous_qty))
+    end = start + max(0, int(qty_received))
+    return ids[start:end]
+
+
+@app.route('/articles')
+def articles_page():
+    return render_template('articles.html')
+
+
+@app.route('/api/articles')
+def api_articles():
+    q = _as_text(request.args.get("q")).strip()
+    limit = min(max(int(request.args.get("limit") or 100), 1), 500)
+
+    query = "select=*&order=article_no.desc&limit=" + str(limit)
+    if q:
+        pattern = "*" + q.replace("*", "") + "*"
+        query += "&search_text=ilike." + urllib.parse.quote(pattern, safe='*')
+
+    rows = supabase_rest_request("GET", "articles", query) or []
+    return jsonify([_article_row_to_public(row) for row in rows])
+
+
+@app.route('/api/articles/<esi_id>')
+def api_article_detail(esi_id):
+    safe_esi = urllib.parse.quote(_as_text(esi_id).strip(), safe='-')
+    rows = supabase_rest_request(
+        "GET", "articles", f"select=*&esi_id=eq.{safe_esi}&limit=1"
+    ) or []
+    if not rows:
+        return jsonify({"error": "Article introuvable"}), 404
+    return jsonify(_article_row_to_public(rows[0]))
+
+
+@app.route('/api/articles/migrate', methods=['POST'])
+def api_articles_migrate():
+    """Importe les articles déjà présents dans les tickets et leur attribue un ESI-x."""
+    stats = {"tickets": 0, "articles_crees": 0, "errors": []}
+    try:
+        tickets = list_tickets()
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    for ticket in tickets:
+        module = _as_text(ticket.get("module")).replace("’", "'").strip()
+        if module not in ("Avis d'arrivée", "Demande d'enlèvement", "Demande d'enlevement"):
+            continue
+        try:
+            created = _ensure_articles_for_ticket(ticket, save=True)
+            stats["tickets"] += 1
+            stats["articles_crees"] += len(created)
+        except Exception as e:
+            stats["errors"].append({"ticket_id": ticket.get("id"), "error": str(e)})
+
+    return jsonify({
+        "ok": not stats["errors"],
+        **stats
+    }), (200 if not stats["errors"] else 207)
+
+
 def supabase_rest_request(method, table, query='', payload=None, prefer=None):
     """Appelle l'API REST Supabase Database sans dépendre du SDK Python."""
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -1710,6 +2006,10 @@ def _analyse_enlevement_ticket_background(ticket_id, pdf_bytes):
 
         ticket["updatedAt"] = datetime.now().isoformat()
         save_ticket(ticket)
+        try:
+            _ensure_articles_for_ticket(ticket, save=True)
+        except Exception as article_error:
+            print(f"[ARTICLES] Attribution ESI impossible pour {ticket_id}: {article_error}")
         print(
             f"[ENLEVEMENT] Analyse terminee pour {ticket_id}: "
             f"{len(parsed.get('items') or [])} item(s), OCR={parsed.get('ocr_used')}"
@@ -2676,8 +2976,19 @@ def api_create_ticket():
             'path': storage_path
         })
 
-    # Le ticket est sauvegarde avant toute analyse : le demandeur n'attend jamais l'OCR.
+    # Attribue immédiatement un identifiant ESI à chaque unité d'un avis d'arrivée.
+    # Le ticket est d'abord sauvegardé afin que les références Supabase soient cohérentes.
     save_ticket(ticket)
+    if is_avis_arrivee:
+        try:
+            _ensure_articles_for_ticket(ticket, save=True)
+        except Exception as e:
+            print(f"[ARTICLES] Attribution ESI impossible pour {ticket_id}: {e}")
+            return jsonify({
+                'ok': False,
+                'error': "Le ticket a été créé, mais l'attribution des numéros ESI a échoué. "
+                         "Vérifie que la table Supabase 'articles' a bien été créée."
+            }), 500
 
     if is_enlevement and enlevement_pdf_bytes:
         worker = threading.Thread(
@@ -2797,15 +3108,24 @@ def api_reception_avis_arrivee(ticket_id):
             received = planned if item.get('receptionne') else 0
         return received >= planned
 
-    if all_items and all(_item_fully_received(dict(x or {})) for x in all_items):
+    if items and all(_item_fully_received(dict(x or {})) for x in items):
         return jsonify({
             'ok': False,
             'error': 'Réception clôturée : tous les articles ont déjà été réceptionnés.'
         }), 409
 
+    # Sécurise les anciens avis créés avant l'ajout du référentiel articles.
+    try:
+        _ensure_articles_for_ticket(ticket, save=True)
+        avis = dict(ticket.get('avisArrivee') or {})
+        items = list(avis.get('items') or [])
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f"Impossible d'attribuer les numéros ESI : {e}"}), 500
+
     now = datetime.now()
     selected = []
     article_labels = []
+    reception_esi_ids = []
 
     for entry in items_reception:
         if not isinstance(entry, dict):
@@ -2860,6 +3180,9 @@ def api_reception_avis_arrivee(ticket_id):
         item['receptions'] = history
         items[idx] = item
 
+        received_esi_ids = _article_ids_for_received_units(item, previous, qty_received)
+        reception_esi_ids.extend(received_esi_ids)
+
         selected_item = {
             'index': idx,
             'quantite': str(qty_received),
@@ -2868,13 +3191,15 @@ def api_reception_avis_arrivee(ticket_id):
             'quantite_recue_totale': str(new_total),
             'reference': _as_text(item.get('reference')).strip(),
             'designation': _as_text(item.get('description')).strip(),
+            'esi_ids': received_esi_ids,
         }
         selected.append(selected_item)
 
-        for unit_no in range(1, qty_received + 1):
+        for unit_no, esi_id in enumerate(received_esi_ids, start=1):
             article_labels.append({
                 'titre': 'ARTICLE',
-                'principal': _as_text(item.get('reference')).strip() or 'Sans reference',
+                'principal': esi_id,
+                'esi_id': esi_id,
                 'dossier': numero_dossier,
                 'client': avis.get('client') or ticket.get('dossier') or '',
                 'reference': _as_text(item.get('reference')).strip(),
@@ -2987,6 +3312,17 @@ def api_reception_avis_arrivee(ticket_id):
         ticket['updatedAt'] = now.isoformat()
 
         save_ticket(ticket)
+        try:
+            _update_article_logistics(
+                reception_esi_ids,
+                lieu_stockage=lieu_stockage,
+                statut_logistique="Réceptionné",
+                colis=colis_refs,
+                reception_ref=reception_ref,
+                receptionne_par=receptionne_par,
+            )
+        except Exception as e:
+            print(f"[ARTICLES] Mise à jour logistique avis impossible: {e}")
 
     return jsonify({
         'ok': True,
@@ -3038,6 +3374,8 @@ def api_update_enlevement(ticket_id):
                 'designation': _as_text(item.get('designation')).strip(),
                 'reference': _as_text(item.get('reference')).strip(),
                 'dimensions': _as_text(item.get('dimensions')).strip(),
+                'esi_ids': list(item.get('esi_ids') or []),
+                'esi_id': _as_text(item.get('esi_id')).strip(),
             })
         current['items'] = cleaned_items
         current['references'] = [x['reference'] for x in cleaned_items if x.get('reference')]
@@ -3198,8 +3536,8 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
 
     # Goods table.
     table_top = 517
-    widths = [78, 202, 82, 55, 55, 63]
-    headers = ['Ref. item','Description de la marchandise','Dimensions','Qte prevue','Qte recue','Stockage']
+    widths = [62, 72, 162, 72, 47, 47, 73]
+    headers = ['N° ESI','Ref. item','Description de la marchandise','Dimensions','Qte prevue','Qte recue','Stockage']
     x = 30
     for w, h in zip(widths, headers):
         rect(x, table_top-38, w, 38, fill=NAVY, stroke=WHITE, lw=0.4)
@@ -3216,7 +3554,7 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
         row = rows[ridx] if ridx < len(rows) else {}
         planned = row.get('quantite_prevue') or row.get('quantite') or ''
         received = row.get('quantite') or ''
-        vals = [row.get('reference'), row.get('designation') or row.get('description'), row.get('dimensions'), planned, received, bon.get('lieu_stockage') if row else '']
+        vals = [', '.join(row.get('esi_ids') or []), row.get('reference'), row.get('designation') or row.get('description'), row.get('dimensions'), planned, received, bon.get('lieu_stockage') if row else '']
         for w, value in zip(widths, vals):
             rect(x, y0, w, row_h, fill=fill, stroke=LINE)
             fit_txt(x+4, y0+18, value, w-8, 6.6, False, 2, 8)
@@ -3304,11 +3642,12 @@ def _build_labels_pdf_bytes(labels, kind="article"):
             for part in _tw.wrap(principal, width=28) or [principal]:
                 lines.append(("B", 18, part))
 
-        for key in ("dossier", "client", "reference", "designation", "quantite", "colis", "lieu", "bon"):
+        for key in ("esi_id", "dossier", "client", "reference", "designation", "quantite", "colis", "lieu", "bon"):
             value = _as_text(label.get(key)).strip()
             if not value:
                 continue
             label_name = {
+                "esi_id": "N° ESI",
                 "dossier": "Dossier",
                 "client": "Client",
                 "reference": "Article",
@@ -3463,10 +3802,17 @@ def api_create_bon_livraison(ticket_id):
     if not items_reception:
         return jsonify({'ok': False, 'error': 'Sélectionne au moins un article à réceptionner'}), 400
 
+    # Sécurise les anciennes demandes créées avant l'ajout du référentiel articles.
+    try:
+        _ensure_articles_for_ticket(ticket, save=True)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f"Impossible d'attribuer les numéros ESI : {e}"}), 500
+
     enl = dict(ticket.get('enlevement') or {})
     all_items = list(enl.get('items') or [])
     selected = []
     article_labels = []
+    reception_esi_ids = []
     now = datetime.now()
 
     def _qty_int(value, default=0):
@@ -3538,6 +3884,9 @@ def api_create_bon_livraison(ticket_id):
         item['receptions'] = history
         all_items[idx] = item
 
+        received_esi_ids = _article_ids_for_received_units(item, previous, qty_received)
+        reception_esi_ids.extend(received_esi_ids)
+
         selected_item = {
             'index': idx,
             'quantite': str(qty_received),
@@ -3547,14 +3896,16 @@ def api_create_bon_livraison(ticket_id):
             'designation': _as_text(item.get('designation')).strip(),
             'reference': _as_text(item.get('reference')).strip(),
             'dimensions': _as_text(item.get('dimensions')).strip(),
+            'esi_ids': received_esi_ids,
         }
         selected.append(selected_item)
 
-        # Une étiquette par unité réellement réceptionnée.
-        for unit_no in range(1, qty_received + 1):
+        # Une étiquette par unité réellement réceptionnée, avec son ESI-x unique.
+        for unit_no, esi_id in enumerate(received_esi_ids, start=1):
             article_labels.append({
                 'titre': 'ARTICLE',
-                'principal': _as_text(item.get('reference')).strip() or 'Sans reference',
+                'principal': esi_id,
+                'esi_id': esi_id,
                 'dossier': numero_dossier,
                 'client': enl.get('client') or ticket.get('dossier') or '',
                 'reference': _as_text(item.get('reference')).strip(),
@@ -3645,6 +3996,17 @@ def api_create_bon_livraison(ticket_id):
         ticket['managerSheets'] = manager_sheets
         ticket['updatedAt'] = now.isoformat()
         save_ticket(ticket)
+        try:
+            _update_article_logistics(
+                reception_esi_ids,
+                lieu_stockage=lieu_stockage,
+                statut_logistique="Réceptionné",
+                colis=colis_refs,
+                reception_ref=blr_ref,
+                receptionne_par=receptionne_par,
+            )
+        except Exception as e:
+            print(f"[ARTICLES] Mise à jour logistique BLR impossible: {e}")
 
     return jsonify({
         'ok': True,
