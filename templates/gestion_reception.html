@@ -59,6 +59,10 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .delivery-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fff}
 .delivery-item.received{background:#f0fdf4}
 .delivery-meta{font-size:12px;color:var(--muted);margin-top:4px}
+.delivery-line{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.delivery-qty-wrap{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:900;color:var(--muted)}
+.delivery-qty{width:82px;border:1px solid #cbd5e1;border-radius:8px;padding:6px 8px;font:inherit;font-weight:800;background:#fff}
+.generated-links{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .form-row{margin-top:12px}.form-row label{display:block;font-size:13px;font-weight:900;color:var(--muted);margin-bottom:5px}
 .form-row input{width:100%;border:1px solid #cbd5e1;border-radius:9px;padding:10px;font:inherit}
 
@@ -488,6 +492,38 @@ function closeDeliveryModal(){
   const b=document.getElementById('deliveryModalBackdrop');
   b.classList.remove('open');b.setAttribute('aria-hidden','true');
 }
+function plannedQty(item){
+  const raw=Number(String(item.quantite||item.qty||'1').replace(',','.'));
+  return Number.isFinite(raw)&&raw>0?Math.max(1,Math.floor(raw)):1;
+}
+function receivedQty(item){
+  const planned=plannedQty(item);
+  const raw=Number(String(item.quantite_recue_totale||'').replace(',','.'));
+  if(Number.isFinite(raw)&&raw>=0) return Math.floor(raw);
+  return item.receptionne?planned:0;
+}
+function guessDossierNumber(ticket){
+  const enl=extraction(ticket);
+  const direct=String(
+    enl.numero_dossier||enl.dossier_numero||enl.dossier||
+    ticket.numeroDossier||ticket.numero_dossier||''
+  ).trim();
+  if(direct && direct!=='-') return direct;
+
+  const refs=items(ticket)
+    .map(i=>String(i.reference||i.ref||'').trim())
+    .filter(Boolean);
+  const prefixes=refs.map(ref=>{
+    const m=ref.match(/^(\d{5,8})/);
+    return m?m[1]:'';
+  }).filter(Boolean);
+  if(prefixes.length && prefixes.every(x=>x===prefixes[0])) return prefixes[0];
+  return '';
+}
+function closeDeliveryModal(){
+  const b=document.getElementById('deliveryModalBackdrop');
+  b.classList.remove('open');b.setAttribute('aria-hidden','true');
+}
 function openDeliveryModal(){
   if(!openedTicket) return;
   const its=items(openedTicket);
@@ -500,15 +536,23 @@ function openDeliveryModal(){
 
   let html=`<div class="section-title">Articles à réceptionner</div><div class="delivery-list">`;
   its.forEach((i,index)=>{
-    const received=!!i.receptionne;
-    const checked=received?'':' checked';
-    const disabled=received?' disabled':'';
-    html+=`<label class="delivery-item${received?' received':''}">
+    const planned=plannedQty(i);
+    const received=receivedQty(i);
+    const remaining=Math.max(planned-received,0);
+    const fullyReceived=remaining<=0;
+    const checked=fullyReceived?'':' checked';
+    const disabled=fullyReceived?' disabled':'';
+    html+=`<label class="delivery-item${fullyReceived?' received':''}">
       <input type="checkbox" class="delivery-check" data-index="${index}"${checked}${disabled}>
       <div>
-        <strong>${esc(i.reference||i.ref||'-')}</strong> — ${esc(i.designation||i.description||'-')}
-        <div class="delivery-meta">Qté : ${esc(i.quantite||i.qty||'1')}${i.dimensions?` · Dimensions : ${esc(i.dimensions)}`:''}</div>
-        ${received?`<div class="delivery-meta"><strong>Déjà réceptionné</strong> · ${esc(i.lieu_stockage||'')} · ${esc(i.receptionne_par||'')}</div>`:''}
+        <div class="delivery-line">
+          <div><strong>${esc(i.reference||i.ref||'-')}</strong> — ${esc(i.designation||i.description||'-')}</div>
+          ${fullyReceived?'':`<div class="delivery-qty-wrap">Qté réceptionnée
+            <input class="delivery-qty" data-index="${index}" type="number" min="1" max="${remaining}" step="1" value="${remaining}">
+          </div>`}
+        </div>
+        <div class="delivery-meta">Qté prévue : ${esc(planned)} · Déjà reçue : ${esc(received)} · Reste : ${esc(remaining)}${i.dimensions?` · Dimensions : ${esc(i.dimensions)}`:''}</div>
+        ${fullyReceived?`<div class="delivery-meta"><strong>Déjà réceptionné en totalité</strong>${i.lieu_stockage?` · ${esc(i.lieu_stockage)}`:''}${i.receptionne_par?` · ${esc(i.receptionne_par)}`:''}</div>`:''}
       </div>
     </label>`;
   });
@@ -520,6 +564,14 @@ function openDeliveryModal(){
     <div class="form-row">
       <label for="deliveryLocation">Lieu de stockage</label>
       <input id="deliveryLocation" type="text" placeholder="Ex. Stock A, rack B12, réserve 2...">
+    </div>
+    <div class="form-row">
+      <label for="deliveryDossierNumber">N° dossier pour les étiquettes colis</label>
+      <input id="deliveryDossierNumber" type="text" value="${esc(guessDossierNumber(openedTicket))}" placeholder="Ex. 960130">
+    </div>
+    <div class="form-row">
+      <label for="deliveryPackageCount">Nombre total de colis pour cette réception</label>
+      <input id="deliveryPackageCount" type="number" min="1" step="1" value="1">
     </div>`;
 
   const bons=(extraction(openedTicket).bons_livraison||[]);
@@ -528,15 +580,31 @@ function openDeliveryModal(){
     bons.slice().reverse().forEach(b=>{
       const filename=b.filename||((b.reference||'')+'.pdf');
       const href=`/api/tickets/${encodeURIComponent(openedTicket.id)}/download-sheet/${encodeURIComponent(filename)}`;
-      html+=`<div style="margin:6px 0">
-        <a class="file-link" target="_blank" href="${href}"><strong>${esc(b.reference||filename)}</strong></a>
-        — ${esc(b.date_reception||'')} — ${esc(b.receptionne_par||'')} — ${esc(b.lieu_stockage||'')}
-      </div>`;
+      html+=`<div style="margin:8px 0">
+        <div><a class="file-link" target="_blank" href="${href}"><strong>${esc(b.reference||filename)}</strong></a>
+        — ${esc(b.date_reception||'')} — ${esc(b.receptionne_par||'')} — ${esc(b.lieu_stockage||'')}</div>`;
+      const links=[];
+      if(b.etiquettes_articles_filename){
+        links.push(`<a class="file-link" target="_blank" href="/api/tickets/${encodeURIComponent(openedTicket.id)}/download-sheet/${encodeURIComponent(b.etiquettes_articles_filename)}">Étiquettes articles</a>`);
+      }
+      if(b.etiquettes_colis_filename){
+        links.push(`<a class="file-link" target="_blank" href="/api/tickets/${encodeURIComponent(openedTicket.id)}/download-sheet/${encodeURIComponent(b.etiquettes_colis_filename)}">Étiquettes colis</a>`);
+      }
+      if(links.length) html+=`<div class="generated-links">${links.join('')}</div>`;
+      html+=`</div>`;
     });
     html+=`</div>`;
   }
 
   document.getElementById('deliveryModalBody').innerHTML=html;
+
+  document.querySelectorAll('.delivery-check:not(:disabled)').forEach(cb=>{
+    cb.addEventListener('change',()=>{
+      const qty=document.querySelector(`.delivery-qty[data-index="${cb.dataset.index}"]`);
+      if(qty) qty.disabled=!cb.checked;
+    });
+  });
+
   const b=document.getElementById('deliveryModalBackdrop');
   b.classList.add('open');b.setAttribute('aria-hidden','false');
 }
@@ -545,14 +613,28 @@ async function validateDelivery(){
 
   const receiver=document.getElementById('deliveryReceiver')?.value.trim()||'';
   const location=document.getElementById('deliveryLocation')?.value.trim()||'';
-  const selected=[...document.querySelectorAll('.delivery-check:checked:not(:disabled)')].map(el=>Number(el.dataset.index));
+  const dossierNumber=document.getElementById('deliveryDossierNumber')?.value.trim()||'';
+  const packageCount=Number(document.getElementById('deliveryPackageCount')?.value||0);
+
+  const selected=[...document.querySelectorAll('.delivery-check:checked:not(:disabled)')].map(el=>{
+    const index=Number(el.dataset.index);
+    const qtyEl=document.querySelector(`.delivery-qty[data-index="${index}"]`);
+    const quantite_recue=Number(qtyEl?.value||0);
+    return {index,quantite_recue};
+  });
 
   if(!receiver){alert("Renseigne le nom et prénom de la personne qui réceptionne.");return;}
   if(!location){alert("Renseigne le lieu de stockage.");return;}
+  if(!dossierNumber){alert("Renseigne le N° dossier utilisé pour numéroter les colis.");return;}
+  if(!Number.isInteger(packageCount)||packageCount<1){alert("Renseigne un nombre total de colis supérieur ou égal à 1.");return;}
   if(!selected.length){alert("Sélectionne au moins un article à réceptionner.");return;}
+  if(selected.some(x=>!Number.isInteger(x.quantite_recue)||x.quantite_recue<1)){
+    alert("Chaque article sélectionné doit avoir une quantité réceptionnée valide.");
+    return;
+  }
 
   const btn=document.getElementById('deliveryValidateBtn');
-  btn.disabled=true;btn.textContent='Génération du bon...';
+  btn.disabled=true;btn.textContent='Génération du bon et des étiquettes...';
   try{
     const ticketId=openedTicket.id;
     const res=await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/bon-livraison`,{
@@ -561,7 +643,10 @@ async function validateDelivery(){
       body:JSON.stringify({
         receptionne_par:receiver,
         lieu_stockage:location,
-        selected_indexes:selected
+        numero_dossier:dossierNumber,
+        nombre_colis:packageCount,
+        items_reception:selected,
+        selected_indexes:selected.map(x=>x.index)
       })
     });
     const data=await res.json().catch(()=>({}));
@@ -574,7 +659,9 @@ async function validateDelivery(){
       renderTicketModal(false);
     }
     closeDeliveryModal();
-    alert(`Réception validée.\nBon généré : ${data.reference}`);
+
+    const colis=(data.colis||[]).join(', ');
+    alert(`Réception validée.\nBon généré : ${data.reference}\nColis : ${colis||'-'}\nLes PDF d'étiquettes sont disponibles dans le ticket.`);
   }catch(e){
     alert(e.message||"Impossible de valider la réception");
   }finally{
