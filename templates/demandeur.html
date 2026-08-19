@@ -16,8 +16,11 @@
     .card{background:#fff;border:1px solid var(--line);border-radius:26px;padding:22px}
     .section-title{color:var(--blue-dark);font-size:14px;font-weight:700;margin-bottom:14px}.tabs{display:flex;gap:10px;flex-wrap:wrap}
     .tab{border:1px solid var(--line);background:#fff;border-radius:16px;padding:12px 16px;font-weight:700;font-size:14px;cursor:pointer}
-    .tab.active{background:var(--blue);border-color:var(--blue);color:#fff}.grid{display:grid;gap:14px;grid-template-columns:1fr 1fr}.grid.three{grid-template-columns:repeat(3,1fr)}
-    .field{display:grid;gap:8px}.field label{font-size:14px;font-weight:600;color:#475569}.input,.textarea,.search{width:100%;border:1px solid var(--line);background:#f8fafc;border-radius:16px;padding:13px 14px;font-size:14px;color:var(--text)}
+    .tab.active{background:var(--blue);border-color:var(--blue);color:#fff}
+    .ticket-tabs{display:grid;gap:10px}
+    .ticket-tab-row{display:flex;gap:10px;flex-wrap:wrap}
+    .grid{display:grid;gap:14px;grid-template-columns:1fr 1fr}.grid.three{grid-template-columns:repeat(3,1fr)}
+    .field{display:grid;gap:8px}.field label{font-size:14px;font-weight:600;color:#475569}.input,.textarea,.search{width:100%;border:1px solid var(--line);background:#eaf6ff;border-radius:16px;padding:13px 14px;font-size:14px;color:var(--text)}
     .textarea{min-height:92px;resize:vertical}.choice-row{display:flex;gap:10px;flex-wrap:wrap}.choice{border:1px solid var(--line);background:#fff;border-radius:16px;padding:12px 16px;font-weight:700;cursor:pointer}
     .choice.active{background:var(--blue);border-color:var(--blue);color:#fff}.drop{border:2px dashed #7dd3fc;background:#f0f9ff;border-radius:24px;padding:20px;display:grid;gap:12px}.drop.dragover{background:#e0f2fe;border-color:var(--blue)}
     .drop-inner{border:2px dashed #bae6fd;background:#fff;border-radius:20px;padding:28px 18px;text-align:center;cursor:pointer}.files{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
@@ -41,7 +44,7 @@
     .file-btn{border:none;background:#e0f2fe;color:#0369a1;padding:8px 12px;border-radius:12px;font-weight:700;cursor:pointer}
     .empty{padding:16px;border:1px dashed var(--line);border-radius:16px;color:var(--muted);background:#f8fafc}
 
-    .arrival-block{border:1px solid var(--line);background:#f8fafc;border-radius:20px;padding:16px;margin-top:14px}
+    .arrival-block{border:1px solid var(--line);background:#fff;border-radius:20px;padding:16px;margin-top:14px}
     .arrival-block h3{font-size:14px;color:var(--blue-dark);margin:0 0 12px}
     .arrival-table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:16px;background:#fff}
     .arrival-table{width:100%;border-collapse:collapse;min-width:1080px}
@@ -49,10 +52,10 @@
     .arrival-table th:last-child,.arrival-table td:last-child{border-right:none}
     .arrival-table tr:last-child td{border-bottom:none}
     .arrival-table th{background:#0f3153;color:#fff;font-size:11px;text-align:center;white-space:nowrap}
-    .arrival-table .input{border-radius:10px;padding:9px 8px;background:#fff;min-width:76px}
+    .arrival-table .input{border-radius:10px;padding:9px 8px;background:#eaf6ff;min-width:76px}
     .arrival-table .item-description{min-width:230px}
     .arrival-table .item-ref{min-width:110px}
-    .arrival-table .readonly{background:#f1f5f9;color:#475569}
+    .arrival-table .readonly{background:#f8fafc;color:#475569}
     .arrival-remove{border:none;background:#fee2e2;color:#b91c1c;border-radius:10px;padding:8px 10px;font-weight:900;cursor:pointer}
     .arrival-summary{display:flex;gap:12px;justify-content:flex-end;flex-wrap:wrap;margin-top:10px}
     .arrival-total{background:#e0f2fe;color:#075985;border-radius:12px;padding:9px 12px;font-size:13px;font-weight:800}
@@ -106,14 +109,17 @@
         <div class="card top-actions">
           <div>
             <div class="section-title" style="margin-bottom:6px">Type de ticket</div>
-            <div class="tabs">
-              <button class="tab active" id="tab-caisse" type="button">Fiche de caisse</button>
-              <button class="tab" id="tab-devis" type="button">Demande de devis</button>
-              <button class="tab" id="tab-aller-voir" type="button">Demande Aller voir</button>
-              <button class="tab" id="tab-enlevement" type="button">Demande d’enlèvement</button>
-              <button class="tab" id="tab-avis-arrivee" type="button">Avis d’arrivée</button>
+            <div class="tabs ticket-tabs">
+              <div class="ticket-tab-row">
+                <button class="tab active" id="tab-caisse" type="button">Fiche de caisse</button>
+                <button class="tab" id="tab-devis" type="button">Demande de devis</button>
+                <button class="tab" id="tab-aller-voir" type="button">Demande Aller voir</button>
+              </div>
+              <div class="ticket-tab-row">
+                <button class="tab" id="tab-enlevement" type="button">Demande d’enlèvement</button>
+                <button class="tab" id="tab-avis-arrivee" type="button">Avis d’arrivée</button>
+              </div>
             </div>
-            <div class="folder-state" id="folderState">Dossier de sauvegarde automatique : chargement...</div>
           </div>
           <div class="actions" style="justify-content:flex-end">
             <button class="btn secondary" id="openManager" type="button">Ouvrir le portail gestionnaire</button>
@@ -395,8 +401,7 @@ const els = {
   fileInputAvisArrivee: document.getElementById('fileInputAvisArrivee'),
   notice: document.getElementById('notice'),
   successBox: document.getElementById('successBox'),
-  doneList: document.getElementById('doneList'),
-  folderState: document.getElementById('folderState')
+  doneList: document.getElementById('doneList')
 };
 
 function showNotice(message){
@@ -654,18 +659,6 @@ function setupDrop(dropId, innerId, inputEl, target){
     drop.classList.remove('dragover');
     addFiles(target, e.dataTransfer.files);
   });
-}
-
-async function loadConfigStatus(){
-  try{
-    const res = await fetch('/api/status');
-    const data = await res.json();
-    els.folderState.textContent = data.shared_path
-      ? `Dossier de sauvegarde automatique : ${data.shared_path}`
-      : 'Dossier de sauvegarde automatique non disponible';
-  }catch(e){
-    els.folderState.textContent = 'Dossier de sauvegarde automatique non disponible';
-  }
 }
 
 async function readTicketsFromFolder(){
@@ -1535,7 +1528,6 @@ addAvisItemRow();
 
 activateModule('caisse');
 renderAllFiles();
-loadConfigStatus();
 loadAllReferentiels();
 refreshReferenceAutocompleteBindings();
 
