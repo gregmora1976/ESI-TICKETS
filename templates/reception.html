@@ -251,20 +251,36 @@ body{
 }
 .detail-label{color:var(--muted);font-size:13px;font-weight:800}
 .detail-value{font-weight:800;overflow-wrap:anywhere}
-.supplier-box{
+.reception-info-box{
   margin-top:20px;
-  padding:16px;
+  padding:6px 16px;
   border-radius:14px;
   border:1px solid var(--line);
   background:#f8fafc;
 }
-.supplier-title{
+.reception-info-row{
+  display:grid;
+  grid-template-columns:160px minmax(0,1fr);
+  gap:14px;
+  align-items:center;
+  min-height:58px;
+  border-bottom:1px solid var(--line);
+}
+.reception-info-row:last-child{border-bottom:none}
+.reception-info-label{
   color:var(--muted);
   font-size:12px;
   font-weight:900;
   text-transform:uppercase;
   letter-spacing:.06em;
-  margin-bottom:9px;
+}
+.reception-info-value{
+  min-width:0;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  font-weight:800;
 }
 .supplier-status{
   display:inline-flex;
@@ -281,31 +297,11 @@ body{
 .supplier-status.success{background:#dcfce7;color:#166534}
 .supplier-status.warning{background:#fef3c7;color:#92400e}
 .supplier-status.error{background:#fee2e2;color:#991b1b}
-.localisation-box{
-  margin-top:20px;
-  padding:16px;
-  border-radius:14px;
-  border:1px solid var(--line);
-  background:#fff;
-}
-.localisation-title{
-  color:var(--muted);
-  font-size:12px;
-  font-weight:900;
-  text-transform:uppercase;
-  letter-spacing:.06em;
-  margin-bottom:9px;
-}
-.localisation-row{
-  display:flex;
-  gap:10px;
-  align-items:center;
-}
 .localisation-input{
   flex:1;
-  min-width:0;
+  min-width:170px;
   border:1px solid var(--line);
-  background:#f8fafc;
+  background:#fff;
   border-radius:10px;
   padding:10px 12px;
   font-size:14px;
@@ -317,14 +313,30 @@ body{
   border-color:var(--blue);
 }
 .localisation-feedback{
-  margin-top:8px;
-  min-height:18px;
+  width:100%;
+  min-height:16px;
   font-size:12px;
   font-weight:800;
   color:var(--muted);
 }
 .localisation-feedback.success{color:#166534}
 .localisation-feedback.error{color:#991b1b}
+.reception-date{
+  font-weight:900;
+  color:#0f172a;
+}
+.bl-link-btn{
+  border:1px solid #bae6fd;
+  background:#e0f2fe;
+  color:#0369a1;
+  border-radius:10px;
+  padding:8px 11px;
+  font-size:13px;
+  font-weight:900;
+  cursor:pointer;
+}
+.bl-link-btn:hover{background:#bae6fd}
+.reception-empty{color:#94a3b8;font-size:13px;font-weight:800}
 .ticket-modal-foot{
   padding:0 20px 20px;
   display:flex;
@@ -416,6 +428,7 @@ body{
 @media(max-width:600px){
   .detail-grid{grid-template-columns:1fr;gap:4px}
   .detail-value{margin-bottom:8px}
+  .reception-info-row{grid-template-columns:1fr;gap:7px;padding:12px 0}
 }
 @media(max-width:900px){
   .month-grid,.week-head{grid-template-columns:1fr}
@@ -489,24 +502,35 @@ body{
         <div class="detail-label">Date mise à dispo</div><div class="detail-value" id="modalDateEmballage">-</div>
       </div>
 
-      <div class="supplier-box">
-        <div class="supplier-title">État fournisseur</div>
-        <div class="supplier-status loading" id="supplierStatus">Recherche du statut…</div>
-      </div>
-
-      <div class="localisation-box">
-        <div class="localisation-title">Localisation</div>
-        <div class="localisation-row">
-          <input
-            class="localisation-input"
-            id="modalLocalisation"
-            type="text"
-            placeholder="Ex. Quai réception, Rack A3, Atelier..."
-            autocomplete="off"
-          />
-          <button class="btn primary" id="saveLocalisationBtn" type="button">Enregistrer</button>
+      <div class="reception-info-box">
+        <div class="reception-info-row">
+          <div class="reception-info-label">État fournisseur</div>
+          <div class="reception-info-value">
+            <div class="supplier-status loading" id="supplierStatus">Recherche du statut…</div>
+          </div>
         </div>
-        <div class="localisation-feedback" id="localisationFeedback"></div>
+
+        <div class="reception-info-row">
+          <div class="reception-info-label">Localisation</div>
+          <div class="reception-info-value">
+            <input
+              class="localisation-input"
+              id="modalLocalisation"
+              type="text"
+              placeholder="Ex. Quai réception, Rack A3, Atelier..."
+              autocomplete="off"
+            />
+            <button class="btn primary" id="saveLocalisationBtn" type="button">Enregistrer</button>
+            <div class="localisation-feedback" id="localisationFeedback"></div>
+          </div>
+        </div>
+
+        <div class="reception-info-row">
+          <div class="reception-info-label">Caisse réceptionnée</div>
+          <div class="reception-info-value" id="modalReceptionInfo">
+            <span class="reception-empty">Non réceptionnée</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -733,7 +757,11 @@ async function validateBlReception(){
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         ticket_ids:selected,
-        localisation
+        localisation,
+        bl_numero: currentBlAnalysis ? (currentBlAnalysis.bl_numero || '') : '',
+        bl_date: currentBlAnalysis ? (currentBlAnalysis.bl_date || '') : '',
+        bl_storage_path: currentBlAnalysis ? (currentBlAnalysis.bl_storage_path || '') : '',
+        bl_filename: currentBlAnalysis ? (currentBlAnalysis.bl_filename || '') : ''
       })
     });
 
@@ -830,12 +858,15 @@ async function saveLocalisation(){
 
     currentModalTicket.fiche = currentModalTicket.fiche || {};
     currentModalTicket.fiche.localisation = data.localisation || '';
+    if(data.reception){ currentModalTicket.reception = data.reception; }
+    renderReceptionInfo(currentModalTicket);
 
     // Met à jour également la copie présente dans la liste globale des tickets.
     const idx = tickets.findIndex(x => x.id === currentModalTicket.id);
     if(idx >= 0){
       tickets[idx].fiche = tickets[idx].fiche || {};
       tickets[idx].fiche.localisation = data.localisation || '';
+      if(data.reception){ tickets[idx].reception = data.reception; }
     }
 
     // Rafraîchit immédiatement le planning :
@@ -856,6 +887,47 @@ async function saveLocalisation(){
   }
 }
 
+function renderReceptionInfo(t){
+  const container = document.getElementById('modalReceptionInfo');
+  container.innerHTML = '';
+
+  const reception = (t && t.reception) || {};
+  const fiche = (t && t.fiche) || {};
+  const hasLocalisation = !!String(fiche.localisation || '').trim();
+
+  if(!hasLocalisation && !reception.receptionnee_le){
+    const empty = document.createElement('span');
+    empty.className = 'reception-empty';
+    empty.textContent = 'Non réceptionnée';
+    container.appendChild(empty);
+    return;
+  }
+
+  const date = document.createElement('span');
+  date.className = 'reception-date';
+  date.textContent = reception.receptionnee_le
+    ? formatDateFr(String(reception.receptionnee_le).slice(0,10))
+    : 'Réceptionnée';
+  container.appendChild(date);
+
+  if(reception.bl_numero && reception.bl_storage_path){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'bl-link-btn';
+    btn.textContent = `BL ${reception.bl_numero}`;
+    btn.title = 'Afficher le bordereau de livraison';
+    btn.addEventListener('click', ()=>{
+      window.open(`/api/tickets/${encodeURIComponent(t.id)}/reception-bl`, '_blank', 'noopener');
+    });
+    container.appendChild(btn);
+  }else{
+    const noBl = document.createElement('span');
+    noBl.className = 'reception-empty';
+    noBl.textContent = 'Aucun BL associé';
+    container.appendChild(noBl);
+  }
+}
+
 async function openTicketModal(t){
   currentModalTicket = t;
   const fiche = t.fiche || {};
@@ -871,6 +943,7 @@ async function openTicketModal(t){
   document.getElementById('modalChargeProjet').textContent = t.chargeProjet || '-';
   document.getElementById('modalDateEmballage').textContent = formatDateFr(t.dateEmballage);
   document.getElementById('modalLocalisation').value = fiche.localisation || '';
+  renderReceptionInfo(t);
   setLocalisationFeedback('');
 
   setSupplierStatus('Recherche du statut…', 'loading');
