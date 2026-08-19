@@ -3519,7 +3519,8 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
         except Exception as e:
             print(f'[PDF] Logo ESI non charge: {e}')
 
-    txt(168, 786, 'BON DE RECEPTION', 21, True, TEXT)
+    bon_reference = clean(bon.get('reference'))
+    txt(168, 786, f'BON DE RECEPTION - N° {bon_reference}', 18, True, TEXT)
     txt(168, 767, 'Controle et enregistrement de la marchandise', 10, False, (0.35,0.40,0.45))
     line(30, 744, 565, 744, CYAN, 1.6)
 
@@ -3527,8 +3528,14 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
     rect(30, 695, 535, 24, fill=NAVY)
     txt(40, 704, 'DOSSIER', 9, True, WHITE)
 
-    # Four dossier cells.
-    cols = [(30,132,'Ref. dossier',dossier),(162,132,'Nom du client',client),(294,132,'Projet ou expo',projet),(426,139,'Date de reception',bon.get('date_reception'))]
+    # Informations dossier : référence, client, projet, chargé de projet et date de réception.
+    cols = [
+        (30,100,'Ref. dossier',dossier),
+        (130,110,'Nom du client',client),
+        (240,110,'Projet ou expo',projet),
+        (350,110,'Chargé de projet',coordinateur),
+        (460,105,'Date de reception',bon.get('date_reception')),
+    ]
     for x,w,label,value in cols:
         rect(x, 652, w, 43, fill=PALE, stroke=LINE)
         txt(x+5, 680, label, 6.5, True, (0.25,0.32,0.38))
@@ -3549,8 +3556,8 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
 
     # Goods table.
     table_top = 517
-    widths = [62, 72, 162, 72, 47, 47, 73]
-    headers = ['N° ESI','Ref. item','Description de la marchandise','Dimensions','Qte prevue','Qte recue','Stockage']
+    widths = [68, 78, 177, 78, 55, 79]
+    headers = ['N° ESI','Ref. item','Description de la marchandise','Dimensions','Qte recue','Stockage']
     x = 30
     for w, h in zip(widths, headers):
         rect(x, table_top-38, w, 38, fill=NAVY, stroke=WHITE, lw=0.4)
@@ -3565,9 +3572,15 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
         x = 30
         fill = (0.99, 0.985, 0.955)
         row = rows[ridx] if ridx < len(rows) else {}
-        planned = row.get('quantite_prevue') or row.get('quantite') or ''
         received = row.get('quantite') or ''
-        vals = [', '.join(row.get('esi_ids') or []), row.get('reference'), row.get('designation') or row.get('description'), row.get('dimensions'), planned, received, bon.get('lieu_stockage') if row else '']
+        vals = [
+            ', '.join(row.get('esi_ids') or []),
+            row.get('reference'),
+            row.get('designation') or row.get('description'),
+            row.get('dimensions'),
+            received,
+            bon.get('lieu_stockage') if row else ''
+        ]
         for w, value in zip(widths, vals):
             rect(x, y0, w, row_h, fill=fill, stroke=LINE)
             fit_txt(x+4, y0+18, value, w-8, 6.6, False, 2, 8)
@@ -3587,11 +3600,6 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
     fit_txt(38, comment_y+19, bon.get('commentaire') or '-', 515, 7, False, 2, 9)
 
     sig_y = 72
-    txt(30, sig_y+78, 'Etabli par (coordinateur) :', 9, True)
-    txt(30, sig_y+57, 'Date :', 8); txt(73, sig_y+57, clean(ticket.get('createdAt'))[:10], 8)
-    txt(30, sig_y+36, 'Nom :', 8); txt(73, sig_y+36, coordinateur, 8)
-    txt(30, sig_y+15, 'Signature : __________________________', 8)
-
     txt(305, sig_y+78, "Reception / controle a l'arrivee :", 9, True)
     txt(305, sig_y+57, 'Date :', 8); txt(350, sig_y+57, clean(bon.get('date_reception')), 8)
     txt(305, sig_y+36, 'Nom :', 8); txt(350, sig_y+36, clean(bon.get('receptionne_par')), 8)
