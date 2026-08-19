@@ -441,7 +441,7 @@ body{
 <div class="topbar">
   <div>
     <div class="title">Planning caisserie</div>
-    <div class="sub">Fiches de caisse terminées, classées par date de mise à dispo</div>
+    <div class="sub">Fiches de caisse terminées et réceptionnées, classées par date de mise à dispo</div>
   </div>
   <div class="actions">
     <button class="btn" id="prevMonth" type="button">‹ Mois précédent</button>
@@ -476,7 +476,7 @@ body{
     </div>
     <div class="month-grid" id="monthGrid"></div>
     <div class="legend">
-      <div>Affichage : uniquement les fiches de caisse terminées</div>
+      <div>Affichage : fiches de caisse terminées et réceptionnées</div>
       <div>Format affiché : N° dossier - N° caisse</div>
     </div>
   </div>
@@ -859,6 +859,7 @@ async function saveLocalisation(){
     currentModalTicket.fiche = currentModalTicket.fiche || {};
     currentModalTicket.fiche.localisation = data.localisation || '';
     if(data.reception){ currentModalTicket.reception = data.reception; }
+    if(data.status){ currentModalTicket.status = data.status; }
     renderReceptionInfo(currentModalTicket);
 
     // Met à jour également la copie présente dans la liste globale des tickets.
@@ -867,11 +868,13 @@ async function saveLocalisation(){
       tickets[idx].fiche = tickets[idx].fiche || {};
       tickets[idx].fiche.localisation = data.localisation || '';
       if(data.reception){ tickets[idx].reception = data.reception; }
+      if(data.status){ tickets[idx].status = data.status; }
     }
 
     // Rafraîchit immédiatement le planning :
     // localisation renseignée => vert + localisation affichée ;
     // localisation effacée => retour au jaune.
+    updateStats();
     renderCalendar();
 
     setLocalisationFeedback(
@@ -1044,13 +1047,16 @@ function matchesSearch(t){
 function groupTickets(){
   const grouped = {};
   tickets
-    .filter(t => 
-      t.module === 'Fiche de caisse' &&
-      t.status === 'Terminé' &&
-      t.dateEmballage &&
-      t.dateEmballage !== '-' &&
-      matchesSearch(t)
-    )
+    .filter(t => {
+      const status = normalizeStatus(t.status);
+      return (
+        t.module === 'Fiche de caisse' &&
+        (status === 'termine' || status === 'terminee' || status === 'receptionnee') &&
+        t.dateEmballage &&
+        t.dateEmballage !== '-' &&
+        matchesSearch(t)
+      );
+    })
     .forEach(t => {
       if(!grouped[t.dateEmballage]) grouped[t.dateEmballage] = [];
       grouped[t.dateEmballage].push(t);
@@ -1075,23 +1081,25 @@ function updateStats(){
 
     const status = normalizeStatus(t.status);
 
-    // À réceptionner = demande créée + en cours.
-    if(
-      status === 'demande creee' ||
-      status === 'demande crees' ||
-      status === 'en cours'
-    ){
+    // À réceptionner = toutes les fiches de caisse qui ne sont pas encore réceptionnées.
+    // Les tickets annulés sont exclus.
+    if(status !== 'receptionnee' && status !== 'annule' && status !== 'annulee'){
       pending++;
     }
 
-    // Réalisées = terminées depuis le début de l'année.
-    if(status === 'termine' || status === 'terminee' || status === 'terminees'){
+    // Réalisées = terminées ou réceptionnées avec une date de mise à dispo sur l'année en cours.
+    if(
+      status === 'termine' ||
+      status === 'terminee' ||
+      status === 'terminees' ||
+      status === 'receptionnee'
+    ){
       const rawDate =
         t.dateEmballage ||
         t.dateTerminee ||
         t.dateTermine ||
-        t.updated_at ||
-        t.created_at ||
+        t.updatedAt ||
+        t.createdAt ||
         '';
 
       if(rawDate){
@@ -1156,13 +1164,14 @@ function renderCalendar(){
             `${fiche.longueur || '-'}x${fiche.largeur || '-'}x${fiche.hauteur || '-'}`;
 
           const localisation = (fiche.localisation || '').trim();
+          const isReceived = normalizeStatus(t.status) === 'receptionnee';
 
           event.textContent = eventText(t);
           event.title = event.textContent;
 
-          // Jaune = pas encore réceptionnée (aucune localisation).
-          // Vert = réceptionnée (localisation renseignée).
-          if(localisation){
+          // Vert = statut Réceptionnée.
+          // Jaune = caisse encore à réceptionner.
+          if(isReceived){
             event.style.background = 'var(--received)';
             event.style.borderLeft = '5px solid var(--received-border)';
           }else{
