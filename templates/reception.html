@@ -1042,9 +1042,9 @@ function eventText(t){
   const fiche = t.fiche || {};
   const dimensions =
     `${fiche.longueur || '-'}x${fiche.largeur || '-'}x${fiche.hauteur || '-'}`;
-  const caissierNom = fiche.choixCaissier || '-';
+  const chargeProjet = t.chargeProjet || '-';
 
-  return `${t.dossier || '-'}-${t.ref || '-'} / ${dimensions} / ${caissierNom}`;
+  return `${t.dossier || '-'}-${t.ref || '-'} / ${dimensions} / ${chargeProjet}`;
 }
 function matchesSearch(t){
   if(!searchTerm) return true;
