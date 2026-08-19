@@ -599,12 +599,32 @@ _RECEPTION_MIGRATION_LOCK = threading.Lock()
 _RECEPTION_MIGRATION_DONE = False
 
 
+def _is_caisse_receptionnee(ticket):
+    """
+    Retourne True si la caisse a été réceptionnée.
+    La réception est une information logistique indépendante du statut du ticket.
+    """
+    reception = ticket.get('reception') or {}
+    if reception.get('receptionnee') is True:
+        return True
+
+    # Compatibilité avec les réceptions déjà enregistrées avant l'ajout du booléen.
+    if reception.get('receptionnee_le'):
+        return True
+
+    return False
+
+
 def migrate_caisses_avant_18_aout_2026():
     """
-    Passe en statut Réceptionnée toutes les fiches de caisse dont la date de mise à dispo
-    est strictement antérieure au 18/08/2026.
+    Corrige l'ancienne logique qui utilisait 'Réceptionnée' comme statut de ticket.
 
-    Cette migration est idempotente : les caisses déjà réceptionnées sont ignorées.
+    Règles :
+      - les vrais statuts de fiche de caisse restent Demande créée / En cours / Terminé ;
+      - toute fiche de caisse anciennement mise au statut 'Réceptionnée' repasse à 'Terminé' ;
+      - les fiches terminées dont la date de mise à dispo est strictement antérieure
+        au 18/08/2026 sont marquées comme réceptionnées dans ticket['reception'],
+        sans modifier leur statut métier.
     """
     global _RECEPTION_MIGRATION_DONE
 
@@ -614,7 +634,7 @@ def migrate_caisses_avant_18_aout_2026():
 
         cutoff = datetime(2026, 8, 18)
         updated = 0
-        skipped = 0
+        repaired_status = 0
         errors = 0
 
         try:
@@ -628,28 +648,41 @@ def migrate_caisses_avant_18_aout_2026():
                 if ticket.get('module') != 'Fiche de caisse':
                     continue
 
+                changed = False
                 current_status = _as_text(ticket.get('status')).strip()
+
+                # Répare les tickets affectés par l'ancienne logique.
                 if current_status == 'Réceptionnée':
-                    skipped += 1
-                    continue
+                    ticket['status'] = 'Terminé'
+                    current_status = 'Terminé'
+                    repaired_status += 1
+                    changed = True
 
                 raw_date = _as_text(ticket.get('dateEmballage')).strip()
-                if not raw_date or raw_date == '-':
+                date_emballage = None
+                if raw_date and raw_date != '-':
+                    try:
+                        date_emballage = datetime.fromisoformat(raw_date[:10])
+                    except Exception:
+                        date_emballage = None
+
+                # Historique demandé : uniquement les caisses terminées avant le 18/08/2026.
+                if (
+                    current_status == 'Terminé'
+                    and date_emballage is not None
+                    and date_emballage < cutoff
+                ):
+                    reception = dict(ticket.get('reception') or {})
+                    if not reception.get('receptionnee'):
+                        reception['receptionnee'] = True
+                        reception.setdefault('receptionnee_le', date_emballage.isoformat())
+                        reception.setdefault('mode', 'migration_2026_08_18')
+                        ticket['reception'] = reception
+                        changed = True
+
+                if not changed:
                     continue
 
-                try:
-                    d = datetime.fromisoformat(raw_date[:10])
-                except Exception:
-                    continue
-
-                if d >= cutoff:
-                    continue
-
-                reception = dict(ticket.get('reception') or {})
-                reception.setdefault('receptionnee_le', d.isoformat())
-                reception.setdefault('mode', 'migration_2026_08_18')
-                ticket['reception'] = reception
-                ticket['status'] = 'Réceptionnée'
                 ticket['updatedAt'] = datetime.now().isoformat()
 
                 supabase_rest_request(
@@ -657,21 +690,23 @@ def migrate_caisses_avant_18_aout_2026():
                     "tickets",
                     "id=eq." + urllib.parse.quote(ticket.get('id'), safe=''),
                     {
-                        "status": "Réceptionnée",
+                        "status": ticket['status'],
                         "updated_at": ticket['updatedAt'],
                         "raw_json": ticket
                     },
                     prefer="return=minimal"
                 )
                 updated += 1
+
             except Exception as e:
                 errors += 1
                 print(f"[RECEPTION MIGRATION] Erreur {ticket.get('id')}: {e}")
 
         _RECEPTION_MIGRATION_DONE = True
         print(
-            f"[RECEPTION MIGRATION] {updated} caisse(s) passée(s) à Réceptionnée, "
-            f"{skipped} déjà réceptionnée(s), {errors} erreur(s)"
+            f"[RECEPTION MIGRATION] {updated} ticket(s) corrigé(s), "
+            f"{repaired_status} statut(s) Réceptionnée -> Terminé, "
+            f"{errors} erreur(s)"
         )
 
 
@@ -1889,6 +1924,7 @@ def _match_reception_refs_to_tickets(references):
                 "date_emballage": t.get("dateEmballage") or "",
                 "localisation": fiche.get("localisation") or "",
                 "status": t.get("status") or "",
+                "receptionnee": _is_caisse_receptionnee(t),
             })
         elif len(matches) > 1:
             results.append({
@@ -2286,21 +2322,20 @@ def api_update_localisation(ticket_id):
     ticket['fiche'] = fiche
     ticket['updatedAt'] = datetime.now().isoformat()
 
-    # Une localisation renseignée acte également une réception manuelle.
-    # Le statut Réceptionnée devient la source de vérité pour le planning et les compteurs.
+    # Une localisation renseignée acte une réception manuelle.
+    # IMPORTANT : la réception est indépendante du statut métier du ticket.
     reception = dict(ticket.get('reception') or {})
     if localisation:
+        reception['receptionnee'] = True
         reception.setdefault('receptionnee_le', datetime.now().isoformat())
         reception.setdefault('mode', 'manuel')
+        reception['localisation'] = localisation
         ticket['reception'] = reception
-        ticket['status'] = 'Réceptionnée'
     else:
-        # Effacer la localisation remet la caisse à recevoir.
-        # Une fiche déjà réalisée revient au statut Terminé.
+        # Effacer la localisation annule uniquement l'information de réception.
+        # Le statut du ticket (Demande créée / En cours / Terminé) n'est jamais modifié ici.
         ticket.pop('reception', None)
         reception = {}
-        if ticket.get('module') == 'Fiche de caisse':
-            ticket['status'] = 'Terminé'
 
     try:
         supabase_rest_request(
@@ -2315,13 +2350,14 @@ def api_update_localisation(ticket_id):
             "PATCH",
             "tickets",
             "id=eq." + urllib.parse.quote(ticket_id, safe=''),
-            {"updated_at": ticket['updatedAt'], "status": ticket['status'], "raw_json": ticket},
+            {"updated_at": ticket['updatedAt'], "raw_json": ticket},
             prefer="return=minimal"
         )
         return jsonify({
             'ok': True,
             'localisation': localisation,
             'reception': reception,
+            'receptionnee': _is_caisse_receptionnee(ticket),
             'status': ticket.get('status')
         })
     except Exception as e:
@@ -2433,6 +2469,7 @@ def api_reception_valider_bl():
             fiche['localisation'] = localisation
             ticket['fiche'] = fiche
             ticket['reception'] = {
+                'receptionnee': True,
                 'receptionnee_le': receptionnee_le,
                 'localisation': localisation,
                 'mode': 'bl_fournisseur',
@@ -2441,7 +2478,7 @@ def api_reception_valider_bl():
                 'bl_storage_path': bl_storage_path,
                 'bl_filename': bl_filename,
             }
-            ticket['status'] = 'Réceptionnée'
+            # La réception logistique ne modifie pas le statut métier du ticket.
             ticket['updatedAt'] = datetime.now().isoformat()
 
             supabase_rest_request(
@@ -2456,7 +2493,7 @@ def api_reception_valider_bl():
                 "PATCH",
                 "tickets",
                 "id=eq." + urllib.parse.quote(ticket_id, safe=''),
-                {"updated_at": ticket['updatedAt'], "status": ticket['status'], "raw_json": ticket},
+                {"updated_at": ticket['updatedAt'], "raw_json": ticket},
                 prefer="return=minimal"
             )
 
