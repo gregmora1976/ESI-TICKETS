@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESI TICKETS — Recherche articles</title>
+<style>
+:root{--blue:#0ea5e9;--navy:#0f2f4f;--line:#dbe7f0;--muted:#64748b;--bg:#eef6fb;--text:#0f172a}
+*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;background:linear-gradient(180deg,#eaf5fb,#f8fafc);color:var(--text)}
+.wrap{max-width:1500px;margin:18px auto;padding:0 18px}.card{background:#fff;border:1px solid var(--line);border-radius:22px;box-shadow:0 12px 30px rgba(15,23,42,.08)}
+.head{padding:22px 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px;justify-content:space-between;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:14px}.brand img{width:72px;max-height:52px;object-fit:contain}.title{font-size:25px;font-weight:900}.sub{font-size:12px;color:var(--muted);margin-top:3px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid var(--line);background:#fff;border-radius:12px;padding:10px 14px;font-weight:800;cursor:pointer}.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.searchbar{padding:18px 24px;display:flex;gap:10px;flex-wrap:wrap}.searchbar input{flex:1;min-width:260px;border:1px solid #bfd4e3;background:#eaf6ff;border-radius:14px;padding:13px 15px;font-size:15px}
+.info{padding:0 24px 14px;color:var(--muted);font-size:12px}.tablewrap{overflow:auto;border-top:1px solid var(--line)}
+table{width:100%;border-collapse:collapse;min-width:1250px}th,td{padding:11px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:12px}th{position:sticky;top:0;background:#f8fafc;font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.04em}
+.esi{font-weight:950;color:#0369a1;font-size:14px}.muted{color:var(--muted)}.empty{padding:35px;text-align:center;color:var(--muted)}
+.badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#e0f2fe;color:#075985;font-weight:800}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="head">
+      <div class="brand">
+        <img src="/static/logo.png" alt="ESI">
+        <div><div class="title">RECHERCHE ARTICLES</div><div class="sub">Référentiel global ESI TICKETS</div></div>
+      </div>
+      <div class="actions">
+        <button class="btn" onclick="location.href='/gestion-reception'">Gestion réception</button>
+        <button class="btn primary" id="migrateBtn">Importer les articles existants</button>
+      </div>
+    </div>
+    <div class="searchbar">
+      <input id="q" placeholder="Rechercher : ESI-125, référence, dossier, client, projet, description, stockage, colis...">
+      <button class="btn primary" id="searchBtn">Rechercher</button>
+      <button class="btn" id="resetBtn">Tout afficher</button>
+    </div>
+    <div class="info" id="info">Chargement…</div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>N° ESI</th><th>Référence</th><th>Description</th><th>Dossier</th><th>Client</th>
+          <th>Projet</th><th>Dimensions</th><th>Poids</th><th>Stockage</th><th>Colis</th>
+          <th>Statut</th><th>Source</th>
+        </tr></thead>
+        <tbody id="body"></tbody>
+      </table>
+      <div class="empty" id="empty" style="display:none">Aucun article trouvé.</div>
+    </div>
+  </div>
+</div>
+<script>
+const q=document.getElementById('q'),body=document.getElementById('body'),empty=document.getElementById('empty'),info=document.getElementById('info');
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+async function load(){
+  info.textContent='Recherche…';
+  const r=await fetch('/api/articles?q='+encodeURIComponent(q.value.trim())+'&limit=500');
+  const rows=await r.json();
+  body.innerHTML='';
+  empty.style.display=rows.length?'none':'block';
+  rows.forEach(a=>{
+    const dims=[a.longueur_cm,a.largeur_cm,a.hauteur_cm].filter(Boolean).join(' x ');
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td class="esi">${esc(a.esi_id)}</td><td><strong>${esc(a.reference||'-')}</strong></td>
+      <td>${esc(a.description||'-')}</td><td>${esc(a.dossier||'-')}</td><td>${esc(a.client||'-')}</td>
+      <td>${esc(a.projet||'-')}</td><td>${esc(dims||'-')}</td><td>${esc(a.poids_kg||'-')}</td>
+      <td>${esc(a.lieu_stockage||'-')}</td><td>${esc(a.dernier_colis||'-')}</td>
+      <td><span class="badge">${esc(a.statut_logistique||'-')}</span></td>
+      <td class="muted">${esc(a.source_module||'-')}<br>${esc(a.ticket_id||'-')}</td>`;
+    body.appendChild(tr);
+  });
+  info.textContent=`${rows.length} article(s) affiché(s)`;
+}
+document.getElementById('searchBtn').onclick=load;
+document.getElementById('resetBtn').onclick=()=>{q.value='';load()};
+q.addEventListener('keydown',e=>{if(e.key==='Enter')load()});
+document.getElementById('migrateBtn').onclick=async()=>{
+  if(!confirm("Attribuer un numéro ESI aux articles déjà présents dans les tickets ?")) return;
+  const b=document.getElementById('migrateBtn'); b.disabled=true; b.textContent='Import en cours…';
+  try{
+    const r=await fetch('/api/articles/migrate',{method:'POST'});
+    const d=await r.json();
+    alert(`Import terminé.\nTickets parcourus : ${d.tickets||0}\nArticles créés : ${d.articles_crees||0}\nErreurs : ${(d.errors||[]).length}`);
+    load();
+  }catch(e){alert("Erreur lors de l'import.");}
+  finally{b.disabled=false;b.textContent='Importer les articles existants';}
+};
+load();
+</script>
+</body>
+</html>
