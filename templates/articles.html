@@ -39,7 +39,9 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
       </div>
       <div class="actions">
         <button class="btn" onclick="location.href='/gestion-reception'">Gestion réception</button>
-        <button class="btn primary" id="migrateBtn">Importer les articles existants</button>
+        <input id="excelImportInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none">
+        <button class="btn primary" id="excelImportBtn">Importer un Excel</button>
+        <button class="btn" id="migrateBtn">Importer les articles existants</button>
       </div>
     </div>
     <div class="searchbar">
@@ -122,6 +124,52 @@ async function load(){
 document.getElementById('searchBtn').onclick=load;
 document.getElementById('resetBtn').onclick=()=>{q.value='';load()};
 q.addEventListener('keydown',e=>{if(e.key==='Enter')load()});
+
+const excelImportInput=document.getElementById('excelImportInput');
+const excelImportBtn=document.getElementById('excelImportBtn');
+excelImportBtn.onclick=()=>excelImportInput.click();
+excelImportInput.addEventListener('change',async()=>{
+  const file=excelImportInput.files&&excelImportInput.files[0];
+  if(!file) return;
+  if(!file.name.toLowerCase().endsWith('.xlsx')){
+    alert('Sélectionne un fichier Excel .xlsx');
+    excelImportInput.value='';
+    return;
+  }
+  if(!confirm(`Importer ${file.name} dans les articles ESI TICKETS ?\n\nLes N° ESI seront créés automatiquement et les doublons seront ignorés.`)){
+    excelImportInput.value='';
+    return;
+  }
+
+  const fd=new FormData(); fd.append('file',file);
+  excelImportBtn.disabled=true; excelImportBtn.textContent='Import Excel en cours…';
+  try{
+    const r=await fetch('/api/articles/import-excel',{method:'POST',body:fd});
+    const d=await r.json();
+    if(!r.ok && r.status!==207) throw new Error(d.error||'Erreur lors de l’import Excel');
+
+    const erreurs=(d.errors||[]);
+    let message=`Import Excel terminé.\n\n`+
+      `Lignes lues : ${d.lignes_lues||0}\n`+
+      `Articles demandés : ${d.articles_demandes||0}\n`+
+      `Articles créés : ${d.articles_crees||0}\n`+
+      `Doublons ignorés : ${d.doublons_ignores||0}\n`+
+      `Lignes ignorées : ${d.lignes_ignorees||0}`;
+    if(erreurs.length){
+      message+=`\n\nErreurs : ${erreurs.length}`;
+      const apercu=erreurs.slice(0,5).map(x=>`Ligne ${x.ligne||'?'} : ${x.error||'Erreur'}`).join('\n');
+      if(apercu) message+=`\n${apercu}`;
+    }
+    alert(message);
+    await load();
+  }catch(e){
+    alert(e.message||"Erreur lors de l'import Excel.");
+  }finally{
+    excelImportBtn.disabled=false; excelImportBtn.textContent='Importer un Excel';
+    excelImportInput.value='';
+  }
+});
+
 document.getElementById('migrateBtn').onclick=async()=>{
   if(!confirm("Attribuer un numéro ESI aux articles déjà présents dans les tickets ?")) return;
   const b=document.getElementById('migrateBtn'); b.disabled=true; b.textContent='Import en cours…';
