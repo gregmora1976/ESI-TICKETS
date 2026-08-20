@@ -670,6 +670,135 @@ def _article_reception_history_from_ticket(ticket, article):
     return history
 
 
+
+
+_ARTICLE_EDITABLE_FIELDS = {
+    "reference", "description", "dossier", "client", "projet",
+    "ref_caisse", "transporteur_ref",
+    "longueur_cm", "largeur_cm", "hauteur_cm",
+    "volume_m3", "surface_m2", "poids_kg",
+    "lieu_stockage", "statut_logistique",
+}
+
+
+def _article_has_history(article):
+    """Protège de la suppression les articles déjà liés à l'historique métier."""
+    if _as_text(article.get("ticket_id")).strip():
+        return True
+    raw = article.get("raw_json") if isinstance(article.get("raw_json"), dict) else {}
+    if raw.get("receptions"):
+        return True
+    if _as_text(article.get("derniere_reception_ref")).strip():
+        return True
+    if _as_text(article.get("dernier_colis")).strip():
+        return True
+    return False
+
+
+@app.route('/api/articles/bulk-update', methods=['PATCH'])
+def api_articles_bulk_update():
+    data = request.get_json(silent=True) or {}
+    esi_ids = data.get('esi_ids') or []
+    changes = data.get('changes') or {}
+
+    if not isinstance(esi_ids, list) or not esi_ids:
+        return jsonify({'ok': False, 'error': 'Aucun article sélectionné'}), 400
+    if not isinstance(changes, dict) or not changes:
+        return jsonify({'ok': False, 'error': 'Aucune modification demandée'}), 400
+
+    clean_changes = {}
+    for field, value in changes.items():
+        if field not in _ARTICLE_EDITABLE_FIELDS:
+            continue
+        clean_changes[field] = _as_text(value).strip()
+
+    if not clean_changes:
+        return jsonify({'ok': False, 'error': 'Aucun champ modifiable fourni'}), 400
+
+    updated = []
+    errors = []
+    now = datetime.now().isoformat()
+
+    with _ARTICLE_LOCK:
+        for esi_id in dict.fromkeys(_as_text(x).strip() for x in esi_ids if _as_text(x).strip()):
+            safe_esi = urllib.parse.quote(esi_id, safe='-')
+            try:
+                rows = supabase_rest_request(
+                    'GET', 'articles', f'select=*&esi_id=eq.{safe_esi}&limit=1'
+                ) or []
+                if not rows:
+                    errors.append({'esi_id': esi_id, 'error': 'Article introuvable'})
+                    continue
+
+                current = dict(rows[0])
+                patch = dict(clean_changes)
+                patch['updated_at'] = now
+                merged = dict(current)
+                merged.update(patch)
+                patch['search_text'] = _article_search_text(merged)
+
+                supabase_rest_request(
+                    'PATCH', 'articles', f'esi_id=eq.{safe_esi}',
+                    patch, prefer='return=minimal'
+                )
+                updated.append(esi_id)
+            except Exception as e:
+                errors.append({'esi_id': esi_id, 'error': str(e)})
+
+    return jsonify({
+        'ok': not errors,
+        'updated_count': len(updated),
+        'updated': updated,
+        'errors': errors,
+    }), (200 if not errors else 207)
+
+
+@app.route('/api/articles/bulk-delete', methods=['POST'])
+def api_articles_bulk_delete():
+    data = request.get_json(silent=True) or {}
+    esi_ids = data.get('esi_ids') or []
+
+    if not isinstance(esi_ids, list) or not esi_ids:
+        return jsonify({'ok': False, 'error': 'Aucun article sélectionné'}), 400
+
+    deleted = []
+    protected = []
+    errors = []
+
+    with _ARTICLE_LOCK:
+        for esi_id in dict.fromkeys(_as_text(x).strip() for x in esi_ids if _as_text(x).strip()):
+            safe_esi = urllib.parse.quote(esi_id, safe='-')
+            try:
+                rows = supabase_rest_request(
+                    'GET', 'articles', f'select=*&esi_id=eq.{safe_esi}&limit=1'
+                ) or []
+                if not rows:
+                    errors.append({'esi_id': esi_id, 'error': 'Article introuvable'})
+                    continue
+
+                article = dict(rows[0])
+                if _article_has_history(article):
+                    protected.append({
+                        'esi_id': esi_id,
+                        'reason': 'Article lié à un ticket ou à un historique de réception'
+                    })
+                    continue
+
+                supabase_rest_request(
+                    'DELETE', 'articles', f'esi_id=eq.{safe_esi}', prefer='return=minimal'
+                )
+                deleted.append(esi_id)
+            except Exception as e:
+                errors.append({'esi_id': esi_id, 'error': str(e)})
+
+    return jsonify({
+        'ok': not errors and not protected,
+        'deleted_count': len(deleted),
+        'deleted': deleted,
+        'protected': protected,
+        'errors': errors,
+    }), (200 if not errors and not protected else 207)
+
 @app.route('/api/articles/<esi_id>')
 def api_article_detail(esi_id):
     esi_id = _as_text(esi_id).strip()
@@ -857,6 +986,10 @@ def api_articles_import_excel():
         return jsonify({'ok': False, 'error': 'Fichier Excel manquant'}), 400
 
     filename = _as_text(fs.filename).strip()
+    dossier = _as_text(request.form.get('dossier')).strip()
+    if not dossier:
+        return jsonify({'ok': False, 'error': 'Le N° de dossier est obligatoire pour importer les articles.'}), 400
+
     if not filename.lower().endswith('.xlsx'):
         return jsonify({'ok': False, 'error': 'Le fichier doit être au format .xlsx'}), 400
 
@@ -942,7 +1075,7 @@ def api_articles_import_excel():
                     'unit_index': unit_index,
                     'reference': values['reference'],
                     'description': values['description'],
-                    'dossier': '',
+                    'dossier': dossier,
                     'client': '',
                     'projet': '',
                     'ref_caisse': '',
@@ -960,6 +1093,7 @@ def api_articles_import_excel():
                     'raw_json': {
                         'source': 'import_excel',
                         'filename': filename,
+                        'dossier': dossier,
                         'excel_row': row_num,
                         'quantity_source': qty,
                         'unit_index': unit_index,
@@ -987,6 +1121,7 @@ def api_articles_import_excel():
 
     return jsonify({
         'ok': len(stats['errors']) == 0,
+        'dossier': dossier,
         **stats,
     }), (200 if not stats['errors'] else 207)
 
