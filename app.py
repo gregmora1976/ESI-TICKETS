@@ -766,6 +766,231 @@ def api_article_detail(esi_id):
     return jsonify(detail)
 
 
+
+
+def _article_import_text(value):
+    """Normalise une valeur Excel sans transformer 12 en '12.0'."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if value.is_integer():
+            return str(int(value))
+        return (f"{value:.10f}").rstrip("0").rstrip(".")
+    return re.sub(r"\s+", " ", _as_text(value).replace("\u00a0", " ")).strip()
+
+
+def _article_import_norm(value):
+    """Valeur canonique utilisée uniquement pour la détection de doublons."""
+    text = _article_import_text(value).casefold().strip()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def _article_import_signature(values):
+    """Signature métier d'un article importé pour éviter les créations en double."""
+    return "|".join([
+        _article_import_norm(values.get("reference")),
+        _article_import_norm(values.get("description")),
+        _article_import_norm(values.get("longueur_cm")),
+        _article_import_norm(values.get("largeur_cm")),
+        _article_import_norm(values.get("hauteur_cm")),
+        _article_import_norm(values.get("poids_kg")),
+    ])
+
+
+def _article_import_headers(ws):
+    """Repère les colonnes du format Excel normalisé ESI TICKETS."""
+    aliases = {
+        "quantite": {"QUANTITE", "QTE", "QTY"},
+        "longueur_cm": {"LONGUEUR_CM", "LONGUEUR (CM)", "LONGUEUR"},
+        "largeur_cm": {"LARGEUR_CM", "LARGEUR (CM)", "LARGEUR"},
+        "hauteur_cm": {"HAUTEUR_CM", "HAUTEUR (CM)", "HAUTEUR"},
+        "poids_kg": {"POIDS_BRUT_KG", "POIDS_KG", "POIDS (KG)", "POIDS"},
+        "reference": {"REFERENCE_PINTO", "REFERENCE", "REF", "REF ARTICLE"},
+        "description": {"DESIGNATION", "DESCRIPTION"},
+    }
+
+    found = {}
+    for col in range(1, ws.max_column + 1):
+        raw = _article_import_text(ws.cell(row=1, column=col).value)
+        header = re.sub(r"\s+", " ", raw.upper()).strip()
+        if not header:
+            continue
+        for field, names in aliases.items():
+            if header in names and field not in found:
+                found[field] = col
+                break
+    return found
+
+
+def _article_import_existing_counts():
+    """Compte les articles existants par signature métier."""
+    rows = supabase_rest_request(
+        "GET",
+        "articles",
+        "select=reference,description,longueur_cm,largeur_cm,hauteur_cm,poids_kg&limit=10000"
+    ) or []
+    counts = {}
+    for row in rows:
+        sig = _article_import_signature(row)
+        if sig.strip("|"):
+            counts[sig] = counts.get(sig, 0) + 1
+    return counts
+
+
+@app.route('/api/articles/import-excel', methods=['POST'])
+def api_articles_import_excel():
+    """
+    Importe le fichier Excel normalisé ESI TICKETS.
+
+    - 1 unité physique = 1 numéro ESI unique ;
+    - la colonne QUANTITE peut donc créer plusieurs ESI pour une même ligne ;
+    - les doublons sont contrôlés par référence + désignation + dimensions + poids ;
+    - les photos sont volontairement ignorées pour le moment.
+    """
+    fs = request.files.get('file')
+    if not fs or not fs.filename:
+        return jsonify({'ok': False, 'error': 'Fichier Excel manquant'}), 400
+
+    filename = _as_text(fs.filename).strip()
+    if not filename.lower().endswith('.xlsx'):
+        return jsonify({'ok': False, 'error': 'Le fichier doit être au format .xlsx'}), 400
+
+    content = fs.read()
+    if not content:
+        return jsonify({'ok': False, 'error': 'Le fichier Excel est vide'}), 400
+
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+        ws = wb.active
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'Fichier Excel illisible : {e}'}), 400
+
+    headers = _article_import_headers(ws)
+    if 'reference' not in headers and 'description' not in headers:
+        return jsonify({
+            'ok': False,
+            'error': "Colonnes non reconnues. Le fichier doit contenir au minimum REFERENCE_PINTO/REFERENCE ou DESIGNATION/DESCRIPTION."
+        }), 400
+
+    stats = {
+        'lignes_lues': 0,
+        'articles_demandes': 0,
+        'articles_crees': 0,
+        'doublons_ignores': 0,
+        'lignes_ignorees': 0,
+        'errors': [],
+        'esi_ids': [],
+    }
+
+    try:
+        existing_counts = _article_import_existing_counts()
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'Impossible de vérifier les doublons : {e}'}), 500
+
+    now = datetime.now().isoformat()
+
+    with _ARTICLE_LOCK:
+        for row_num in range(2, ws.max_row + 1):
+            def cell(field):
+                col = headers.get(field)
+                return ws.cell(row=row_num, column=col).value if col else None
+
+            values = {
+                'reference': _article_import_text(cell('reference')),
+                'description': _article_import_text(cell('description')),
+                'longueur_cm': _article_import_text(cell('longueur_cm')),
+                'largeur_cm': _article_import_text(cell('largeur_cm')),
+                'hauteur_cm': _article_import_text(cell('hauteur_cm')),
+                'poids_kg': _article_import_text(cell('poids_kg')),
+            }
+
+            # Une ligne totalement vide n'est pas une erreur.
+            if not any(values.values()) and not _article_import_text(cell('quantite')):
+                continue
+
+            stats['lignes_lues'] += 1
+
+            if not values['reference'] and not values['description']:
+                stats['lignes_ignorees'] += 1
+                stats['errors'].append({
+                    'ligne': row_num,
+                    'error': 'Référence et désignation toutes les deux vides'
+                })
+                continue
+
+            qty = _article_quantity(cell('quantite'), 1)
+            stats['articles_demandes'] += qty
+
+            signature = _article_import_signature(values)
+            already = existing_counts.get(signature, 0)
+            to_create = max(0, qty - already)
+            skipped = qty - to_create
+            stats['doublons_ignores'] += skipped
+
+            created_for_row = 0
+            for unit_index in range(already + 1, already + to_create + 1):
+                payload = {
+                    'ticket_id': '',
+                    'source_module': 'Import Excel',
+                    'source_index': row_num,
+                    'unit_index': unit_index,
+                    'reference': values['reference'],
+                    'description': values['description'],
+                    'dossier': '',
+                    'client': '',
+                    'projet': '',
+                    'ref_caisse': '',
+                    'transporteur_ref': '',
+                    'longueur_cm': values['longueur_cm'],
+                    'largeur_cm': values['largeur_cm'],
+                    'hauteur_cm': values['hauteur_cm'],
+                    'volume_m3': '',
+                    'surface_m2': '',
+                    'poids_kg': values['poids_kg'],
+                    'lieu_stockage': '',
+                    'statut_logistique': 'Créé',
+                    'created_at': now,
+                    'updated_at': now,
+                    'raw_json': {
+                        'source': 'import_excel',
+                        'filename': filename,
+                        'excel_row': row_num,
+                        'quantity_source': qty,
+                        'unit_index': unit_index,
+                    },
+                }
+                payload['search_text'] = _article_search_text(payload)
+
+                try:
+                    article = _create_article_record(payload)
+                    stats['articles_crees'] += 1
+                    created_for_row += 1
+                    if article.get('esi_id'):
+                        stats['esi_ids'].append(article['esi_id'])
+                except Exception as e:
+                    stats['errors'].append({'ligne': row_num, 'error': str(e)})
+                    break
+
+            # Seules les créations réellement réussies deviennent des doublons pour les lignes suivantes.
+            existing_counts[signature] = already + created_for_row
+
+    try:
+        wb.close()
+    except Exception:
+        pass
+
+    return jsonify({
+        'ok': len(stats['errors']) == 0,
+        **stats,
+    }), (200 if not stats['errors'] else 207)
+
+
 @app.route('/api/articles/migrate', methods=['POST'])
 def api_articles_migrate():
     """Importe les articles déjà présents dans les tickets et leur attribue un ESI-x."""
