@@ -26,6 +26,8 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
 .section-title{font-size:12px;font-weight:950;text-transform:uppercase;color:var(--muted);letter-spacing:.05em;margin-bottom:10px}
 .detail-grid{display:grid;grid-template-columns:180px 1fr;gap:8px 14px}.detail-label{font-size:12px;color:var(--muted);font-weight:800}.detail-value{font-size:13px;font-weight:700;white-space:pre-wrap;overflow-wrap:anywhere}
 .history-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px}.history-title{font-weight:950}.file-link{display:inline-block;margin:5px 5px 0 0;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:#fff;color:#0369a1;font-weight:800;text-decoration:none}
+
+.selection-actions{display:none;align-items:center;gap:8px;flex-wrap:wrap;padding:0 24px 14px}.selection-actions.show{display:flex}.btn.danger{background:#dc2626;border-color:#dc2626;color:#fff}.selection-count{font-size:12px;color:var(--muted);font-weight:800;margin-right:4px}.edit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.edit-field{border:1px solid var(--line);border-radius:12px;padding:10px;background:#fff}.edit-field label{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:900;margin-bottom:7px}.edit-field input,.edit-field textarea{width:100%;border:1px solid #bfd4e3;border-radius:10px;padding:9px 10px;font:inherit}.edit-field textarea{min-height:72px;resize:vertical}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:700px){.edit-grid{grid-template-columns:1fr}}
 @media(max-width:700px){.detail-grid{grid-template-columns:1fr}.detail-value{margin-bottom:6px}}
 </style>
 </head>
@@ -48,6 +50,11 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
       <input id="q" placeholder="Rechercher : ESI-125, référence, dossier, client, projet, description, stockage...">
       <button class="btn primary" id="searchBtn">Rechercher</button>
       <button class="btn" id="resetBtn">Tout afficher</button>
+    </div>
+    <div class="selection-actions" id="selectionActions">
+      <span class="selection-count" id="selectionCount">0 article sélectionné</span>
+      <button class="btn primary" id="editSelectedBtn" type="button">Modifier</button>
+      <button class="btn danger" id="deleteSelectedBtn" type="button">Supprimer</button>
     </div>
     <div class="info" id="info">Chargement…</div>
     <div class="tablewrap">
@@ -74,6 +81,27 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
       <button class="modal-close" id="articleModalClose" type="button">×</button>
     </div>
     <div class="modal-body" id="articleModalBody"></div>
+  </div>
+</div>
+
+
+<div class="modal-backdrop" id="editModalBackdrop" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" style="width:min(900px,96vw)">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title" id="editModalTitle">Modifier les articles</div>
+        <div class="modal-sub" id="editModalSub"></div>
+      </div>
+      <button class="modal-close" id="editModalClose" type="button">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="muted" style="margin-bottom:12px">Coche les champs à appliquer. Pour un seul article, les valeurs actuelles sont préremplies.</div>
+      <div class="edit-grid" id="editGrid"></div>
+      <div class="modal-actions">
+        <button class="btn" id="editCancelBtn" type="button">Annuler</button>
+        <button class="btn primary" id="editSaveBtn" type="button">Enregistrer</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -108,6 +136,7 @@ async function load(){
   empty.style.display=rows.length?'none':'block';
   currentRows=rows;
   document.getElementById('selectAll').checked=false;
+  updateSelectionActions();
   rows.forEach(a=>{
     const dims=[a.longueur_cm,a.largeur_cm,a.hauteur_cm].filter(Boolean).join(' x ');
     const tr=document.createElement('tr');
@@ -127,10 +156,20 @@ q.addEventListener('keydown',e=>{if(e.key==='Enter')load()});
 
 const excelImportInput=document.getElementById('excelImportInput');
 const excelImportBtn=document.getElementById('excelImportBtn');
-excelImportBtn.onclick=()=>excelImportInput.click();
+let excelImportDossier='';
+excelImportBtn.onclick=()=>{
+  const dossier=prompt('N° de dossier à attribuer à tous les articles importés :');
+  if(dossier===null) return;
+  excelImportDossier=String(dossier||'').trim();
+  if(!excelImportDossier){
+    alert('Le N° de dossier est obligatoire pour importer un fichier Excel.');
+    return;
+  }
+  excelImportInput.click();
+};
 excelImportInput.addEventListener('change',async()=>{
   const file=excelImportInput.files&&excelImportInput.files[0];
-  if(!file) return;
+  if(!file){ excelImportDossier=''; return; }
   if(!file.name.toLowerCase().endsWith('.xlsx')){
     alert('Sélectionne un fichier Excel .xlsx');
     excelImportInput.value='';
@@ -141,7 +180,7 @@ excelImportInput.addEventListener('change',async()=>{
     return;
   }
 
-  const fd=new FormData(); fd.append('file',file);
+  const fd=new FormData(); fd.append('file',file); fd.append('dossier',excelImportDossier);
   excelImportBtn.disabled=true; excelImportBtn.textContent='Import Excel en cours…';
   try{
     const r=await fetch('/api/articles/import-excel',{method:'POST',body:fd});
@@ -150,6 +189,7 @@ excelImportInput.addEventListener('change',async()=>{
 
     const erreurs=(d.errors||[]);
     let message=`Import Excel terminé.\n\n`+
+      `Dossier : ${d.dossier||excelImportDossier}\n`+
       `Lignes lues : ${d.lignes_lues||0}\n`+
       `Articles demandés : ${d.articles_demandes||0}\n`+
       `Articles créés : ${d.articles_crees||0}\n`+
@@ -167,6 +207,7 @@ excelImportInput.addEventListener('change',async()=>{
   }finally{
     excelImportBtn.disabled=false; excelImportBtn.textContent='Importer un Excel';
     excelImportInput.value='';
+    excelImportDossier='';
   }
 });
 
@@ -277,13 +318,100 @@ async function openArticleDetail(esi){
   }
 }
 
+
+function selectedEsiIds(){
+  return [...document.querySelectorAll('.row-check:checked')].map(cb=>cb.dataset.esi).filter(Boolean);
+}
+function updateSelectionActions(){
+  const ids=selectedEsiIds();
+  const bar=document.getElementById('selectionActions');
+  document.getElementById('selectionCount').textContent=`${ids.length} article${ids.length>1?'s':''} sélectionné${ids.length>1?'s':''}`;
+  bar.classList.toggle('show',ids.length>0);
+}
+const editableFields=[
+  ['reference','Référence'],['description','Description'],['dossier','Dossier'],['client','Client'],['projet','Projet / expo'],
+  ['ref_caisse','Réf. caisse'],['transporteur_ref','Réf. transporteur'],['longueur_cm','Longueur (cm)'],['largeur_cm','Largeur (cm)'],
+  ['hauteur_cm','Hauteur (cm)'],['volume_m3','Volume (m³)'],['surface_m2','Surface (m²)'],['poids_kg','Poids (kg)'],
+  ['lieu_stockage','Lieu de stockage'],['statut_logistique','Statut logistique']
+];
+function closeEditModal(){
+  const b=document.getElementById('editModalBackdrop');
+  b.classList.remove('open'); b.setAttribute('aria-hidden','true');
+}
+function openEditModal(){
+  const ids=selectedEsiIds();
+  if(!ids.length) return;
+  const single=ids.length===1;
+  const article=single?currentRows.find(x=>String(x.esi_id)===ids[0]):null;
+  document.getElementById('editModalTitle').textContent=single?`Modifier ${ids[0]}`:`Modifier ${ids.length} articles`;
+  document.getElementById('editModalSub').textContent=single?'Tous les champs article peuvent être modifiés sauf le N° ESI.':'Seuls les champs cochés seront appliqués à tous les articles sélectionnés.';
+  const grid=document.getElementById('editGrid');
+  grid.innerHTML=editableFields.map(([field,label])=>{
+    const value=single?String((article&&article[field])??''):'';
+    const textarea=field==='description';
+    return `<div class="edit-field">
+      <label><input type="checkbox" class="edit-apply" data-field="${field}" ${single?'checked':''}> ${esc(label)}</label>
+      ${textarea?`<textarea class="edit-value" data-field="${field}">${esc(value)}</textarea>`:`<input class="edit-value" data-field="${field}" value="${esc(value)}">`}
+    </div>`;
+  }).join('');
+  const b=document.getElementById('editModalBackdrop');
+  b.classList.add('open'); b.setAttribute('aria-hidden','false');
+}
+document.getElementById('editSelectedBtn').onclick=openEditModal;
+document.getElementById('editModalClose').onclick=closeEditModal;
+document.getElementById('editCancelBtn').onclick=closeEditModal;
+document.getElementById('editModalBackdrop').addEventListener('click',e=>{if(e.target.id==='editModalBackdrop')closeEditModal()});
+document.getElementById('editSaveBtn').onclick=async()=>{
+  const ids=selectedEsiIds();
+  const changes={};
+  document.querySelectorAll('.edit-apply:checked').forEach(cb=>{
+    const field=cb.dataset.field;
+    const input=document.querySelector(`.edit-value[data-field="${field}"]`);
+    changes[field]=input?input.value:'';
+  });
+  if(!Object.keys(changes).length){alert('Coche au moins un champ à modifier.');return;}
+  const btn=document.getElementById('editSaveBtn'); btn.disabled=true; btn.textContent='Enregistrement…';
+  try{
+    const r=await fetch('/api/articles/bulk-update',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({esi_ids:ids,changes})});
+    const d=await r.json();
+    if(!r.ok&&r.status!==207) throw new Error(d.error||'Erreur de modification');
+    let msg=`${d.updated_count||0} article(s) modifié(s).`;
+    if((d.errors||[]).length) msg+=`
+Erreurs : ${(d.errors||[]).length}`;
+    alert(msg); closeEditModal(); await load(); updateSelectionActions();
+  }catch(e){alert(e.message||'Erreur de modification.');}
+  finally{btn.disabled=false;btn.textContent='Enregistrer';}
+};
+document.getElementById('deleteSelectedBtn').onclick=async()=>{
+  const ids=selectedEsiIds();
+  if(!ids.length) return;
+  if(!confirm(`Supprimer définitivement ${ids.length} article${ids.length>1?'s':''} ?
+
+Les articles déjà liés à un ticket ou à une réception seront protégés et ne seront pas supprimés.`)) return;
+  const btn=document.getElementById('deleteSelectedBtn'); btn.disabled=true; btn.textContent='Suppression…';
+  try{
+    const r=await fetch('/api/articles/bulk-delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({esi_ids:ids})});
+    const d=await r.json();
+    if(!r.ok&&r.status!==207) throw new Error(d.error||'Erreur de suppression');
+    let msg=`${d.deleted_count||0} article(s) supprimé(s).`;
+    if((d.protected||[]).length) msg+=`
+${(d.protected||[]).length} article(s) protégé(s) car liés à un historique.`;
+    if((d.errors||[]).length) msg+=`
+Erreurs : ${(d.errors||[]).length}`;
+    alert(msg); await load(); updateSelectionActions();
+  }catch(e){alert(e.message||'Erreur de suppression.');}
+  finally{btn.disabled=false;btn.textContent='Supprimer';}
+};
+
 document.getElementById('selectAll').addEventListener('change',e=>{
   document.querySelectorAll('.row-check').forEach(cb=>cb.checked=e.target.checked);
+  updateSelectionActions();
 });
 body.addEventListener('change',e=>{
   if(!e.target.classList.contains('row-check')) return;
   const boxes=[...document.querySelectorAll('.row-check')];
   document.getElementById('selectAll').checked=boxes.length>0&&boxes.every(x=>x.checked);
+  updateSelectionActions();
 });
 body.addEventListener('click',e=>{
   const link=e.target.closest('.esi-link');
