@@ -94,6 +94,21 @@
     .enl-unit select{width:100%;border:1px solid var(--line);background:#eaf6ff;border-radius:12px;padding:10px;font-size:13px;color:var(--text)}
     .enl-found{font-size:12px;font-weight:800;color:#15803d}.enl-new{font-size:12px;font-weight:800;color:#b45309}
     .enl-loading{padding:12px;border-radius:14px;background:#e0f2fe;color:#075985;font-weight:800}
+
+    .avis-article-picker{width:min(1100px,96vw)}
+    .avis-article-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .avis-article-toolbar .search{flex:1;min-width:260px;max-width:none}
+    .avis-article-list{display:grid;gap:8px;max-height:52vh;overflow:auto;padding-right:4px}
+    .avis-article-row{display:grid;grid-template-columns:34px 110px 140px 1fr 160px 90px;gap:10px;align-items:center;border:1px solid var(--line);border-radius:14px;padding:11px 12px;background:#fff}
+    .avis-article-row:hover{background:#f0f9ff;border-color:#bae6fd}
+    .avis-article-row input[type=checkbox]{width:18px;height:18px;cursor:pointer}
+    .avis-article-esi{font-weight:900;color:#0369a1}
+    .avis-article-ref{font-weight:800;color:#0f172a;overflow-wrap:anywhere}
+    .avis-article-desc{font-size:13px;color:#334155}
+    .avis-article-meta{font-size:12px;color:#64748b;text-align:right}
+    .avis-picker-empty{padding:24px;text-align:center;border:1px dashed var(--line);border-radius:14px;color:var(--muted);background:#f8fafc}
+    .avis-picker-footer{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+    @media(max-width:850px){.avis-article-row{grid-template-columns:30px 95px 1fr}.avis-article-ref{grid-column:3}.avis-article-desc{grid-column:2 / -1}.avis-article-meta{grid-column:2 / -1;text-align:left}}
     @media (max-width:1100px){.layout{grid-template-columns:1fr}}
     @media (max-width:720px){h1{font-size:28px}.grid,.grid.three{grid-template-columns:1fr}.hero-top,.content,.card{padding:18px}}
   </style>
@@ -299,7 +314,10 @@
               <div class="arrival-block">
                 <div class="row" style="margin-bottom:12px">
                   <h3 style="margin:0">Détail de la marchandise</h3>
-                  <button class="btn secondary" id="addAvisItem" type="button">+ Ajouter une ligne</button>
+                  <div class="actions" style="justify-content:flex-end">
+                    <button class="btn secondary" id="selectAvisArticles" type="button">Sélectionner des articles du dossier</button>
+                    <button class="btn secondary" id="addAvisItem" type="button">+ Ajouter une ligne</button>
+                  </div>
                 </div>
                 <div class="arrival-table-wrap">
                   <table class="arrival-table">
@@ -361,6 +379,32 @@
   <div class="notice" id="notice"></div>
 
 
+  <div class="modal-backdrop" id="avisArticleModal" aria-hidden="true">
+    <div class="modal-card avis-article-picker" role="dialog" aria-modal="true" aria-labelledby="avisArticleModalTitle">
+      <div class="modal-head">
+        <div>
+          <div class="section-title" style="margin-bottom:6px">Base articles ESI</div>
+          <div class="modal-title" id="avisArticleModalTitle">Articles du dossier</div>
+          <div class="small" id="avisArticleModalSub"></div>
+        </div>
+        <button class="modal-close" id="closeAvisArticleModal" type="button">Fermer ×</button>
+      </div>
+      <div class="modal-body">
+        <div class="avis-article-toolbar">
+          <input class="search" id="avisArticleSearch" placeholder="Rechercher par N° ESI, référence ou description...">
+          <button class="btn secondary" id="avisArticleSelectAll" type="button">Tout sélectionner</button>
+          <button class="btn secondary" id="avisArticleClearAll" type="button">Tout décocher</button>
+        </div>
+        <div class="avis-article-list" id="avisArticleList"></div>
+        <div class="avis-picker-footer">
+          <div class="small"><strong id="avisArticleSelectedCount">0</strong> article(s) sélectionné(s)</div>
+          <button class="btn primary" id="addSelectedAvisArticles" type="button">Ajouter les articles sélectionnés</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
   <div class="modal-backdrop" id="doneModal" aria-hidden="true">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="doneModalTitle">
       <div class="modal-head">
@@ -388,6 +432,8 @@ const state = {
   enlevementAnalysis:null,
   enlevementSelections:[],
   filesAvisArrivee:[],
+  avisDossierArticles:[],
+  avisSelectedArticleIds:new Set(),
   doneSearch:'',
   directTicketId: urlParams.get('ticket') || '',
   directTicketOpened: false
@@ -865,15 +911,17 @@ function recalcAvisItems(){
 function addAvisItemRow(item={}){
   const tbody = document.getElementById('avisItemsBody');
   const row = document.createElement('tr');
+  const esiId = String(item.esi_id || ((item.esi_ids || [])[0] || '')).trim();
+  if(esiId) row.dataset.esiId = esiId;
   row.innerHTML = `
     <td><input class="input item-ref" value="${escapeHtml(item.reference || '')}"></td>
     <td><input class="input item-description" value="${escapeHtml(item.description || '')}"></td>
-    <td><input class="input item-longueur" type="number" min="0" step="any" value="${escapeHtml(item.longueur || '')}"></td>
-    <td><input class="input item-largeur" type="number" min="0" step="any" value="${escapeHtml(item.largeur || '')}"></td>
-    <td><input class="input item-hauteur" type="number" min="0" step="any" value="${escapeHtml(item.hauteur || '')}"></td>
+    <td><input class="input item-longueur" type="number" min="0" step="any" value="${escapeHtml(item.longueur ?? item.longueur_cm ?? '')}"></td>
+    <td><input class="input item-largeur" type="number" min="0" step="any" value="${escapeHtml(item.largeur ?? item.largeur_cm ?? '')}"></td>
+    <td><input class="input item-hauteur" type="number" min="0" step="any" value="${escapeHtml(item.hauteur ?? item.hauteur_cm ?? '')}"></td>
     <td><input class="input item-volume readonly" readonly></td>
     <td><input class="input item-surface readonly" readonly></td>
-    <td><input class="input item-poids" type="number" min="0" step="any" value="${escapeHtml(item.poids || '')}"></td>
+    <td><input class="input item-poids" type="number" min="0" step="any" value="${escapeHtml(item.poids ?? item.poids_kg ?? '')}"></td>
     <td><input class="input item-qte" type="number" min="0" step="1" value="${escapeHtml(item.quantite || '1')}"></td>
     <td><button class="arrival-remove" type="button" title="Supprimer la ligne">×</button></td>`;
   row.querySelectorAll('input').forEach(input => input.addEventListener('input', recalcAvisItems));
@@ -881,6 +929,7 @@ function addAvisItemRow(item={}){
     if(tbody.querySelectorAll('tr').length > 1){
       row.remove();
     }else{
+      row.dataset.esiId = '';
       row.querySelectorAll('input:not([readonly])').forEach(input => input.value = input.classList.contains('item-qte') ? '1' : '');
     }
     recalcAvisItems();
@@ -890,17 +939,25 @@ function addAvisItemRow(item={}){
 }
 
 function collectAvisItems(){
-  return [...document.querySelectorAll('#avisItemsBody tr')].map(row => ({
-    reference: row.querySelector('.item-ref').value.trim(),
-    description: row.querySelector('.item-description').value.trim(),
-    longueur_cm: row.querySelector('.item-longueur').value.trim(),
-    largeur_cm: row.querySelector('.item-largeur').value.trim(),
-    hauteur_cm: row.querySelector('.item-hauteur').value.trim(),
-    volume_m3: row.querySelector('.item-volume').value.trim(),
-    surface_m2: row.querySelector('.item-surface').value.trim(),
-    poids_kg: row.querySelector('.item-poids').value.trim(),
-    quantite: row.querySelector('.item-qte').value.trim() || '1'
-  })).filter(item => item.reference || item.description);
+  return [...document.querySelectorAll('#avisItemsBody tr')].map(row => {
+    const esiId = String(row.dataset.esiId || '').trim();
+    const item = {
+      reference: row.querySelector('.item-ref').value.trim(),
+      description: row.querySelector('.item-description').value.trim(),
+      longueur_cm: row.querySelector('.item-longueur').value.trim(),
+      largeur_cm: row.querySelector('.item-largeur').value.trim(),
+      hauteur_cm: row.querySelector('.item-hauteur').value.trim(),
+      volume_m3: row.querySelector('.item-volume').value.trim(),
+      surface_m2: row.querySelector('.item-surface').value.trim(),
+      poids_kg: row.querySelector('.item-poids').value.trim(),
+      quantite: row.querySelector('.item-qte').value.trim() || '1'
+    };
+    if(esiId){
+      item.esi_id = esiId;
+      item.esi_ids = [esiId];
+    }
+    return item;
+  }).filter(item => item.reference || item.description);
 }
 
 function resetAvisArriveeForm(){
@@ -909,7 +966,138 @@ function resetAvisArriveeForm(){
   tbody.innerHTML = '';
   addAvisItemRow();
   state.filesAvisArrivee.length = 0;
+  state.avisDossierArticles = [];
+  state.avisSelectedArticleIds = new Set();
   renderAllFiles();
+}
+
+function closeAvisArticleModal(){
+  const modal = document.getElementById('avisArticleModal');
+  modal.classList.remove('show');
+  modal.setAttribute('aria-hidden','true');
+}
+
+function updateAvisArticleSelectedCount(){
+  document.getElementById('avisArticleSelectedCount').textContent = String(state.avisSelectedArticleIds.size);
+}
+
+function articlePickerSearchText(article){
+  return [article.esi_id, article.reference, article.description, article.client, article.projet, article.lieu_stockage]
+    .filter(Boolean).join(' ').toLowerCase();
+}
+
+function renderAvisArticlePicker(){
+  const list = document.getElementById('avisArticleList');
+  const search = String(document.getElementById('avisArticleSearch').value || '').trim().toLowerCase();
+  const articles = (state.avisDossierArticles || []).filter(a => !search || articlePickerSearchText(a).includes(search));
+
+  if(!articles.length){
+    list.innerHTML = '<div class="avis-picker-empty">Aucun article correspondant dans ce dossier.</div>';
+    updateAvisArticleSelectedCount();
+    return;
+  }
+
+  list.innerHTML = articles.map(article => {
+    const esi = String(article.esi_id || '');
+    const dims = [article.longueur_cm, article.largeur_cm, article.hauteur_cm].filter(v => String(v || '').trim()).join(' × ');
+    const checked = state.avisSelectedArticleIds.has(esi) ? 'checked' : '';
+    return `<label class="avis-article-row">
+      <input type="checkbox" class="avis-article-check" data-esi="${escapeHtml(esi)}" ${checked}>
+      <div class="avis-article-esi">${escapeHtml(esi || '-')}</div>
+      <div class="avis-article-ref">${escapeHtml(article.reference || '-')}</div>
+      <div class="avis-article-desc">${escapeHtml(article.description || '-')}</div>
+      <div class="avis-article-meta">${escapeHtml(dims ? dims + ' cm' : '-')}</div>
+      <div class="avis-article-meta">${escapeHtml(article.poids_kg ? article.poids_kg + ' kg' : '-')}</div>
+    </label>`;
+  }).join('');
+
+  list.querySelectorAll('.avis-article-check').forEach(cb => cb.addEventListener('change', () => {
+    const esi = cb.dataset.esi || '';
+    if(!esi) return;
+    if(cb.checked) state.avisSelectedArticleIds.add(esi);
+    else state.avisSelectedArticleIds.delete(esi);
+    updateAvisArticleSelectedCount();
+  }));
+  updateAvisArticleSelectedCount();
+}
+
+async function openAvisArticlePicker(){
+  const dossier = document.getElementById('avis-dossier').value.trim();
+  if(!dossier){
+    showNotice('Renseigne d’abord la Réf. dossier pour afficher les articles associés.');
+    document.getElementById('avis-dossier').focus();
+    return;
+  }
+
+  const modal = document.getElementById('avisArticleModal');
+  const list = document.getElementById('avisArticleList');
+  document.getElementById('avisArticleModalTitle').textContent = `Articles du dossier ${dossier}`;
+  document.getElementById('avisArticleModalSub').textContent = 'Sélectionne un ou plusieurs articles déjà présents dans la base Articles.';
+  document.getElementById('avisArticleSearch').value = '';
+  state.avisSelectedArticleIds = new Set();
+  list.innerHTML = '<div class="avis-picker-empty">Recherche des articles…</div>';
+  modal.classList.add('show');
+  modal.setAttribute('aria-hidden','false');
+  updateAvisArticleSelectedCount();
+
+  try{
+    const res = await fetch('/api/articles/by-dossier?dossier=' + encodeURIComponent(dossier), {cache:'no-store'});
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Impossible de charger les articles du dossier');
+    state.avisDossierArticles = data.articles || [];
+
+    if(state.avisDossierArticles.length){
+      const first = state.avisDossierArticles[0] || {};
+      const clientInput = document.getElementById('avis-client');
+      const projetInput = document.getElementById('avis-projet');
+      if(!clientInput.value.trim() && first.client) clientInput.value = first.client;
+      if(!projetInput.value.trim() && first.projet) projetInput.value = first.projet;
+    }
+    renderAvisArticlePicker();
+  }catch(e){
+    state.avisDossierArticles = [];
+    list.innerHTML = `<div class="avis-picker-empty">${escapeHtml(e.message || 'Impossible de charger les articles.')}</div>`;
+  }
+}
+
+function addSelectedArticlesToAvis(){
+  const selected = (state.avisDossierArticles || []).filter(a => state.avisSelectedArticleIds.has(String(a.esi_id || '')));
+  if(!selected.length){
+    showNotice('Sélectionne au moins un article.');
+    return;
+  }
+
+  const tbody = document.getElementById('avisItemsBody');
+  const rows = [...tbody.querySelectorAll('tr')];
+  if(rows.length === 1){
+    const row = rows[0];
+    const isBlank = !row.dataset.esiId && !row.querySelector('.item-ref').value.trim() && !row.querySelector('.item-description').value.trim();
+    if(isBlank) row.remove();
+  }
+
+  const alreadyInTable = new Set([...tbody.querySelectorAll('tr')].map(r => String(r.dataset.esiId || '')).filter(Boolean));
+  let added = 0;
+  selected.forEach(article => {
+    const esi = String(article.esi_id || '').trim();
+    if(!esi || alreadyInTable.has(esi)) return;
+    addAvisItemRow({
+      esi_id: esi,
+      esi_ids: [esi],
+      reference: article.reference || '',
+      description: article.description || '',
+      longueur_cm: article.longueur_cm || '',
+      largeur_cm: article.largeur_cm || '',
+      hauteur_cm: article.hauteur_cm || '',
+      poids_kg: article.poids_kg || '',
+      quantite: '1'
+    });
+    alreadyInTable.add(esi);
+    added += 1;
+  });
+
+  if(!tbody.querySelector('tr')) addAvisItemRow();
+  closeAvisArticleModal();
+  showNotice(`${added} article(s) ajouté(s) à l’avis d’arrivée.`);
 }
 
 async function sendAvisArrivee(){
@@ -1628,13 +1816,27 @@ document.getElementById('sendAllerVoir').addEventListener('click', sendAllerVoir
 document.getElementById('sendEnlevement').addEventListener('click', sendEnlevement);
 document.getElementById('reanalyzeEnlevement').addEventListener('click', analyseEnlevementArticles);
 document.getElementById('sendAvisArrivee').addEventListener('click', sendAvisArrivee);
+document.getElementById('selectAvisArticles').addEventListener('click', openAvisArticlePicker);
 document.getElementById('addAvisItem').addEventListener('click', ()=>addAvisItemRow());
+document.getElementById('closeAvisArticleModal').addEventListener('click', closeAvisArticleModal);
+document.getElementById('avisArticleModal').addEventListener('click', e=>{ if(e.target && e.target.id === 'avisArticleModal') closeAvisArticleModal(); });
+document.getElementById('avisArticleSearch').addEventListener('input', renderAvisArticlePicker);
+document.getElementById('avisArticleSelectAll').addEventListener('click', ()=>{
+  (state.avisDossierArticles || []).forEach(a=>{ if(a.esi_id) state.avisSelectedArticleIds.add(String(a.esi_id)); });
+  renderAvisArticlePicker();
+});
+document.getElementById('avisArticleClearAll').addEventListener('click', ()=>{ state.avisSelectedArticleIds = new Set(); renderAvisArticlePicker(); });
+document.getElementById('addSelectedAvisArticles').addEventListener('click', addSelectedArticlesToAvis);
 document.getElementById('openManager').addEventListener('click', ()=>window.open('/login','_blank'));
 document.getElementById('planningCaisserie').addEventListener('click', () => {
   window.open('/reception', '_blank');
 });
 document.getElementById('refreshDone').addEventListener('click', renderDoneTickets);
 document.getElementById('doneSearch').addEventListener('input', e=>{state.doneSearch=e.target.value;renderDoneTickets();});
+document.getElementById('avis-dossier').addEventListener('input', ()=>{
+  state.avisDossierArticles = [];
+  state.avisSelectedArticleIds = new Set();
+});
 setupDrop('dropCaisse','dropInnerCaisse',els.fileInputCaisse,state.filesCaisse);
 setupDrop('dropDevis','dropInnerDevis',els.fileInputDevis,state.filesDevis);
 setupDrop('dropAllerVoir','dropInnerAllerVoir',els.fileInputAllerVoir,state.filesAllerVoir);
