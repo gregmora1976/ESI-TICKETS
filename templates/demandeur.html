@@ -1055,7 +1055,15 @@ async function analyseEnlevementArticles(){
     const fd = new FormData();
     fd.append('file', file);
     const res = await fetch('/api/enlevement/analyser-articles', {method:'POST', body:fd});
-    const data = await res.json();
+    const raw = await res.text();
+    let data = {};
+    try{ data = raw ? JSON.parse(raw) : {}; }
+    catch(_e){
+      if(res.status === 502 || res.status === 503 || res.status === 504){
+        throw new Error('Le serveur a interrompu l’analyse OCR. Réessaie dans quelques secondes.');
+      }
+      throw new Error(`Réponse serveur invalide (HTTP ${res.status}).`);
+    }
     if(!res.ok){ throw new Error(data.error || 'Erreur pendant l’analyse'); }
     state.enlevementAnalysis = data.analysis || {};
     renderEnlevementArticleMatches(state.enlevementAnalysis);
