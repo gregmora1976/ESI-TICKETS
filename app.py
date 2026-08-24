@@ -473,6 +473,147 @@ def _create_article_record(payload):
     return _article_row_to_public(rows[0])
 
 
+def _normalise_article_reference(value):
+    """Normalise une référence uniquement pour le rapprochement bon d'enlèvement / base articles."""
+    return re.sub(r"[^A-Za-z0-9]", "", _as_text(value)).upper().strip()
+
+
+def _find_existing_articles_for_reference(reference, limit=25):
+    """Retourne les articles existants dont la référence correspond exactement après normalisation."""
+    reference = _as_text(reference).strip()
+    if not reference:
+        return []
+
+    # Le filtre ilike limite la quantité de données lues, puis la comparaison normalisée
+    # évite de rater ABC-01 / ABC 01 ou une différence de casse issue de l'OCR.
+    wanted = _normalise_article_reference(reference)
+    token = wanted[:4] or reference.replace('*', '').strip()
+    pattern = '*' + token + '*'
+    rows = supabase_rest_request(
+        'GET', 'articles',
+        'select=*&reference=ilike.' + urllib.parse.quote(pattern, safe='*') +
+        '&order=article_no.desc&limit=' + str(int(limit))
+    ) or []
+
+    matches = []
+    for row in rows:
+        if _normalise_article_reference(row.get('reference')) != wanted:
+            continue
+        article = _article_row_to_public(row)
+        matches.append({
+            'esi_id': _as_text(article.get('esi_id')).strip(),
+            'reference': _as_text(article.get('reference')).strip(),
+            'description': _as_text(article.get('description')).strip(),
+            'dossier': _as_text(article.get('dossier')).strip(),
+            'client': _as_text(article.get('client')).strip(),
+            'projet': _as_text(article.get('projet')).strip(),
+            'lieu_stockage': _as_text(article.get('lieu_stockage')).strip(),
+            'statut_logistique': _as_text(article.get('statut_logistique')).strip(),
+        })
+    return matches
+
+
+def _enlevement_with_article_candidates(parsed):
+    """Ajoute les propositions de la base articles aux lignes reconnues par l'OCR."""
+    result = dict(parsed or {})
+    enriched = []
+    for index, source in enumerate(result.get('items') or []):
+        item = dict(source or {})
+        item['source_index'] = index
+        item['article_candidates'] = _find_existing_articles_for_reference(item.get('reference'))
+        enriched.append(item)
+    result['items'] = enriched
+    return result
+
+
+def _apply_enlevement_article_selections(ticket, selections):
+    """
+    Applique les ESI existants choisis par le demandeur.
+    Les unités marquées 'create' restent sans ESI et seront créées ensuite par
+    _ensure_articles_for_ticket().
+    """
+    enl = dict(ticket.get('enlevement') or {})
+    items = list(enl.get('items') or [])
+    by_index = {}
+    for entry in selections or []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            idx = int(entry.get('index'))
+        except Exception:
+            continue
+        by_index[idx] = entry
+
+    used_esi = set()
+    for idx, original in enumerate(items):
+        item = dict(original or {})
+        qty = _article_quantity(item.get('quantite'), 1)
+        selection = by_index.get(idx) or {}
+        units = selection.get('units') or []
+        chosen = []
+
+        for unit in units[:qty]:
+            if not isinstance(unit, dict) or unit.get('mode') != 'existing':
+                continue
+            esi_id = _as_text(unit.get('esi_id')).strip()
+            if not esi_id or esi_id in used_esi:
+                continue
+
+            safe_esi = urllib.parse.quote(esi_id, safe='-')
+            rows = supabase_rest_request(
+                'GET', 'articles', f'select=esi_id,reference&esi_id=eq.{safe_esi}&limit=1'
+            ) or []
+            if not rows:
+                continue
+            if _normalise_article_reference(rows[0].get('reference')) != _normalise_article_reference(item.get('reference')):
+                continue
+
+            chosen.append(esi_id)
+            used_esi.add(esi_id)
+
+        item['esi_ids'] = chosen
+        item['esi_id'] = chosen[0] if chosen else ''
+        # Les candidats n'ont pas vocation à être stockés dans le ticket final.
+        item.pop('article_candidates', None)
+        item.pop('source_index', None)
+        items[idx] = item
+
+    enl['items'] = items
+    enl['references'] = [
+        _as_text(x.get('reference')).strip() for x in items
+        if _as_text(x.get('reference')).strip()
+    ]
+    ticket['enlevement'] = enl
+
+
+@app.route('/api/enlevement/analyser-articles', methods=['POST'])
+def api_enlevement_analyser_articles():
+    """Analyse un bon d'enlèvement sans créer de ticket et propose les articles existants."""
+    fs = request.files.get('file')
+    if not fs or not fs.filename:
+        return jsonify({'ok': False, 'error': "Bon d'enlèvement PDF manquant"}), 400
+    if not fs.filename.lower().endswith('.pdf'):
+        return jsonify({'ok': False, 'error': "Le bon d'enlèvement doit être un PDF"}), 400
+    content = fs.read()
+    if not content:
+        return jsonify({'ok': False, 'error': 'Le fichier PDF est vide'}), 400
+
+    try:
+        parsed = _extract_enlevement_pdf(content)
+        enriched = _enlevement_with_article_candidates(parsed)
+        return jsonify({
+            'ok': True,
+            'analysis': enriched,
+            'items': enriched.get('items') or [],
+            'existing_count': sum(len(x.get('article_candidates') or []) for x in enriched.get('items') or []),
+        })
+    except ValueError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+    except Exception as e:
+        print(f'[ENLEVEMENT ARTICLES] Erreur analyse : {e}')
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 def _ensure_articles_for_ticket(ticket, save=True):
     """
     Attribue des ESI-x à toutes les unités des lignes de marchandise d'un ticket.
@@ -3624,6 +3765,25 @@ def api_create_ticket():
     is_enlevement = module in ("Demande d'enlèvement", "Demande d'enlevement")
     is_avis_arrivee = module == "Avis d'arrivée"
     avis_arrivee = None
+    enlevement_analyse = None
+    article_selections = []
+    if is_enlevement:
+        raw_analysis = form.get('enlevementAnalyse', '')
+        raw_selections = form.get('articleSelections', '')
+        if raw_analysis:
+            try:
+                enlevement_analyse = json.loads(raw_analysis)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return jsonify({'ok': False, 'error': "Analyse du bon d'enlèvement invalide. Relance l'analyse du PDF."}), 400
+            if not isinstance(enlevement_analyse, dict):
+                return jsonify({'ok': False, 'error': "Analyse du bon d'enlèvement invalide."}), 400
+        if raw_selections:
+            try:
+                article_selections = json.loads(raw_selections)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return jsonify({'ok': False, 'error': 'Sélection des articles invalide.'}), 400
+            if not isinstance(article_selections, list):
+                return jsonify({'ok': False, 'error': 'Sélection des articles invalide.'}), 400
     if is_avis_arrivee:
         raw_avis = form.get('avisArrivee', '')
         try:
@@ -3685,12 +3845,41 @@ def api_create_ticket():
     }
 
     if is_enlevement:
-        ticket['enlevement'] = {
-            'analysis_status': 'pending',
-            'analysis_error': '',
-            'items': [],
-            'references': [],
-        }
+        if enlevement_analyse:
+            clean_analysis = dict(enlevement_analyse)
+            for item in clean_analysis.get('items') or []:
+                if isinstance(item, dict):
+                    item.pop('article_candidates', None)
+                    item.pop('source_index', None)
+            clean_analysis['analysis_status'] = 'ready'
+            clean_analysis['analysis_error'] = ''
+            clean_analysis['analysed_at'] = datetime.now().isoformat()
+            ticket['enlevement'] = clean_analysis
+
+            if clean_analysis.get('client'):
+                ticket['dossier'] = clean_analysis['client']
+            if clean_analysis.get('numero_bon'):
+                ticket['ref'] = clean_analysis['numero_bon']
+            if clean_analysis.get('coordinateur'):
+                ticket['chargeProjet'] = clean_analysis['coordinateur']
+            if clean_analysis.get('exhibition'):
+                ticket['expo'] = clean_analysis['exhibition']
+                ticket['objet'] = clean_analysis['exhibition']
+            if clean_analysis.get('date_enlevement'):
+                try:
+                    dt = datetime.strptime(clean_analysis['date_enlevement'], '%d/%m/%Y')
+                    ticket['dateRdv'] = dt.strftime('%Y-%m-%d')
+                except ValueError:
+                    pass
+
+            _apply_enlevement_article_selections(ticket, article_selections)
+        else:
+            ticket['enlevement'] = {
+                'analysis_status': 'pending',
+                'analysis_error': '',
+                'items': [],
+                'references': [],
+            }
 
     if is_avis_arrivee:
         # Les données spécifiques restent dans raw_json : aucune nouvelle colonne Supabase n'est nécessaire.
@@ -3738,7 +3927,17 @@ def api_create_ticket():
                          "Vérifie que la table Supabase 'articles' a bien été créée."
             }), 500
 
-    if is_enlevement and enlevement_pdf_bytes:
+    if is_enlevement and enlevement_analyse:
+        try:
+            _ensure_articles_for_ticket(ticket, save=True)
+        except Exception as e:
+            print(f"[ARTICLES] Rattachement/création ESI impossible pour {ticket_id}: {e}")
+            return jsonify({
+                'ok': False,
+                'error': "Le ticket a été créé, mais le rattachement des articles a échoué. " + str(e)
+            }), 500
+    elif is_enlevement and enlevement_pdf_bytes:
+        # Compatibilité avec les anciennes pages : sans pré-analyse, on conserve l'ancien fonctionnement.
         worker = threading.Thread(
             target=_analyse_enlevement_ticket_background,
             args=(ticket_id, enlevement_pdf_bytes),
@@ -3750,7 +3949,7 @@ def api_create_ticket():
     return jsonify({
         'ok': True,
         'id': ticket_id,
-        'analysis_status': 'pending' if is_enlevement else None
+        'analysis_status': ('ready' if is_enlevement and enlevement_analyse else ('pending' if is_enlevement else None))
     })
 
 
