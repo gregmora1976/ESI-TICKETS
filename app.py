@@ -586,9 +586,162 @@ def _apply_enlevement_article_selections(ticket, selections):
     ticket['enlevement'] = enl
 
 
+def _extract_enlevement_pdf_preview_low_memory(pdf_bytes):
+    """
+    Analyse légère utilisée uniquement avant la création du ticket.
+
+    Le flux historique faisait deux OCR complets (300 dpi puis OCR spatial 200 dpi),
+    ce qui peut dépasser la mémoire/timeout d'un worker Render. Ici on :
+      - tente d'abord le texte natif ;
+      - OCRise page par page à 180 dpi si nécessaire ;
+      - ne lance PAS le second OCR spatial ;
+      - extrait tout de même les références et les principaux champs texte.
+    """
+    try:
+        from pypdf import PdfReader
+    except Exception as e:
+        raise RuntimeError("Le module pypdf n'est pas installé.") from e
+
+    try:
+        reader = PdfReader(BytesIO(pdf_bytes))
+    except Exception as e:
+        raise ValueError(f"PDF illisible : {e}")
+
+    pages_native = []
+    for page in reader.pages:
+        try:
+            pages_native.append(page.extract_text() or "")
+        except Exception:
+            pages_native.append("")
+
+    native_text = "\n".join(pages_native).strip()
+    text = native_text
+    ocr_used = False
+
+    if len(native_text) < 120:
+        print("[ENLEVEMENT PREVIEW] Texte natif insuffisant, OCR basse mémoire")
+        try:
+            from pdf2image import convert_from_bytes
+            import pytesseract
+        except Exception as e:
+            raise RuntimeError(
+                "OCR indisponible. Vérifie pdf2image, pytesseract, Pillow, tesseract-ocr et poppler-utils."
+            ) from e
+
+        ocr_pages = []
+        page_count = len(reader.pages)
+        with _RECEPTION_OCR_LOCK:
+            for page_no in range(1, page_count + 1):
+                images = []
+                try:
+                    images = convert_from_bytes(
+                        pdf_bytes,
+                        dpi=180,
+                        grayscale=True,
+                        first_page=page_no,
+                        last_page=page_no,
+                        thread_count=1,
+                    )
+                    if not images:
+                        ocr_pages.append("")
+                        continue
+                    image = images[0]
+                    page_text = pytesseract.image_to_string(
+                        image, lang="fra", config="--psm 4"
+                    )
+                    if len((page_text or "").strip()) < 80:
+                        page_text = pytesseract.image_to_string(
+                            image, lang="fra", config="--psm 11"
+                        )
+                    ocr_pages.append(page_text or "")
+                    print(f"[ENLEVEMENT PREVIEW] Page {page_no}/{page_count} OCRisée")
+                finally:
+                    for image in images:
+                        try:
+                            image.close()
+                        except Exception:
+                            pass
+                    images.clear()
+        text = "\n".join(ocr_pages).strip()
+        ocr_used = True
+
+    if not text:
+        raise ValueError("Aucun texte exploitable trouvé dans le bon d'enlèvement.")
+
+    clean_text = text.replace("\r", "")
+    cutoff = re.search(r"\bAssur[eé]\s+par\b", clean_text, re.I)
+    if cutoff:
+        clean_text = clean_text[:cutoff.start()].rstrip()
+
+    lines = _enlevement_lines(clean_text)
+    label_numero = [
+        r"Num[eé]ro\s+de\s+r[eé]f[eé]r(?:ence)?",
+        r"N[°ºo]\s*de\s*r[eé]f[eé]rence",
+        r"R[eé]f[eé]rence\s+du\s+bon",
+    ]
+    common_stops = [
+        r"Client", r"Coordinateur", r"Exhibition", r"Programme\s+du\s+chantier",
+        r"Instructions?", r"Adresse", r"Service"
+    ]
+
+    numero_bon = _value_after_label(lines, label_numero, common_stops)
+    if numero_bon:
+        m = re.search(r"\b([A-Za-z0-9][A-Za-z0-9_-]{3,})\b", numero_bon)
+        numero_bon = m.group(1) if m else ""
+
+    client = _value_after_label(
+        lines, [r"\bClient\b"],
+        [r"Coordinateur", r"Exhibition", r"Programme\s+du\s+chantier", r"Adresse", r"Service"]
+    )
+    coordinateur = _value_after_label(
+        lines, [r"Coordinateur"],
+        [r"Client", r"Exhibition", r"Programme\s+du\s+chantier", r"Adresse", r"Service"]
+    )
+    exhibition = _value_after_label(
+        lines, [r"Exhibition"],
+        [r"Client", r"Coordinateur", r"Programme\s+du\s+chantier", r"Adresse", r"Service"]
+    )
+
+    if client:
+        client = re.split(r"\bExhibition\b", client, maxsplit=1, flags=re.I)[0].strip(" :-|")
+    if coordinateur:
+        coordinateur = re.split(r"\b(?:Client|Exhibition)\b", coordinateur, maxsplit=1, flags=re.I)[0].strip(" :-|")
+    if exhibition:
+        exhibition = re.split(r"\b(?:Client|Coordinateur)\b", exhibition, maxsplit=1, flags=re.I)[0].strip(" :-|")
+
+    programme = _extract_programme_chantier(clean_text)
+    instructions = _extract_instructions_block(clean_text)
+    items = _extract_enlevement_items(instructions) if instructions else []
+    contact_data = _extract_contact_blocks(clean_text)
+
+    display_name = " - ".join(
+        x for x in [_clean_ocr_line(client), _clean_ocr_line(numero_bon)] if x
+    )
+
+    return {
+        "numero_bon": numero_bon,
+        "client": client,
+        "display_name": display_name,
+        "coordinateur": coordinateur,
+        "exhibition": exhibition,
+        "date_enlevement": programme.get("date_enlevement", ""),
+        "service": programme.get("service", ""),
+        "assigne_a": programme.get("assigne_a", ""),
+        "vehicules": programme.get("vehicules", ""),
+        "notes": programme.get("notes", ""),
+        "instructions": instructions,
+        "items": items,
+        "references": [x.get("reference") for x in items if x.get("reference")],
+        "page_count": len(reader.pages),
+        "ocr_used": ocr_used,
+        "raw_text": clean_text,
+        **contact_data,
+    }
+
+
 @app.route('/api/enlevement/analyser-articles', methods=['POST'])
 def api_enlevement_analyser_articles():
-    """Analyse un bon d'enlèvement sans créer de ticket et propose les articles existants."""
+    """Analyse légère d'un bon d'enlèvement et propose les articles existants."""
     fs = request.files.get('file')
     if not fs or not fs.filename:
         return jsonify({'ok': False, 'error': "Bon d'enlèvement PDF manquant"}), 400
@@ -599,7 +752,7 @@ def api_enlevement_analyser_articles():
         return jsonify({'ok': False, 'error': 'Le fichier PDF est vide'}), 400
 
     try:
-        parsed = _extract_enlevement_pdf(content)
+        parsed = _extract_enlevement_pdf_preview_low_memory(content)
         enriched = _enlevement_with_article_candidates(parsed)
         return jsonify({
             'ok': True,
