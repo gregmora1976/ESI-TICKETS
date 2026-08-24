@@ -29,6 +29,17 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
 
 .selection-actions{display:none;align-items:center;gap:8px;flex-wrap:wrap;padding:0 24px 14px}.selection-actions.show{display:flex}.btn.danger{background:#dc2626;border-color:#dc2626;color:#fff}.selection-count{font-size:12px;color:var(--muted);font-weight:800;margin-right:4px}.edit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.edit-field{border:1px solid var(--line);border-radius:12px;padding:10px;background:#fff}.edit-field label{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:900;margin-bottom:7px}.edit-field input,.edit-field textarea{width:100%;border:1px solid #bfd4e3;border-radius:10px;padding:9px 10px;font:inherit}.edit-field textarea{min-height:72px;resize:vertical}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:700px){.edit-grid{grid-template-columns:1fr}}
 @media(max-width:700px){.detail-grid{grid-template-columns:1fr}.detail-value{margin-bottom:6px}}
+
+.import-box{border:1px solid var(--line);border-radius:14px;padding:14px;background:#f8fafc}
+.import-label{display:block;font-size:12px;font-weight:900;margin-bottom:7px;color:#334155}
+.import-input{width:100%;border:1px solid #bfd4e3;background:#eaf6ff;border-radius:12px;padding:11px 12px;font-size:14px}
+.drop-zone{margin-top:14px;border:2px dashed #7dd3fc;border-radius:16px;padding:28px 18px;text-align:center;background:#f0f9ff;cursor:pointer;transition:.15s ease}
+.drop-zone:hover,.drop-zone.dragover{background:#e0f2fe;border-color:#0ea5e9}
+.drop-zone-title{font-weight:950;color:#0369a1;font-size:16px}
+.drop-zone-sub{margin-top:6px;color:var(--muted);font-size:12px}
+.drop-file{margin-top:10px;font-size:13px;font-weight:800;color:#0f172a;overflow-wrap:anywhere}
+.import-status{margin-top:12px;font-size:12px;color:var(--muted);min-height:18px}
+
 </style>
 </head>
 <body>
@@ -41,7 +52,6 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
       </div>
       <div class="actions">
         <button class="btn" onclick="location.href='/gestion-reception'">Gestion réception</button>
-        <input id="excelImportInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none">
         <button class="btn primary" id="excelImportBtn">Importer un Excel</button>
         <button class="btn" id="migrateBtn">Importer les articles existants</button>
         <button class="btn" id="duplicatesBtn">Rechercher les doublons</button>
@@ -85,6 +95,40 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
   </div>
 </div>
 
+
+
+<div class="modal-backdrop" id="excelImportModalBackdrop" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" style="width:min(650px,96vw)">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">Importer des articles Excel</div>
+        <div class="modal-sub">Indique le N° de dossier puis dépose le fichier normalisé ESI TICKETS.</div>
+      </div>
+      <button class="modal-close" id="excelImportModalClose" type="button">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="import-box">
+        <label class="import-label" for="excelImportDossierInput">N° de dossier</label>
+        <input class="import-input" id="excelImportDossierInput" type="text" autocomplete="off" placeholder="Ex. 100524">
+
+        <input id="excelImportInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none">
+
+        <div class="drop-zone" id="excelDropZone" tabindex="0">
+          <div class="drop-zone-title">Glissez votre fichier Excel ici</div>
+          <div class="drop-zone-sub">ou cliquez dans cette zone pour sélectionner un fichier .xlsx</div>
+          <div class="drop-file" id="excelDropFile">Aucun fichier sélectionné</div>
+        </div>
+
+        <div class="import-status" id="excelImportStatus"></div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn" id="excelImportCancelBtn" type="button">Annuler</button>
+        <button class="btn primary" id="excelImportConfirmBtn" type="button" disabled>Importer les articles</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div class="modal-backdrop" id="editModalBackdrop" aria-hidden="true">
   <div class="modal" role="dialog" aria-modal="true" style="width:min(900px,96vw)">
@@ -163,34 +207,116 @@ document.getElementById('searchBtn').onclick=load;
 document.getElementById('resetBtn').onclick=()=>{q.value='';load()};
 q.addEventListener('keydown',e=>{if(e.key==='Enter')load()});
 
+
 const excelImportInput=document.getElementById('excelImportInput');
 const excelImportBtn=document.getElementById('excelImportBtn');
-let excelImportDossier='';
-excelImportBtn.onclick=()=>{
-  const dossier=prompt('N° de dossier à attribuer à tous les articles importés :');
-  if(dossier===null) return;
-  excelImportDossier=String(dossier||'').trim();
-  if(!excelImportDossier){
-    alert('Le N° de dossier est obligatoire pour importer un fichier Excel.');
-    return;
+const excelImportModalBackdrop=document.getElementById('excelImportModalBackdrop');
+const excelImportDossierInput=document.getElementById('excelImportDossierInput');
+const excelDropZone=document.getElementById('excelDropZone');
+const excelDropFile=document.getElementById('excelDropFile');
+const excelImportStatus=document.getElementById('excelImportStatus');
+const excelImportConfirmBtn=document.getElementById('excelImportConfirmBtn');
+let excelSelectedFile=null;
+let excelImportRunning=false;
+
+function updateExcelImportReady(){
+  const dossier=String(excelImportDossierInput.value||'').trim();
+  const validFile=excelSelectedFile && excelSelectedFile.name.toLowerCase().endsWith('.xlsx');
+  excelImportConfirmBtn.disabled=excelImportRunning || !(dossier && validFile);
+}
+function setExcelSelectedFile(file){
+  excelSelectedFile=file||null;
+  excelDropFile.textContent=excelSelectedFile?excelSelectedFile.name:'Aucun fichier sélectionné';
+  updateExcelImportReady();
+}
+function openExcelImportModal(){
+  excelImportDossierInput.value='';
+  excelImportInput.value='';
+  excelImportStatus.textContent='';
+  setExcelSelectedFile(null);
+  excelImportModalBackdrop.classList.add('open');
+  excelImportModalBackdrop.setAttribute('aria-hidden','false');
+  setTimeout(()=>excelImportDossierInput.focus(),50);
+}
+function closeExcelImportModal(){
+  if(excelImportRunning) return;
+  excelImportModalBackdrop.classList.remove('open');
+  excelImportModalBackdrop.setAttribute('aria-hidden','true');
+  excelImportDossierInput.value='';
+  excelImportInput.value='';
+  excelImportStatus.textContent='';
+  setExcelSelectedFile(null);
+}
+excelImportBtn.onclick=openExcelImportModal;
+document.getElementById('excelImportModalClose').onclick=closeExcelImportModal;
+document.getElementById('excelImportCancelBtn').onclick=closeExcelImportModal;
+excelImportModalBackdrop.addEventListener('click',e=>{
+  if(e.target.id==='excelImportModalBackdrop') closeExcelImportModal();
+});
+excelImportDossierInput.addEventListener('input',updateExcelImportReady);
+
+excelDropZone.addEventListener('click',()=>excelImportInput.click());
+excelDropZone.addEventListener('keydown',e=>{
+  if(e.key==='Enter'||e.key===' '){
+    e.preventDefault();
+    excelImportInput.click();
   }
-  excelImportInput.click();
-};
-excelImportInput.addEventListener('change',async()=>{
+});
+excelImportInput.addEventListener('change',()=>{
   const file=excelImportInput.files&&excelImportInput.files[0];
-  if(!file){ excelImportDossier=''; return; }
+  if(!file) return;
   if(!file.name.toLowerCase().endsWith('.xlsx')){
     alert('Sélectionne un fichier Excel .xlsx');
     excelImportInput.value='';
+    setExcelSelectedFile(null);
     return;
   }
-  if(!confirm(`Importer ${file.name} dans les articles ESI TICKETS ?\n\nLes N° ESI seront créés automatiquement et les doublons seront ignorés.`)){
-    excelImportInput.value='';
+  setExcelSelectedFile(file);
+});
+['dragenter','dragover'].forEach(evt=>excelDropZone.addEventListener(evt,e=>{
+  e.preventDefault();
+  e.stopPropagation();
+  excelDropZone.classList.add('dragover');
+}));
+['dragleave','drop'].forEach(evt=>excelDropZone.addEventListener(evt,e=>{
+  e.preventDefault();
+  e.stopPropagation();
+  excelDropZone.classList.remove('dragover');
+}));
+excelDropZone.addEventListener('drop',e=>{
+  const file=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+  if(!file) return;
+  if(!file.name.toLowerCase().endsWith('.xlsx')){
+    alert('Sélectionne un fichier Excel .xlsx');
+    return;
+  }
+  setExcelSelectedFile(file);
+});
+
+excelImportConfirmBtn.onclick=async()=>{
+  const dossier=String(excelImportDossierInput.value||'').trim();
+  const file=excelSelectedFile;
+  if(!dossier){
+    alert('Le N° de dossier est obligatoire.');
+    excelImportDossierInput.focus();
+    return;
+  }
+  if(!file){
+    alert('Glisse ou sélectionne un fichier Excel .xlsx.');
     return;
   }
 
-  const fd=new FormData(); fd.append('file',file); fd.append('dossier',excelImportDossier);
-  excelImportBtn.disabled=true; excelImportBtn.textContent='Import Excel en cours…';
+  if(!confirm(`Importer ${file.name} dans le dossier ${dossier} ?\n\nLes N° ESI seront créés automatiquement et les doublons seront ignorés.`)) return;
+
+  const fd=new FormData();
+  fd.append('file',file);
+  fd.append('dossier',dossier);
+
+  excelImportRunning=true;
+  excelImportConfirmBtn.textContent='Import en cours…';
+  excelImportStatus.textContent='Import Excel en cours…';
+  updateExcelImportReady();
+
   try{
     const r=await fetch('/api/articles/import-excel',{method:'POST',body:fd});
     const d=await apiJson(r);
@@ -198,7 +324,7 @@ excelImportInput.addEventListener('change',async()=>{
 
     const erreurs=(d.errors||[]);
     let message=`Import Excel terminé.\n\n`+
-      `Dossier : ${d.dossier||excelImportDossier}\n`+
+      `Dossier : ${d.dossier||dossier}\n`+
       `Lignes lues : ${d.lignes_lues||0}\n`+
       `Articles demandés : ${d.articles_demandes||0}\n`+
       `Articles créés : ${d.articles_crees||0}\n`+
@@ -210,15 +336,18 @@ excelImportInput.addEventListener('change',async()=>{
       if(apercu) message+=`\n${apercu}`;
     }
     alert(message);
+    excelImportRunning=false;
+    closeExcelImportModal();
     await load();
   }catch(e){
+    excelImportStatus.textContent=e.message||"Erreur lors de l'import Excel.";
     alert(e.message||"Erreur lors de l'import Excel.");
   }finally{
-    excelImportBtn.disabled=false; excelImportBtn.textContent='Importer un Excel';
-    excelImportInput.value='';
-    excelImportDossier='';
+    excelImportRunning=false;
+    excelImportConfirmBtn.textContent='Importer les articles';
+    updateExcelImportReady();
   }
-});
+};
 
 document.getElementById('migrateBtn').onclick=async()=>{
   if(!confirm("Attribuer un numéro ESI aux articles déjà présents dans les tickets ?")) return;
