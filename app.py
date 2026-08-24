@@ -1588,13 +1588,14 @@ def api_articles_import_excel():
             for unit_index in range(already + 1, already + to_create + 1):
                 payload = {
                     # Un import Excel dans la base Articles n'est pas rattache a un ticket.
-                    # Laisser ces trois champs a NULL evite les conflits avec la contrainte
-                    # unique (ticket_id, source_index, unit_index) reservee aux articles issus
-                    # des tickets / avis d'arrivee.
+                    # ticket_id reste a NULL : en PostgreSQL, la contrainte UNIQUE
+                    # (ticket_id, source_index, unit_index) ne bloque pas plusieurs lignes
+                    # lorsque ticket_id est NULL. source_index et unit_index restent renseignes
+                    # car la table impose notamment unit_index NOT NULL.
                     'ticket_id': None,
                     'source_module': 'Import Excel',
-                    'source_index': None,
-                    'unit_index': None,
+                    'source_index': row_num,
+                    'unit_index': unit_index,
                     'reference': values['reference'],
                     'description': values['description'],
                     'dossier': dossier,
