@@ -44,6 +44,7 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
         <input id="excelImportInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none">
         <button class="btn primary" id="excelImportBtn">Importer un Excel</button>
         <button class="btn" id="migrateBtn">Importer les articles existants</button>
+        <button class="btn" id="duplicatesBtn">Rechercher les doublons</button>
       </div>
     </div>
     <div class="searchbar">
@@ -109,6 +110,14 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
 const q=document.getElementById('q'),body=document.getElementById('body'),empty=document.getElementById('empty'),info=document.getElementById('info');
 let currentRows=[];
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+async function apiJson(response){
+  const text=await response.text();
+  if(!text) return {};
+  try{return JSON.parse(text)}catch(e){
+    const clean=text.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
+    throw new Error(clean.slice(0,240)||`Erreur serveur HTTP ${response.status}`);
+  }
+}
 function dossierAuto(a){
   const direct=String(a.dossier||'').trim();
   if(direct && direct!=='-') return direct;
@@ -184,7 +193,7 @@ excelImportInput.addEventListener('change',async()=>{
   excelImportBtn.disabled=true; excelImportBtn.textContent='Import Excel en cours…';
   try{
     const r=await fetch('/api/articles/import-excel',{method:'POST',body:fd});
-    const d=await r.json();
+    const d=await apiJson(r);
     if(!r.ok && r.status!==207) throw new Error(d.error||'Erreur lors de l’import Excel');
 
     const erreurs=(d.errors||[]);
@@ -216,11 +225,52 @@ document.getElementById('migrateBtn').onclick=async()=>{
   const b=document.getElementById('migrateBtn'); b.disabled=true; b.textContent='Import en cours…';
   try{
     const r=await fetch('/api/articles/migrate',{method:'POST'});
-    const d=await r.json();
+    const d=await apiJson(r);
     alert(`Import terminé.\nTickets parcourus : ${d.tickets||0}\nArticles créés : ${d.articles_crees||0}\nErreurs : ${(d.errors||[]).length}`);
     load();
   }catch(e){alert("Erreur lors de l'import.");}
   finally{b.disabled=false;b.textContent='Importer les articles existants';}
+};
+
+document.getElementById('duplicatesBtn').onclick=async()=>{
+  const b=document.getElementById('duplicatesBtn');
+  b.disabled=true; b.textContent='Recherche…';
+  try{
+    const r=await fetch('/api/articles/duplicates',{cache:'no-store'});
+    const d=await apiJson(r);
+    if(!r.ok) throw new Error(d.error||'Impossible de rechercher les doublons');
+
+    if(!(d.duplicate_count||0)){
+      alert('Aucun doublon sûr détecté.');
+      return;
+    }
+
+    let message=`${d.duplicate_count||0} doublon(s) détecté(s) dans ${d.group_count||0} groupe(s).\n`+
+      `${d.deletable_count||0} ligne(s) peuvent être supprimées automatiquement.`;
+    if(d.protected_count){
+      message+=`\n${d.protected_count} ligne(s) sont protégées car liées à un historique.`;
+    }
+    if(!(d.deletable_count||0)){
+      alert(message);
+      return;
+    }
+    message+='\n\nSupprimer maintenant les lignes en double ?\nUne occurrence sera toujours conservée.';
+    if(!confirm(message)) return;
+
+    b.textContent='Suppression des doublons…';
+    const rd=await fetch('/api/articles/delete-duplicates',{method:'POST'});
+    const dd=await apiJson(rd);
+    if(!rd.ok&&rd.status!==207) throw new Error(dd.error||'Erreur lors de la suppression des doublons');
+    let result=`${dd.deleted_count||0} ligne(s) en double supprimée(s).`;
+    if(dd.protected_count) result+=`\n${dd.protected_count} ligne(s) protégée(s) conservée(s).`;
+    if((dd.errors||[]).length) result+=`\nErreurs : ${(dd.errors||[]).length}`;
+    alert(result);
+    await load();
+  }catch(e){
+    alert(e.message||'Erreur lors de la recherche des doublons.');
+  }finally{
+    b.disabled=false; b.textContent='Rechercher les doublons';
+  }
 };
 
 function detailRows(rows){
@@ -246,7 +296,7 @@ async function openArticleDetail(esi){
 
   try{
     const r=await fetch('/api/articles/'+encodeURIComponent(esi),{cache:'no-store'});
-    const d=await r.json();
+    const d=await apiJson(r);
     if(!r.ok) throw new Error(d.error||'Article introuvable');
     const a=d.article||{};
     const dims=[a.longueur_cm,a.largeur_cm,a.hauteur_cm].filter(Boolean).join(' x ');
@@ -373,7 +423,7 @@ document.getElementById('editSaveBtn').onclick=async()=>{
   const btn=document.getElementById('editSaveBtn'); btn.disabled=true; btn.textContent='Enregistrement…';
   try{
     const r=await fetch('/api/articles/bulk-update',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({esi_ids:ids,changes})});
-    const d=await r.json();
+    const d=await apiJson(r);
     if(!r.ok&&r.status!==207) throw new Error(d.error||'Erreur de modification');
     let msg=`${d.updated_count||0} article(s) modifié(s).`;
     if((d.errors||[]).length) msg+=`
@@ -391,7 +441,7 @@ Les articles déjà liés à un ticket ou à une réception seront protégés et
   const btn=document.getElementById('deleteSelectedBtn'); btn.disabled=true; btn.textContent='Suppression…';
   try{
     const r=await fetch('/api/articles/bulk-delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({esi_ids:ids})});
-    const d=await r.json();
+    const d=await apiJson(r);
     if(!r.ok&&r.status!==207) throw new Error(d.error||'Erreur de suppression');
     let msg=`${d.deleted_count||0} article(s) supprimé(s).`;
     if((d.protected||[]).length) msg+=`
