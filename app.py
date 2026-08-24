@@ -894,6 +894,29 @@ def api_articles():
     return jsonify([_article_row_to_public(row) for row in rows])
 
 
+@app.route('/api/articles/by-dossier')
+def api_articles_by_dossier():
+    """Retourne uniquement les articles déjà enregistrés pour un N° de dossier donné."""
+    dossier = _as_text(request.args.get("dossier")).strip()
+    if not dossier:
+        return jsonify({"ok": False, "error": "Le N° de dossier est obligatoire", "articles": []}), 400
+
+    safe_dossier = urllib.parse.quote(dossier, safe='')
+    rows = supabase_rest_request(
+        "GET",
+        "articles",
+        f"select=*&dossier=eq.{safe_dossier}&order=article_no.asc&limit=5000"
+    ) or []
+
+    articles = [_article_row_to_public(row) for row in rows]
+    return jsonify({
+        "ok": True,
+        "dossier": dossier,
+        "count": len(articles),
+        "articles": articles,
+    })
+
+
 def _article_file_link(ticket_id, file_info, kind):
     if not isinstance(file_info, dict) or not file_info.get("name"):
         return None
