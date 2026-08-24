@@ -85,6 +85,15 @@
     .autocomplete-main{font-weight:800;color:#0f172a}
     .autocomplete-sub{font-size:12px;color:#64748b;margin-top:2px}
 
+    .enl-match{margin-top:16px;border:1px solid #bae6fd;background:#f8fcff;border-radius:20px;padding:16px;display:grid;gap:12px}
+    .enl-match-title{font-size:15px;font-weight:900;color:#0369a1}
+    .enl-match-item{border:1px solid var(--line);background:#fff;border-radius:16px;padding:12px;display:grid;gap:9px}
+    .enl-match-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap}
+    .enl-ref{font-weight:900;color:#0f172a}.enl-designation{font-size:12px;color:#64748b}
+    .enl-unit{display:grid;grid-template-columns:90px 1fr;gap:10px;align-items:center}
+    .enl-unit select{width:100%;border:1px solid var(--line);background:#eaf6ff;border-radius:12px;padding:10px;font-size:13px;color:var(--text)}
+    .enl-found{font-size:12px;font-weight:800;color:#15803d}.enl-new{font-size:12px;font-weight:800;color:#b45309}
+    .enl-loading{padding:12px;border-radius:14px;background:#e0f2fe;color:#075985;font-weight:800}
     @media (max-width:1100px){.layout{grid-template-columns:1fr}}
     @media (max-width:720px){h1{font-size:28px}.grid,.grid.three{grid-template-columns:1fr}.hero-top,.content,.card{padding:18px}}
   </style>
@@ -242,8 +251,12 @@
                   <div class="files" id="filesEnlevement" style="margin-top:18px"></div>
                 </div>
               </div>
+              <div id="enlevementArticleMatch" class="enl-match hidden"></div>
               <div style="height:18px"></div>
-              <div class="actions"><button class="btn primary" id="sendEnlevement" type="button">Valider la demande</button></div>
+              <div class="actions">
+                <button class="btn secondary hidden" id="reanalyzeEnlevement" type="button">Relancer l’analyse</button>
+                <button class="btn primary" id="sendEnlevement" type="button">Analyser le bon</button>
+              </div>
             </form>
 
             <form id="form-avis-arrivee" class="card hidden">
@@ -372,6 +385,8 @@ const state = {
   filesDevis:[],
   filesAllerVoir:[],
   filesEnlevement:[],
+  enlevementAnalysis:null,
+  enlevementSelections:[],
   filesAvisArrivee:[],
   doneSearch:'',
   directTicketId: urlParams.get('ticket') || '',
@@ -971,27 +986,119 @@ async function sendAvisArrivee(){
   }
 }
 
-async function sendEnlevement(){
-  if(state.filesEnlevement.length !== 1){
-    showNotice('Merci de déposer un seul bon d’enlèvement au format PDF.');
+function renderEnlevementArticleMatches(analysis){
+  const box = document.getElementById('enlevementArticleMatch');
+  const items = (analysis && analysis.items) || [];
+  state.enlevementSelections = [];
+
+  if(!items.length){
+    box.innerHTML = `<div class="enl-match-title">Articles reconnus</div><div class="small">Aucune référence article n’a été détectée dans le bon. Tu peux malgré tout créer le ticket.</div>`;
+    box.classList.remove('hidden');
     return;
   }
+
+  box.innerHTML = `<div class="enl-match-title">Articles reconnus — sélectionne un article existant ou crée-le</div>`;
+  items.forEach((item,index)=>{
+    const qty = Math.max(1, parseInt(item.quantite || '1',10) || 1);
+    const candidates = item.article_candidates || [];
+    const card = document.createElement('div');
+    card.className = 'enl-match-item';
+    card.innerHTML = `
+      <div class="enl-match-head">
+        <div><div class="enl-ref">${escapeHtml(item.reference || 'Référence non lue')}</div><div class="enl-designation">${escapeHtml(item.designation || '')}</div></div>
+        <div class="${candidates.length ? 'enl-found' : 'enl-new'}">${candidates.length ? candidates.length + ' article(s) trouvé(s)' : 'Aucun article existant'}</div>
+      </div>`;
+
+    const selection = {index, units:[]};
+    for(let unit=0; unit<qty; unit++){
+      const row = document.createElement('div');
+      row.className = 'enl-unit';
+      const select = document.createElement('select');
+      const createOption = document.createElement('option');
+      createOption.value = '__CREATE__';
+      createOption.textContent = 'Créer un nouvel article ESI';
+      select.appendChild(createOption);
+      candidates.forEach(article=>{
+        const option = document.createElement('option');
+        option.value = article.esi_id || '';
+        option.textContent = [article.esi_id, article.description, article.dossier ? 'Dossier '+article.dossier : '', article.client, article.projet].filter(Boolean).join(' — ');
+        select.appendChild(option);
+      });
+      // Quand il existe une correspondance, on la propose par défaut pour la première unité,
+      // sans réutiliser automatiquement le même ESI pour les unités suivantes.
+      if(candidates[unit] && candidates[unit].esi_id) select.value = candidates[unit].esi_id;
+      selection.units.push({mode: select.value === '__CREATE__' ? 'create' : 'existing', esi_id: select.value === '__CREATE__' ? '' : select.value});
+      select.addEventListener('change',()=>{
+        selection.units[unit] = {mode: select.value === '__CREATE__' ? 'create' : 'existing', esi_id: select.value === '__CREATE__' ? '' : select.value};
+      });
+      row.innerHTML = `<div class="small"><strong>Unité ${unit+1}/${qty}</strong></div>`;
+      row.appendChild(select);
+      card.appendChild(row);
+    }
+    state.enlevementSelections.push(selection);
+    box.appendChild(card);
+  });
+  box.classList.remove('hidden');
+}
+
+async function analyseEnlevementArticles(){
+  if(state.filesEnlevement.length !== 1){ showNotice('Merci de déposer un seul bon d’enlèvement au format PDF.'); return false; }
   const file = state.filesEnlevement[0];
-  if(!file.name.toLowerCase().endsWith('.pdf')){
-    showNotice('Le bon d’enlèvement doit être un fichier PDF.');
+  if(!file.name.toLowerCase().endsWith('.pdf')){ showNotice('Le bon d’enlèvement doit être un fichier PDF.'); return false; }
+
+  const box = document.getElementById('enlevementArticleMatch');
+  const sendBtn = document.getElementById('sendEnlevement');
+  box.innerHTML = '<div class="enl-loading">Analyse du bon et recherche dans la base articles…</div>';
+  box.classList.remove('hidden');
+  sendBtn.disabled = true;
+  try{
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch('/api/enlevement/analyser-articles', {method:'POST', body:fd});
+    const data = await res.json();
+    if(!res.ok){ throw new Error(data.error || 'Erreur pendant l’analyse'); }
+    state.enlevementAnalysis = data.analysis || {};
+    renderEnlevementArticleMatches(state.enlevementAnalysis);
+    sendBtn.textContent = 'Créer le ticket';
+    document.getElementById('reanalyzeEnlevement').classList.remove('hidden');
+    return true;
+  }catch(e){
+    state.enlevementAnalysis = null;
+    state.enlevementSelections = [];
+    box.classList.add('hidden');
+    showNotice(`Échec analyse : ${e.message || e}`);
+    return false;
+  }finally{
+    sendBtn.disabled = false;
+  }
+}
+
+async function sendEnlevement(){
+  if(!state.enlevementAnalysis){
+    await analyseEnlevementArticles();
     return;
   }
+  if(state.filesEnlevement.length !== 1){ showNotice('Merci de déposer un seul bon d’enlèvement au format PDF.'); return; }
+  const file = state.filesEnlevement[0];
   try{
     const fd = new FormData();
     fd.append('module','Demande d’enlèvement');
     fd.append('files', file);
+    fd.append('enlevementAnalyse', JSON.stringify(state.enlevementAnalysis));
+    fd.append('articleSelections', JSON.stringify(state.enlevementSelections));
     const res = await fetch('/api/tickets', {method:'POST', body:fd});
     const data = await res.json();
     if(!res.ok){ showNotice(data.error || 'Erreur enregistrement'); return; }
     document.getElementById('form-enlevement').reset();
     state.filesEnlevement.length = 0;
+    state.enlevementAnalysis = null;
+    state.enlevementSelections = [];
+    document.getElementById('enlevementArticleMatch').classList.add('hidden');
+    document.getElementById('enlevementArticleMatch').innerHTML = '';
+    document.getElementById('reanalyzeEnlevement').classList.add('hidden');
+    document.getElementById('sendEnlevement').textContent = 'Analyser le bon';
     renderAllFiles();
-    showSuccess(`Votre demande ${data.id} a bien été enregistrée. Le bon sera analysé automatiquement.`);
+    showSuccess(`Votre demande ${data.id} a bien été enregistrée avec les articles sélectionnés.`);
     window.scrollTo({top:0, behavior:'smooth'});
   }catch(e){
     showNotice(`Échec enregistrement : ${e.message || e}`);
@@ -1511,6 +1618,7 @@ document.getElementById('sendCaisse').addEventListener('click', sendCaisse);
 document.getElementById('sendDevis').addEventListener('click', sendDevis);
 document.getElementById('sendAllerVoir').addEventListener('click', sendAllerVoir);
 document.getElementById('sendEnlevement').addEventListener('click', sendEnlevement);
+document.getElementById('reanalyzeEnlevement').addEventListener('click', analyseEnlevementArticles);
 document.getElementById('sendAvisArrivee').addEventListener('click', sendAvisArrivee);
 document.getElementById('addAvisItem').addEventListener('click', ()=>addAvisItemRow());
 document.getElementById('openManager').addEventListener('click', ()=>window.open('/login','_blank'));
@@ -1523,6 +1631,16 @@ setupDrop('dropCaisse','dropInnerCaisse',els.fileInputCaisse,state.filesCaisse);
 setupDrop('dropDevis','dropInnerDevis',els.fileInputDevis,state.filesDevis);
 setupDrop('dropAllerVoir','dropInnerAllerVoir',els.fileInputAllerVoir,state.filesAllerVoir);
 setupDrop('dropEnlevement','dropInnerEnlevement',els.fileInputEnlevement,state.filesEnlevement);
+['change','drop'].forEach(evt => document.getElementById(evt === 'change' ? 'fileInputEnlevement' : 'dropEnlevement').addEventListener(evt, ()=>{
+  state.enlevementAnalysis = null;
+  state.enlevementSelections = [];
+  const matchBox = document.getElementById('enlevementArticleMatch');
+  matchBox.classList.add('hidden'); matchBox.innerHTML = '';
+  document.getElementById('reanalyzeEnlevement').classList.add('hidden');
+  document.getElementById('sendEnlevement').textContent = 'Analyser le bon';
+  // Dès qu'un seul PDF vient d'être déposé/sélectionné, lance automatiquement le rapprochement.
+  setTimeout(()=>{ if(state.filesEnlevement.length === 1) analyseEnlevementArticles(); }, 50);
+}, true));
 setupDrop('dropAvisArrivee','dropInnerAvisArrivee',els.fileInputAvisArrivee,state.filesAvisArrivee);
 addAvisItemRow();
 
