@@ -695,6 +695,110 @@ def _article_has_history(article):
     return False
 
 
+def _article_dossier_identity(dossier):
+    """Retourne le couple Client / Projet le plus fréquent pour un N° de dossier existant."""
+    dossier = _as_text(dossier).strip()
+    if not dossier:
+        return {"client": "", "projet": ""}
+
+    safe_dossier = urllib.parse.quote(dossier, safe='')
+    rows = supabase_rest_request(
+        "GET", "articles",
+        f"select=client,projet&dossier=eq.{safe_dossier}&limit=10000"
+    ) or []
+
+    counts = {}
+    for row in rows:
+        client = _as_text(row.get("client")).strip()
+        projet = _as_text(row.get("projet")).strip()
+        if not client and not projet:
+            continue
+        key = (client, projet)
+        counts[key] = counts.get(key, 0) + 1
+
+    if not counts:
+        return {"client": "", "projet": ""}
+
+    client, projet = max(counts.items(), key=lambda kv: (kv[1], bool(kv[0][0]), bool(kv[0][1])))[0]
+    return {"client": client, "projet": projet}
+
+
+def _article_sync_dossier_identity(dossier, client=None, projet=None):
+    """Uniformise Client / Projet sur tous les articles portant le même N° de dossier."""
+    dossier = _as_text(dossier).strip()
+    if not dossier:
+        return {"updated_count": 0, "client": "", "projet": ""}
+
+    identity = _article_dossier_identity(dossier)
+    final_client = _as_text(client).strip() if client is not None else identity.get("client", "")
+    final_projet = _as_text(projet).strip() if projet is not None else identity.get("projet", "")
+
+    if not final_client and not final_projet:
+        return {"updated_count": 0, "client": "", "projet": ""}
+
+    safe_dossier = urllib.parse.quote(dossier, safe='')
+    rows = supabase_rest_request(
+        "GET", "articles", f"select=*&dossier=eq.{safe_dossier}&limit=10000"
+    ) or []
+
+    updated = 0
+    now = datetime.now().isoformat()
+    for row in rows:
+        patch = {}
+        if final_client and _as_text(row.get("client")).strip() != final_client:
+            patch["client"] = final_client
+        if final_projet and _as_text(row.get("projet")).strip() != final_projet:
+            patch["projet"] = final_projet
+        if not patch:
+            continue
+
+        merged = dict(row)
+        merged.update(patch)
+        patch["updated_at"] = now
+        patch["search_text"] = _article_search_text(merged)
+        safe_esi = urllib.parse.quote(_as_text(row.get("esi_id")).strip(), safe='-')
+        supabase_rest_request(
+            "PATCH", "articles", f"esi_id=eq.{safe_esi}", patch, prefer="return=minimal"
+        )
+        updated += 1
+
+    return {"updated_count": updated, "client": final_client, "projet": final_projet}
+
+
+def _article_duplicate_key(article):
+    """Clé conservative : ne confond jamais deux unités physiques légitimes."""
+    raw = article.get("raw_json") if isinstance(article.get("raw_json"), dict) else {}
+    source_module = _as_text(article.get("source_module")).strip()
+    ticket_id = _as_text(article.get("ticket_id")).strip()
+    source_index = article.get("source_index")
+    unit_index = article.get("unit_index")
+
+    if ticket_id and source_index is not None and unit_index is not None:
+        return ("ticket", ticket_id, str(source_index), str(unit_index))
+
+    if source_module == "Import Excel":
+        filename = _as_text(raw.get("filename")).strip()
+        dossier = _as_text(article.get("dossier") or raw.get("dossier")).strip()
+        excel_row = raw.get("excel_row") if raw.get("excel_row") is not None else source_index
+        if filename and dossier and excel_row is not None and unit_index is not None:
+            return ("excel", filename.casefold(), dossier.casefold(), str(excel_row), str(unit_index))
+
+    return None
+
+
+def _article_duplicate_groups():
+    rows = supabase_rest_request(
+        "GET", "articles", "select=*&order=article_no.asc&limit=10000"
+    ) or []
+    grouped = {}
+    for row in rows:
+        key = _article_duplicate_key(row)
+        if key is None:
+            continue
+        grouped.setdefault(key, []).append(dict(row))
+    return [items for items in grouped.values() if len(items) > 1]
+
+
 @app.route('/api/articles/bulk-update', methods=['PATCH'])
 def api_articles_bulk_update():
     data = request.get_json(silent=True) or {}
@@ -715,9 +819,19 @@ def api_articles_bulk_update():
     if not clean_changes:
         return jsonify({'ok': False, 'error': 'Aucun champ modifiable fourni'}), 400
 
+    # Si le dossier existe déjà dans la base, Client et Projet sont repris automatiquement.
+    target_dossier = _as_text(clean_changes.get('dossier')).strip() if 'dossier' in clean_changes else ''
+    if target_dossier:
+        identity = _article_dossier_identity(target_dossier)
+        if 'client' not in clean_changes and identity.get('client'):
+            clean_changes['client'] = identity['client']
+        if 'projet' not in clean_changes and identity.get('projet'):
+            clean_changes['projet'] = identity['projet']
+
     updated = []
     errors = []
     now = datetime.now().isoformat()
+    affected_dossiers = set()
 
     with _ARTICLE_LOCK:
         for esi_id in dict.fromkeys(_as_text(x).strip() for x in esi_ids if _as_text(x).strip()):
@@ -742,13 +856,28 @@ def api_articles_bulk_update():
                     patch, prefer='return=minimal'
                 )
                 updated.append(esi_id)
+                dossier_after = _as_text(merged.get('dossier')).strip()
+                if dossier_after:
+                    affected_dossiers.add(dossier_after)
             except Exception as e:
                 errors.append({'esi_id': esi_id, 'error': str(e)})
+
+        # Tous les articles d'un même dossier héritent du même Client / Projet.
+        dossier_sync = []
+        for dossier in sorted(affected_dossiers):
+            try:
+                sync_client = clean_changes.get('client') if 'client' in clean_changes else None
+                sync_projet = clean_changes.get('projet') if 'projet' in clean_changes else None
+                result = _article_sync_dossier_identity(dossier, sync_client, sync_projet)
+                dossier_sync.append({'dossier': dossier, **result})
+            except Exception as e:
+                errors.append({'dossier': dossier, 'error': f'Synchronisation Client/Projet : {e}'})
 
     return jsonify({
         'ok': not errors,
         'updated_count': len(updated),
         'updated': updated,
+        'dossier_sync': dossier_sync,
         'errors': errors,
     }), (200 if not errors else 207)
 
@@ -756,9 +885,11 @@ def api_articles_bulk_update():
 @app.route('/api/articles/bulk-delete', methods=['POST'])
 def api_articles_bulk_delete():
     data = request.get_json(silent=True) or {}
-    esi_ids = data.get('esi_ids') or []
+    esi_ids = list(dict.fromkeys(
+        _as_text(x).strip() for x in (data.get('esi_ids') or []) if _as_text(x).strip()
+    ))
 
-    if not isinstance(esi_ids, list) or not esi_ids:
+    if not esi_ids:
         return jsonify({'ok': False, 'error': 'Aucun article sélectionné'}), 400
 
     deleted = []
@@ -766,30 +897,36 @@ def api_articles_bulk_delete():
     errors = []
 
     with _ARTICLE_LOCK:
-        for esi_id in dict.fromkeys(_as_text(x).strip() for x in esi_ids if _as_text(x).strip()):
-            safe_esi = urllib.parse.quote(esi_id, safe='-')
+        for offset in range(0, len(esi_ids), 100):
+            part = esi_ids[offset:offset + 100]
+            encoded = urllib.parse.quote(','.join(part), safe=',-_')
             try:
                 rows = supabase_rest_request(
-                    'GET', 'articles', f'select=*&esi_id=eq.{safe_esi}&limit=1'
+                    'GET', 'articles', f'select=*&esi_id=in.({encoded})&limit=100'
                 ) or []
-                if not rows:
-                    errors.append({'esi_id': esi_id, 'error': 'Article introuvable'})
-                    continue
+                by_id = {_as_text(r.get('esi_id')).strip(): dict(r) for r in rows}
+                deletable = []
+                for esi_id in part:
+                    article = by_id.get(esi_id)
+                    if not article:
+                        errors.append({'esi_id': esi_id, 'error': 'Article introuvable'})
+                        continue
+                    if _article_has_history(article):
+                        protected.append({
+                            'esi_id': esi_id,
+                            'reason': 'Article lié à un ticket ou à un historique de réception'
+                        })
+                    else:
+                        deletable.append(esi_id)
 
-                article = dict(rows[0])
-                if _article_has_history(article):
-                    protected.append({
-                        'esi_id': esi_id,
-                        'reason': 'Article lié à un ticket ou à un historique de réception'
-                    })
-                    continue
-
-                supabase_rest_request(
-                    'DELETE', 'articles', f'esi_id=eq.{safe_esi}', prefer='return=minimal'
-                )
-                deleted.append(esi_id)
+                if deletable:
+                    encoded_delete = urllib.parse.quote(','.join(deletable), safe=',-_')
+                    supabase_rest_request(
+                        'DELETE', 'articles', f'esi_id=in.({encoded_delete})', prefer='return=minimal'
+                    )
+                    deleted.extend(deletable)
             except Exception as e:
-                errors.append({'esi_id': esi_id, 'error': str(e)})
+                errors.append({'esi_ids': part, 'error': str(e)})
 
     return jsonify({
         'ok': not errors and not protected,
@@ -798,6 +935,86 @@ def api_articles_bulk_delete():
         'protected': protected,
         'errors': errors,
     }), (200 if not errors and not protected else 207)
+
+
+@app.route('/api/articles/duplicates', methods=['GET'])
+def api_articles_duplicates():
+    try:
+        groups = _article_duplicate_groups()
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+    public_groups = []
+    duplicate_count = 0
+    deletable_count = 0
+    protected_count = 0
+    for items in groups:
+        ordered = sorted(items, key=lambda a: int(a.get('article_no') or 0))
+        keep = ordered[0]
+        extras = ordered[1:]
+        deletable = [x for x in extras if not _article_has_history(x)]
+        protected = [x for x in extras if _article_has_history(x)]
+        duplicate_count += len(extras)
+        deletable_count += len(deletable)
+        protected_count += len(protected)
+        public_groups.append({
+            'keep': _article_row_to_public(keep),
+            'duplicates': [_article_row_to_public(x) for x in extras],
+            'deletable_esi_ids': [_as_text(x.get('esi_id')).strip() for x in deletable],
+            'protected_esi_ids': [_as_text(x.get('esi_id')).strip() for x in protected],
+        })
+
+    return jsonify({
+        'ok': True,
+        'group_count': len(groups),
+        'duplicate_count': duplicate_count,
+        'deletable_count': deletable_count,
+        'protected_count': protected_count,
+        'groups': public_groups,
+    })
+
+
+@app.route('/api/articles/delete-duplicates', methods=['POST'])
+def api_articles_delete_duplicates():
+    try:
+        groups = _article_duplicate_groups()
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+    to_delete = []
+    protected = []
+    for items in groups:
+        ordered = sorted(items, key=lambda a: int(a.get('article_no') or 0))
+        for article in ordered[1:]:
+            esi_id = _as_text(article.get('esi_id')).strip()
+            if _article_has_history(article):
+                protected.append(esi_id)
+            elif esi_id:
+                to_delete.append(esi_id)
+
+    deleted = []
+    errors = []
+    with _ARTICLE_LOCK:
+        for offset in range(0, len(to_delete), 100):
+            part = to_delete[offset:offset + 100]
+            encoded = urllib.parse.quote(','.join(part), safe=',-_')
+            try:
+                supabase_rest_request(
+                    'DELETE', 'articles', f'esi_id=in.({encoded})', prefer='return=minimal'
+                )
+                deleted.extend(part)
+            except Exception as e:
+                errors.append({'esi_ids': part, 'error': str(e)})
+
+    return jsonify({
+        'ok': not errors,
+        'deleted_count': len(deleted),
+        'deleted': deleted,
+        'protected_count': len(protected),
+        'protected': protected,
+        'errors': errors,
+    }), (200 if not errors else 207)
+
 
 @app.route('/api/articles/<esi_id>')
 def api_article_detail(esi_id):
@@ -1028,6 +1245,13 @@ def api_articles_import_excel():
 
     now = datetime.now().isoformat()
 
+    # Si ce dossier existe déjà, tous les nouveaux articles reprennent automatiquement
+    # le même Client et le même Projet.
+    try:
+        dossier_identity = _article_dossier_identity(dossier)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'Impossible de lire les informations du dossier : {e}'}), 500
+
     with _ARTICLE_LOCK:
         for row_num in range(2, ws.max_row + 1):
             def cell(field):
@@ -1076,8 +1300,8 @@ def api_articles_import_excel():
                     'reference': values['reference'],
                     'description': values['description'],
                     'dossier': dossier,
-                    'client': '',
-                    'projet': '',
+                    'client': dossier_identity.get('client', ''),
+                    'projet': dossier_identity.get('projet', ''),
                     'ref_caisse': '',
                     'transporteur_ref': '',
                     'longueur_cm': values['longueur_cm'],
@@ -1118,6 +1342,15 @@ def api_articles_import_excel():
         wb.close()
     except Exception:
         pass
+
+    # Uniformise également les anciens articles du dossier si une identité Client/Projet existe.
+    try:
+        if dossier_identity.get('client') or dossier_identity.get('projet'):
+            _article_sync_dossier_identity(
+                dossier, dossier_identity.get('client') or None, dossier_identity.get('projet') or None
+            )
+    except Exception as e:
+        stats['errors'].append({'ligne': 0, 'error': f'Synchronisation dossier : {e}'})
 
     return jsonify({
         'ok': len(stats['errors']) == 0,
