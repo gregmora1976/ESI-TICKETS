@@ -141,7 +141,7 @@
               </div>
               <div class="ticket-tab-row">
                 <button class="tab" id="tab-enlevement" type="button">Demande d’enlèvement</button>
-                <button class="tab" id="tab-avis-arrivee" type="button">Avis d’arrivée</button>
+                <button class="tab" id="tab-avis-arrivee" type="button">Créer RECEPTION</button>
               </div>
             </div>
           </div>
@@ -275,7 +275,7 @@
             </form>
 
             <form id="form-avis-arrivee" class="card hidden">
-              <div class="section-title">Avis d’arrivée</div>
+              <div class="section-title">Créer RECEPTION</div>
               <div class="small">Notification d’arrivée de marchandise. Le volume et la surface sont calculés automatiquement à partir des dimensions en cm.</div>
 
               <div class="arrival-block">
@@ -323,7 +323,7 @@
                   <table class="arrival-table">
                     <thead>
                       <tr>
-                        <th>Réf. item</th><th>Description de la marchandise</th>
+                        <th>N° ESI</th><th>Réf. item</th><th>Description de la marchandise</th>
                         <th>Long. (cm)</th><th>Larg. (cm)</th><th>Haut. (cm)</th>
                         <th>Vol. (m³)</th><th>Surf. (m²)</th><th>Poids (kg)</th><th>Qté</th><th></th>
                       </tr>
@@ -357,7 +357,7 @@
               </div>
 
               <div style="height:18px"></div>
-              <div class="actions"><button class="btn primary" id="sendAvisArrivee" type="button">Envoyer l’avis d’arrivée</button></div>
+              <div class="actions"><button class="btn primary" id="sendAvisArrivee" type="button">Créer l’évènement</button></div>
             </form>
           </div>
 
@@ -914,6 +914,7 @@ function addAvisItemRow(item={}){
   const esiId = String(item.esi_id || ((item.esi_ids || [])[0] || '')).trim();
   if(esiId) row.dataset.esiId = esiId;
   row.innerHTML = `
+    <td><input class="input item-esi readonly" readonly value="${escapeHtml(esiId)}" placeholder="-"></td>
     <td><input class="input item-ref" value="${escapeHtml(item.reference || '')}"></td>
     <td><input class="input item-description" value="${escapeHtml(item.description || '')}"></td>
     <td><input class="input item-longueur" type="number" min="0" step="any" value="${escapeHtml(item.longueur ?? item.longueur_cm ?? '')}"></td>
