@@ -4798,11 +4798,22 @@ def _build_blr_pdf_bytes(ticket, bon):
 
 
 def _build_labels_pdf_bytes(labels, kind="article"):
-    """Génère un PDF d'étiquettes, une étiquette A6 par page, sans dépendance externe."""
+    """Génère un PDF d'étiquettes, une étiquette par page, sans dépendance externe.
+
+    - Étiquettes COLIS : format exact 100 x 148 mm pour l'étiqueteuse.
+    - Étiquettes ARTICLE : format historique inchangé (A6).
+    """
     import io
     import textwrap as _tw
 
-    page_width, page_height = 298, 420  # A6 portrait en points
+    # 1 mm = 72 / 25,4 points PDF.
+    # Le format COLIS doit être exactement 100 x 148 mm, sans mise à l'échelle A4/A6.
+    if kind == "colis":
+        page_width = 100 * 72 / 25.4
+        page_height = 148 * 72 / 25.4
+    else:
+        page_width, page_height = 298, 420  # Format ARTICLE historique inchangé.
+
     margin = 24
 
     def pdf_escape(value):
