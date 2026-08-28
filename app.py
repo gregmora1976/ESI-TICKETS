@@ -4994,10 +4994,16 @@ def _build_labels_pdf_bytes(labels, kind="article"):
             f'({pdf_escape(title)}) Tj', 'ET'
         ]
 
-        principal = _as_text(label.get('principal')).strip()
-        y = page_height - 100
+        # Le N° COLIS reste l'information principale en grand.
+        # Le N° BON DE RECEPTION est affiché plus bas à la place de l'ancien champ Bon.
+        principal = _as_text(label.get('colis') or label.get('principal')).strip()
+        y = page_height - 88
         if principal:
-            # Référence du colis très visible, comme sur le visuel validé.
+            stream_lines += [
+                'BT', '/F2 9 Tf', f'{margin} {y:.2f} Td',
+                '(N\260 COLIS) Tj', 'ET'
+            ]
+            y -= 18
             principal_size = 23 if len(principal) <= 18 else 19
             for part in _tw.wrap(principal, width=22) or [principal]:
                 stream_lines += [
@@ -5016,9 +5022,8 @@ def _build_labels_pdf_bytes(labels, kind="article"):
         fields = [
             ('dossier', 'Dossier'),
             ('client', 'Client'),
-            ('colis', 'Colis'),
             ('lieu', 'Stockage'),
-            ('bon', 'Bon'),
+            ('bon', 'N° Bon reception'),
         ]
         for key, field_label in fields:
             value = _as_text(label.get(key)).strip()
