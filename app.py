@@ -4798,27 +4798,150 @@ def _build_blr_pdf_bytes(ticket, bon):
 
 
 def _build_labels_pdf_bytes(labels, kind="article"):
-    """Génère un PDF d'étiquettes, une étiquette par page, sans dépendance externe.
+    """Génère un PDF d'étiquettes, une étiquette par page.
 
-    - Étiquettes COLIS : format exact 100 x 148 mm pour l'étiqueteuse.
-    - Étiquettes ARTICLE : format historique inchangé (A6).
+    - Étiquettes COLIS : format exact 100 x 148 mm avec le vrai logo ESI
+      chargé depuis static/logo.png et affiché en haut à gauche sans déformation.
+    - Étiquettes ARTICLE : format historique inchangé (A6), sans logo ajouté.
     """
     import io
     import textwrap as _tw
 
-    # 1 mm = 72 / 25,4 points PDF.
-    # Le format COLIS doit être exactement 100 x 148 mm, sans mise à l'échelle A4/A6.
-    if kind == "colis":
-        page_width = 100 * 72 / 25.4
-        page_height = 148 * 72 / 25.4
-    else:
-        page_width, page_height = 298, 420  # Format ARTICLE historique inchangé.
+    # ------------------------------------------------------------------
+    # Étiquettes ARTICLE : comportement historique strictement inchangé.
+    # ------------------------------------------------------------------
+    if kind != "colis":
+        page_width, page_height = 298, 420
+        margin = 24
 
-    margin = 24
+        def pdf_escape(value):
+            value = _as_text(value)
+            return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+        objects = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            None,
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
+        ]
+        page_refs = []
+
+        for label in labels or [{"titre": "ETIQUETTE"}]:
+            content_obj_num = len(objects) + 1
+            lines = []
+
+            title = _as_text(label.get("titre") or "ARTICLE").strip()
+            lines.append(("B", 20, title))
+
+            principal = _as_text(label.get("principal")).strip()
+            if principal:
+                for part in _tw.wrap(principal, width=28) or [principal]:
+                    lines.append(("B", 18, part))
+
+            for key in ("esi_id", "dossier", "client", "reference", "designation", "quantite", "colis", "lieu", "bon"):
+                value = _as_text(label.get(key)).strip()
+                if not value:
+                    continue
+                label_name = {
+                    "esi_id": "N° ESI",
+                    "dossier": "Dossier",
+                    "client": "Client",
+                    "reference": "Article",
+                    "designation": "Designation",
+                    "quantite": "Quantite",
+                    "colis": "Colis",
+                    "lieu": "Stockage",
+                    "bon": "Bon",
+                }.get(key, key)
+                text_line = f"{label_name} : {value}"
+                for part in _tw.wrap(text_line, width=42) or [text_line]:
+                    lines.append(("R", 11, part))
+
+            stream_lines = []
+            y = page_height - margin - 20
+            for font_kind, size, line in lines:
+                font = "F2" if font_kind == "B" else "F1"
+                stream_lines += [
+                    "BT",
+                    f"/{font} {size} Tf",
+                    f"{margin} {y} Td",
+                    f"({pdf_escape(line)}) Tj",
+                    "ET",
+                ]
+                y -= max(size + 8, 18)
+
+            stream = "\n".join(stream_lines).encode("latin-1", errors="replace")
+            objects.append(
+                f"<< /Length {len(stream)} >>\nstream\n".encode("latin-1")
+                + stream + b"\nendstream"
+            )
+            page_obj_num = len(objects) + 1
+            page = (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width} {page_height}] "
+                f"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {content_obj_num} 0 R >>"
+            )
+            objects.append(page.encode("latin-1"))
+            page_refs.append(f"{page_obj_num} 0 R")
+
+        objects[1] = (
+            f"<< /Type /Pages /Kids [{' '.join(page_refs)}] /Count {len(page_refs)} >>"
+        ).encode("latin-1")
+
+        pdf = io.BytesIO()
+        pdf.write(b"%PDF-1.4\n")
+        offsets = []
+        for i, obj in enumerate(objects, start=1):
+            offsets.append(pdf.tell())
+            pdf.write(f"{i} 0 obj\n".encode("latin-1"))
+            pdf.write(obj)
+            pdf.write(b"\nendobj\n")
+
+        xref_pos = pdf.tell()
+        pdf.write(f"xref\n0 {len(objects)+1}\n".encode("latin-1"))
+        pdf.write(b"0000000000 65535 f \n")
+        for offset in offsets:
+            pdf.write(f"{offset:010d} 00000 n \n".encode("latin-1"))
+        pdf.write(
+            (
+                f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\n"
+                f"startxref\n{xref_pos}\n%%EOF"
+            ).encode("latin-1")
+        )
+        return pdf.getvalue()
+
+    # ------------------------------------------------------------------
+    # Étiquettes COLIS : 100 x 148 mm + vrai logo ESI en haut à gauche.
+    # ------------------------------------------------------------------
+    page_width = 100 * 72 / 25.4
+    page_height = 148 * 72 / 25.4
+    margin = 16
 
     def pdf_escape(value):
         value = _as_text(value)
         return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    # Charge le vrai logo du projet. Il n'est jamais recadré : on conserve son ratio.
+    logo_path = APP_DIR / 'static' / 'logo.png'
+    logo_image_bytes = None
+    logo_w = logo_h = None
+    if logo_path.exists():
+        try:
+            from PIL import Image
+            with Image.open(logo_path) as im:
+                # Le PDF utilise un JPEG RGB afin d'embarquer l'image sans dépendance externe.
+                if im.mode != 'RGB':
+                    bg = Image.new('RGB', im.size, 'white')
+                    if 'A' in im.getbands():
+                        bg.paste(im, mask=im.getchannel('A'))
+                    else:
+                        bg.paste(im.convert('RGB'))
+                    im = bg
+                logo_w, logo_h = im.size
+                buf = io.BytesIO()
+                im.save(buf, format='JPEG', quality=95)
+                logo_image_bytes = buf.getvalue()
+        except Exception as e:
+            print(f'[ETIQUETTE COLIS] Logo ESI non charge: {e}')
 
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -4826,91 +4949,137 @@ def _build_labels_pdf_bytes(labels, kind="article"):
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
     ]
+
+    image_obj_num = None
+    if logo_image_bytes and logo_w and logo_h:
+        image_obj_num = len(objects) + 1
+        image_obj = (
+            f'<< /Type /XObject /Subtype /Image /Width {logo_w} /Height {logo_h} '
+            f'/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {len(logo_image_bytes)} >>\nstream\n'
+        ).encode('latin-1') + logo_image_bytes + b'\nendstream'
+        objects.append(image_obj)
+
     page_refs = []
 
-    for label in labels or [{"titre": "ETIQUETTE"}]:
-        content_obj_num = len(objects) + 1
-        lines = []
+    for label in labels or [{"titre": "COLIS"}]:
+        stream_lines = []
 
-        title = _as_text(label.get("titre") or ("ARTICLE" if kind == "article" else "COLIS")).strip()
-        lines.append(("B", 20, title))
+        # Logo en haut à gauche, avec zone réservée 92 x 48 points.
+        logo_box_x = margin
+        logo_box_y = page_height - 62
+        logo_box_w = 92
+        logo_box_h = 42
+        if image_obj_num:
+            scale = min(logo_box_w / float(logo_w), logo_box_h / float(logo_h))
+            draw_w = logo_w * scale
+            draw_h = logo_h * scale
+            draw_x = logo_box_x
+            draw_y = logo_box_y + (logo_box_h - draw_h) / 2
+            stream_lines += [
+                'q',
+                f'{draw_w:.2f} 0 0 {draw_h:.2f} {draw_x:.2f} {draw_y:.2f} cm',
+                '/Im1 Do',
+                'Q',
+            ]
+        else:
+            # Secours uniquement si static/logo.png est absent sur le serveur.
+            stream_lines += [
+                'BT', '/F2 20 Tf', f'{margin} {page_height - 40:.2f} Td', '(ESI) Tj', 'ET'
+            ]
 
-        principal = _as_text(label.get("principal")).strip()
+        # Titre COLIS en haut à droite du logo.
+        title = _as_text(label.get('titre') or 'COLIS').strip()
+        stream_lines += [
+            'BT', '/F2 17 Tf', f'{page_width - 72:.2f} {page_height - 36:.2f} Td',
+            f'({pdf_escape(title)}) Tj', 'ET'
+        ]
+
+        principal = _as_text(label.get('principal')).strip()
+        y = page_height - 100
         if principal:
-            for part in _tw.wrap(principal, width=28) or [principal]:
-                lines.append(("B", 18, part))
+            # Référence du colis très visible, comme sur le visuel validé.
+            principal_size = 23 if len(principal) <= 18 else 19
+            for part in _tw.wrap(principal, width=22) or [principal]:
+                stream_lines += [
+                    'BT', f'/F2 {principal_size} Tf', f'{margin} {y:.2f} Td',
+                    f'({pdf_escape(part)}) Tj', 'ET'
+                ]
+                y -= principal_size + 9
 
-        for key in ("esi_id", "dossier", "client", "reference", "designation", "quantite", "colis", "lieu", "bon"):
+        # Trait de séparation.
+        y -= 2
+        stream_lines += [
+            '0.25 w', f'{margin} {y:.2f} m {page_width - margin:.2f} {y:.2f} l S'
+        ]
+        y -= 22
+
+        fields = [
+            ('dossier', 'Dossier'),
+            ('client', 'Client'),
+            ('colis', 'Colis'),
+            ('lieu', 'Stockage'),
+            ('bon', 'Bon'),
+        ]
+        for key, field_label in fields:
             value = _as_text(label.get(key)).strip()
             if not value:
                 continue
-            label_name = {
-                "esi_id": "N° ESI",
-                "dossier": "Dossier",
-                "client": "Client",
-                "reference": "Article",
-                "designation": "Designation",
-                "quantite": "Quantite",
-                "colis": "Colis",
-                "lieu": "Stockage",
-                "bon": "Bon",
-            }.get(key, key)
-            text = f"{label_name} : {value}"
-            for part in _tw.wrap(text, width=42) or [text]:
-                lines.append(("R", 11, part))
-
-        stream_lines = []
-        y = page_height - margin - 20
-        for font_kind, size, line in lines:
-            font = "F2" if font_kind == "B" else "F1"
             stream_lines += [
-                "BT",
-                f"/{font} {size} Tf",
-                f"{margin} {y} Td",
-                f"({pdf_escape(line)}) Tj",
-                "ET",
+                'BT', '/F2 9 Tf', f'{margin} {y:.2f} Td',
+                f'({pdf_escape(field_label.upper())}) Tj', 'ET'
             ]
-            y -= max(size + 8, 18)
+            y -= 14
+            wrapped = _tw.wrap(value, width=34) or [value]
+            for part in wrapped[:3]:
+                stream_lines += [
+                    'BT', '/F1 11 Tf', f'{margin} {y:.2f} Td',
+                    f'({pdf_escape(part)}) Tj', 'ET'
+                ]
+                y -= 14
+            y -= 8
 
         stream = "\n".join(stream_lines).encode("latin-1", errors="replace")
+        content_obj_num = len(objects) + 1
         objects.append(
             f"<< /Length {len(stream)} >>\nstream\n".encode("latin-1")
             + stream + b"\nendstream"
         )
+
         page_obj_num = len(objects) + 1
+        xobject = f" /XObject << /Im1 {image_obj_num} 0 R >>" if image_obj_num else ""
         page = (
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width} {page_height}] "
-            f"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {content_obj_num} 0 R >>"
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width:.4f} {page_height:.4f}] "
+            f"/Resources << /Font << /F1 3 0 R /F2 4 0 R >>{xobject} >> "
+            f"/Contents {content_obj_num} 0 R >>"
         )
-        objects.append(page.encode("latin-1"))
-        page_refs.append(f"{page_obj_num} 0 R")
+        objects.append(page.encode('latin-1'))
+        page_refs.append(f'{page_obj_num} 0 R')
 
     objects[1] = (
         f"<< /Type /Pages /Kids [{' '.join(page_refs)}] /Count {len(page_refs)} >>"
-    ).encode("latin-1")
+    ).encode('latin-1')
 
     pdf = io.BytesIO()
-    pdf.write(b"%PDF-1.4\n")
+    pdf.write(b'%PDF-1.4\n')
     offsets = []
     for i, obj in enumerate(objects, start=1):
         offsets.append(pdf.tell())
-        pdf.write(f"{i} 0 obj\n".encode("latin-1"))
+        pdf.write(f'{i} 0 obj\n'.encode('latin-1'))
         pdf.write(obj)
-        pdf.write(b"\nendobj\n")
+        pdf.write(b'\nendobj\n')
 
     xref_pos = pdf.tell()
-    pdf.write(f"xref\n0 {len(objects)+1}\n".encode("latin-1"))
-    pdf.write(b"0000000000 65535 f \n")
+    pdf.write(f'xref\n0 {len(objects)+1}\n'.encode('latin-1'))
+    pdf.write(b'0000000000 65535 f \n')
     for offset in offsets:
-        pdf.write(f"{offset:010d} 00000 n \n".encode("latin-1"))
+        pdf.write(f'{offset:010d} 00000 n \n'.encode('latin-1'))
     pdf.write(
         (
-            f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\n"
-            f"startxref\n{xref_pos}\n%%EOF"
-        ).encode("latin-1")
+            f'trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\n'
+            f'startxref\n{xref_pos}\n%%EOF'
+        ).encode('latin-1')
     )
     return pdf.getvalue()
-
 
 def _existing_colis_numbers(numero_dossier):
     """Retourne les numéros de colis déjà utilisés pour un dossier."""
