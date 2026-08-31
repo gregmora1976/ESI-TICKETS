@@ -4146,6 +4146,218 @@ def api_create_ticket():
     })
 
 
+def _reception_qty_int(value, default=0):
+    try:
+        return max(0, int(float(str(value).replace(',', '.'))))
+    except Exception:
+        return default
+
+
+def _rebuild_ticket_after_reception_cancel(ticket, is_avis):
+    """Reconstruit les quantités et états articles uniquement depuis les réceptions encore actives."""
+    if is_avis:
+        container = dict(ticket.get('avisArrivee') or ticket.get('avis_arrivee') or {})
+        active = list(ticket.get('receptionsAvisArrivee') or [])
+        container_key = 'avisArrivee'
+    else:
+        container = dict(ticket.get('enlevement') or {})
+        active = list(container.get('bons_livraison') or [])
+        container_key = 'enlevement'
+
+    items = [dict(x or {}) for x in (container.get('items') or [])]
+    for idx, item in enumerate(items):
+        total = 0
+        item_history = []
+        latest = None
+        for rec in active:
+            for rec_item in rec.get('items') or []:
+                try:
+                    rec_idx = int(rec_item.get('index'))
+                except Exception:
+                    continue
+                if rec_idx != idx:
+                    continue
+                qty = _reception_qty_int(rec_item.get('quantite'), 0)
+                total += qty
+                latest = rec
+                item_history.append({
+                    'reference': _as_text(rec.get('reference')).strip(),
+                    'date': rec.get('receptionnee_le') or rec.get('created_at') or rec.get('date_reception') or '',
+                    'quantite': qty,
+                    'receptionne_par': rec.get('receptionne_par') or '',
+                    'lieu_stockage': rec.get('lieu_stockage') or '',
+                })
+
+        planned = max(1, _reception_qty_int(item.get('quantite') or 1, 1))
+        item['quantite_recue_totale'] = total
+        item['receptionne'] = total >= planned
+        item['receptions'] = item_history
+        if latest is not None and total > 0:
+            item['receptionne_le'] = latest.get('receptionnee_le') or latest.get('created_at') or ''
+            item['receptionne_par'] = latest.get('receptionne_par') or ''
+            item['lieu_stockage'] = latest.get('lieu_stockage') or ''
+        else:
+            item['receptionne_le'] = ''
+            item['receptionne_par'] = ''
+            item['lieu_stockage'] = ''
+        items[idx] = item
+
+    container['items'] = items
+    ticket[container_key] = container
+    if is_avis:
+        ticket['receptionAvisArrivee'] = active[-1] if active else None
+    return ticket
+
+
+def _active_reception_for_esi(ticket, esi_id, is_avis):
+    if is_avis:
+        active = list(ticket.get('receptionsAvisArrivee') or [])
+    else:
+        active = list((ticket.get('enlevement') or {}).get('bons_livraison') or [])
+    found = None
+    for rec in active:
+        for rec_item in rec.get('items') or []:
+            ids = [_as_text(x).strip() for x in (rec_item.get('esi_ids') or [])]
+            if esi_id in ids:
+                colis_map = rec_item.get('colis_par_esi') if isinstance(rec_item.get('colis_par_esi'), dict) else {}
+                found = (rec, _as_text(colis_map.get(esi_id)).strip())
+    return found
+
+
+def _sync_articles_after_reception_cancel(ticket, cancelled, is_avis):
+    """Retire l'historique logistique de la réception annulée sans bloquer l'annulation du ticket."""
+    affected = []
+    for esi_id in cancelled.get('article_esi_ids') or []:
+        esi_id = _as_text(esi_id).strip()
+        if esi_id and esi_id not in affected:
+            affected.append(esi_id)
+    for rec_item in cancelled.get('items') or []:
+        for esi_id in rec_item.get('esi_ids') or []:
+            esi_id = _as_text(esi_id).strip()
+            if esi_id and esi_id not in affected:
+                affected.append(esi_id)
+
+    cancelled_ref = _as_text(cancelled.get('reference')).strip()
+    for esi_id in affected:
+        try:
+            safe_esi = urllib.parse.quote(esi_id, safe='-')
+            rows = supabase_rest_request('GET', 'articles', f'select=*&esi_id=eq.{safe_esi}&limit=1') or []
+            if not rows:
+                continue
+            article = dict(rows[0])
+            raw = article.get('raw_json') if isinstance(article.get('raw_json'), dict) else {}
+            raw = dict(raw or {})
+
+            old_history = list(raw.get('receptions') or [])
+            removed = [r for r in old_history if _as_text(r.get('reception_ref')).strip() == cancelled_ref]
+            raw['receptions'] = [r for r in old_history if _as_text(r.get('reception_ref')).strip() != cancelled_ref]
+            cancelled_history = list(raw.get('receptions_annulees') or [])
+            for entry in removed:
+                copy = dict(entry)
+                copy['annulee_le'] = cancelled.get('annulee_le') or datetime.now().isoformat()
+                cancelled_history.append(copy)
+            raw['receptions_annulees'] = cancelled_history
+
+            latest = _active_reception_for_esi(ticket, esi_id, is_avis)
+            if latest:
+                rec, colis = latest
+                raw['colis_actuel'] = colis
+                patch = {
+                    'lieu_stockage': _as_text(rec.get('lieu_stockage')).strip(),
+                    'statut_logistique': 'Réceptionné',
+                    'dernier_colis': colis,
+                    'derniere_reception_ref': _as_text(rec.get('reference')).strip(),
+                    'updated_at': datetime.now().isoformat(),
+                    'raw_json': raw,
+                }
+            else:
+                raw['colis_actuel'] = ''
+                patch = {
+                    'lieu_stockage': '',
+                    'statut_logistique': 'Créé',
+                    'dernier_colis': '',
+                    'derniere_reception_ref': '',
+                    'updated_at': datetime.now().isoformat(),
+                    'raw_json': raw,
+                }
+            merged = dict(article)
+            merged.update(patch)
+            patch['search_text'] = _article_search_text(merged)
+            supabase_rest_request('PATCH', 'articles', f'esi_id=eq.{safe_esi}', patch, prefer='return=minimal')
+        except Exception as e:
+            print(f'[ANNULATION RECEPTION] Article {esi_id}: {e}')
+
+
+def _cancel_specific_reception(ticket, reference):
+    reference = _as_text(reference).strip()
+    if not reference:
+        raise ValueError('Référence de réception manquante')
+
+    module = _as_text(ticket.get('module')).replace('’', "'").strip()
+    is_avis = module == "Avis d'arrivée" or _as_text(ticket.get('id')).startswith('ARR-')
+    cancelled = None
+
+    if is_avis:
+        active = list(ticket.get('receptionsAvisArrivee') or [])
+        kept = []
+        for rec in active:
+            if cancelled is None and _as_text(rec.get('reference')).strip() == reference:
+                cancelled = dict(rec)
+            else:
+                kept.append(rec)
+        if cancelled is None:
+            raise ValueError(f'Réception {reference} introuvable parmi les réceptions actives')
+        cancelled['annulee'] = True
+        cancelled['annulee_le'] = datetime.now().isoformat()
+        ticket['receptionsAvisArrivee'] = kept
+        history = list(ticket.get('receptionsAvisArriveeAnnulees') or [])
+        history.append(cancelled)
+        ticket['receptionsAvisArriveeAnnulees'] = history
+    else:
+        enl = dict(ticket.get('enlevement') or {})
+        active = list(enl.get('bons_livraison') or [])
+        kept = []
+        for rec in active:
+            if cancelled is None and _as_text(rec.get('reference')).strip() == reference:
+                cancelled = dict(rec)
+            else:
+                kept.append(rec)
+        if cancelled is None:
+            raise ValueError(f'Réception {reference} introuvable parmi les réceptions actives')
+        cancelled['annulee'] = True
+        cancelled['annulee_le'] = datetime.now().isoformat()
+        enl['bons_livraison'] = kept
+        history = list(enl.get('bons_livraison_annules') or [])
+        history.append(cancelled)
+        enl['bons_livraison_annules'] = history
+        ticket['enlevement'] = enl
+
+    _rebuild_ticket_after_reception_cancel(ticket, is_avis)
+    ticket['updatedAt'] = datetime.now().isoformat()
+    save_ticket(ticket)
+
+    # Vérification côté base AVANT de dire OK au navigateur.
+    checked = load_ticket(ticket.get('id'))
+    if not checked:
+        raise RuntimeError('Impossible de relire le ticket après annulation')
+    if is_avis:
+        still_active = any(
+            _as_text(r.get('reference')).strip() == reference
+            for r in (checked.get('receptionsAvisArrivee') or [])
+        )
+    else:
+        still_active = any(
+            _as_text(r.get('reference')).strip() == reference
+            for r in ((checked.get('enlevement') or {}).get('bons_livraison') or [])
+        )
+    if still_active:
+        raise RuntimeError(f'La réception {reference} est encore active après sauvegarde Supabase')
+
+    # La base Articles est synchronisée seulement après validation de la sauvegarde du ticket.
+    _sync_articles_after_reception_cancel(checked, cancelled, is_avis)
+    return checked
+
+
 @app.route('/api/tickets/<ticket_id>', methods=['PUT'])
 def api_update_ticket(ticket_id):
     ticket = load_ticket(ticket_id)
@@ -4153,6 +4365,29 @@ def api_update_ticket(ticket_id):
         return jsonify({'error': 'Ticket introuvable'}), 404
 
     data = request.get_json(silent=True) or {}
+
+    if _as_text(data.get('action')).strip() == 'annuler_reception':
+        reference = _as_text(data.get('reference')).strip()
+        try:
+            refreshed = _cancel_specific_reception(ticket, reference)
+            module = _as_text(refreshed.get('module')).replace('’', "'").strip()
+            is_avis = module == "Avis d'arrivée" or _as_text(refreshed.get('id')).startswith('ARR-')
+            active_count = (
+                len(refreshed.get('receptionsAvisArrivee') or [])
+                if is_avis else
+                len((refreshed.get('enlevement') or {}).get('bons_livraison') or [])
+            )
+            return jsonify({
+                'ok': True,
+                'action': 'annuler_reception',
+                'reference': reference,
+                'active_receptions': active_count,
+            })
+        except ValueError as e:
+            return jsonify({'ok': False, 'error': str(e)}), 404
+        except Exception as e:
+            print(f'[ANNULATION RECEPTION] {ticket_id} {reference}: {e}')
+            return jsonify({'ok': False, 'error': str(e)}), 500
 
     editable_fields = [
         'dossier',
@@ -4357,7 +4592,7 @@ def api_reception_avis_arrivee(ticket_id):
         existing_refs = []
         try:
             for t in list_tickets():
-                for r in t.get('receptionsAvisArrivee') or []:
+                for r in list(t.get('receptionsAvisArrivee') or []) + list(t.get('receptionsAvisArriveeAnnulees') or []):
                     ref = _as_text(r.get('reference')).strip()
                     m = re.fullmatch(r"RAR-(\d+)", ref, re.I)
                     if m:
@@ -4570,7 +4805,7 @@ def _next_blr_reference():
     try:
         for t in list_tickets():
             enl = t.get("enlevement") or {}
-            for bon in enl.get("bons_livraison") or []:
+            for bon in list(enl.get("bons_livraison") or []) + list(enl.get("bons_livraison_annules") or []):
                 ref = _as_text(bon.get("reference")).strip()
                 m = re.fullmatch(r"BLR-(\d+)", ref, re.I)
                 if m:
@@ -5111,9 +5346,10 @@ def _existing_colis_numbers(numero_dossier):
         if m: used.add(int(m.group(1)))
     try:
         for ticket in list_tickets():
-            for bon in (ticket.get("enlevement") or {}).get("bons_livraison") or []:
+            enl = ticket.get("enlevement") or {}
+            for bon in list(enl.get("bons_livraison") or []) + list(enl.get("bons_livraison_annules") or []):
                 for ref in bon.get("colis") or []: add(ref)
-            for rec in ticket.get("receptionsAvisArrivee") or []:
+            for rec in list(ticket.get("receptionsAvisArrivee") or []) + list(ticket.get("receptionsAvisArriveeAnnulees") or []):
                 for ref in rec.get("colis") or []: add(ref)
         safe_dossier=urllib.parse.quote(numero_dossier,safe='')
         rows=supabase_rest_request("GET","articles",f"select=dernier_colis&dossier=eq.{safe_dossier}&limit=10000") or []
