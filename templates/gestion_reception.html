@@ -297,7 +297,7 @@ function renderTicketModal(editing=false){
       </div>`;
     }
 
-    const receptionsAvis=(t.receptionsAvisArrivee||[]);
+    const receptionsAvis=(t.receptionsAvisArrivee||[]).filter(r=>!r.annulee);
     if(receptionsAvis.length){
       html+=`<div class="section"><div class="section-title">Bons de réception générés</div>`;
       receptionsAvis.slice().reverse().forEach(r=>{
@@ -416,7 +416,7 @@ function renderTicketModal(editing=false){
     </div>`;
   }
 
-  const bons=(extraction(t).bons_livraison||[]);
+  const bons=(extraction(t).bons_livraison||[]).filter(b=>!b.annulee);
   if(bons.length){
     html+=`<div class="section"><div class="section-title">Bons de réception générés</div>`;
     bons.slice().reverse().forEach(b=>{
@@ -624,7 +624,7 @@ function openReceptionModal(){
       <input id="arrivalReceptionComment" type="text" placeholder="Commentaire facultatif">
     </div>`;
 
-  const receptions=(openedTicket.receptionsAvisArrivee||[]);
+  const receptions=(openedTicket.receptionsAvisArrivee||[]).filter(r=>!r.annulee);
   if(receptions.length){
     html+=`<div class="section"><div class="section-title">Réceptions déjà générées</div>`;
     receptions.slice().reverse().forEach(r=>{
