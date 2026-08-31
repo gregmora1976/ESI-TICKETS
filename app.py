@@ -823,48 +823,36 @@ def _ensure_articles_for_ticket(ticket, save=True):
 
 
 def _update_article_logistics(esi_ids, lieu_stockage="", statut_logistique="Réceptionné",
-                              colis=None, reception_ref="", receptionne_par=""):
-    """Met à jour la fiche globale des articles après une réception."""
+                              colis=None, colis_by_esi=None, reception_ref="", receptionne_par=""):
+    """Met à jour la fiche globale des articles après une réception, avec un colis précis par ESI."""
+    colis_by_esi = dict(colis_by_esi or {})
+    fallback = list(colis or [])
     for esi_id in esi_ids or []:
         esi_id = _as_text(esi_id).strip()
         if not esi_id:
             continue
-
+        article_colis = _as_text(colis_by_esi.get(esi_id)).strip()
+        article_colis_list = [article_colis] if article_colis else fallback
         safe_esi = urllib.parse.quote(esi_id, safe='-')
-        rows = supabase_rest_request(
-            "GET", "articles", f"select=*&esi_id=eq.{safe_esi}&limit=1"
-        ) or []
+        rows = supabase_rest_request("GET", "articles", f"select=*&esi_id=eq.{safe_esi}&limit=1") or []
         if not rows:
             continue
-
         current = dict(rows[0])
         raw = current.get("raw_json") if isinstance(current.get("raw_json"), dict) else {}
         raw = dict(raw or {})
         history = list(raw.get("receptions") or [])
-        history.append({
-            "date": datetime.now().isoformat(),
-            "lieu_stockage": lieu_stockage,
-            "colis": list(colis or []),
-            "reception_ref": reception_ref,
-            "receptionne_par": receptionne_par,
-        })
+        history.append({"date": datetime.now().isoformat(), "lieu_stockage": lieu_stockage,
+                        "colis": article_colis_list, "reception_ref": reception_ref,
+                        "receptionne_par": receptionne_par})
         raw["receptions"] = history
-
-        patch = {
-            "lieu_stockage": _as_text(lieu_stockage).strip(),
-            "statut_logistique": _as_text(statut_logistique).strip(),
-            "dernier_colis": ", ".join(colis or []),
-            "derniere_reception_ref": _as_text(reception_ref).strip(),
-            "updated_at": datetime.now().isoformat(),
-            "raw_json": raw,
-        }
-        merged = dict(current)
-        merged.update(patch)
-        patch["search_text"] = _article_search_text(merged)
-
-        supabase_rest_request(
-            "PATCH", "articles", f"esi_id=eq.{safe_esi}", patch, prefer="return=minimal"
-        )
+        raw["colis_actuel"] = article_colis or (article_colis_list[0] if len(article_colis_list)==1 else "")
+        patch = {"lieu_stockage": _as_text(lieu_stockage).strip(),
+                 "statut_logistique": _as_text(statut_logistique).strip(),
+                 "dernier_colis": article_colis or ", ".join(article_colis_list),
+                 "derniere_reception_ref": _as_text(reception_ref).strip(),
+                 "updated_at": datetime.now().isoformat(), "raw_json": raw}
+        merged = dict(current); merged.update(patch); patch["search_text"] = _article_search_text(merged)
+        supabase_rest_request("PATCH", "articles", f"esi_id=eq.{safe_esi}", patch, prefer="return=minimal")
 
 
 def _article_ids_for_received_units(item, previous_qty, qty_received):
@@ -994,7 +982,7 @@ _ARTICLE_EDITABLE_FIELDS = {
     "ref_caisse", "transporteur_ref",
     "longueur_cm", "largeur_cm", "hauteur_cm",
     "volume_m3", "surface_m2", "poids_kg",
-    "lieu_stockage", "statut_logistique",
+    "lieu_stockage", "statut_logistique", "dernier_colis",
 }
 
 
@@ -1332,6 +1320,30 @@ def api_articles_delete_duplicates():
         'errors': errors,
     }), (200 if not errors else 207)
 
+
+@app.route('/api/articles/colis-by-dossier')
+def api_articles_colis_by_dossier():
+    dossier=_as_text(request.args.get('dossier')).strip()
+    if not dossier: return jsonify({'ok':False,'error':'N° dossier obligatoire','colis':[]}),400
+    nums=sorted(_existing_colis_numbers(dossier))
+    return jsonify({'ok':True,'dossier':dossier,'colis':[f"{dossier}-{n:03d}" for n in nums]})
+
+@app.route('/api/articles/<esi_id>/colis', methods=['PATCH'])
+def api_article_update_colis(esi_id):
+    safe_esi=urllib.parse.quote(_as_text(esi_id).strip(),safe='-')
+    rows=supabase_rest_request('GET','articles',f'select=*&esi_id=eq.{safe_esi}&limit=1') or []
+    if not rows: return jsonify({'ok':False,'error':'Article introuvable'}),404
+    article=dict(rows[0]); dossier=_as_text(article.get('dossier')).strip()
+    colis=_as_text((request.get_json(silent=True) or {}).get('colis')).strip()
+    if colis:
+        allowed={f"{dossier}-{n:03d}" for n in _existing_colis_numbers(dossier)}
+        if colis not in allowed: return jsonify({'ok':False,'error':"Ce colis n'existe pas pour ce dossier"}),400
+    raw=article.get('raw_json') if isinstance(article.get('raw_json'),dict) else {}; raw=dict(raw or {})
+    raw['colis_actuel']=colis; mods=list(raw.get('modifications_colis') or []); mods.append({'date':datetime.now().isoformat(),'colis':colis}); raw['modifications_colis']=mods
+    patch={'dernier_colis':colis,'raw_json':raw,'updated_at':datetime.now().isoformat()}
+    merged=dict(article); merged.update(patch); patch['search_text']=_article_search_text(merged)
+    supabase_rest_request('PATCH','articles',f'esi_id=eq.{safe_esi}',patch,prefer='return=minimal')
+    return jsonify({'ok':True,'esi_id':esi_id,'colis':colis})
 
 @app.route('/api/articles/<esi_id>')
 def api_article_detail(esi_id):
@@ -4196,6 +4208,7 @@ def api_reception_avis_arrivee(ticket_id):
 
     items_reception = data.get('items_reception')
     selected_indexes = data.get('selected_indexes') or []
+    colis_repartition = data.get('colis_repartition') or []
 
     if not receptionne_par:
         return jsonify({'ok': False, 'error': 'Nom et prénom du réceptionnaire manquants'}), 400
@@ -4354,11 +4367,13 @@ def api_reception_avis_arrivee(ticket_id):
 
         reception_ref = f"RAR-{(max(existing_refs) if existing_refs else 0) + 1:04d}"
         colis_refs = _allocate_colis_numbers(numero_dossier, nombre_colis)
-
-        for selected_item in selected:
-            selected_item['reception_ref'] = reception_ref
-            selected_item['colis'] = list(colis_refs)
-            selected_item['lieu_stockage'] = lieu_stockage
+        try:
+            colis_by_esi = _resolve_colis_repartition(selected, colis_repartition, colis_refs)
+        except ValueError as e:
+            return jsonify({'ok': False, 'error': str(e)}), 400
+        _apply_colis_to_selected_items(selected, colis_by_esi, reception_ref, lieu_stockage)
+        for label in article_labels:
+            label['colis'] = colis_by_esi.get(label.get('esi_id'), '')
 
         article_labels_bytes = _build_labels_pdf_bytes(article_labels, kind="article")
         article_labels_filename = f"{reception_ref}_etiquettes_articles.pdf"
@@ -4451,7 +4466,7 @@ def api_reception_avis_arrivee(ticket_id):
                 reception_esi_ids,
                 lieu_stockage=lieu_stockage,
                 statut_logistique="Réceptionné",
-                colis=colis_refs,
+                colis_by_esi=colis_by_esi,
                 reception_ref=reception_ref,
                 receptionne_par=receptionne_par,
             )
@@ -5087,28 +5102,52 @@ def _build_labels_pdf_bytes(labels, kind="article"):
     return pdf.getvalue()
 
 def _existing_colis_numbers(numero_dossier):
-    """Retourne les numéros de colis déjà utilisés pour un dossier."""
+    """Retourne tous les numéros de colis déjà utilisés, quel que soit le type de réception."""
     numero_dossier = _as_text(numero_dossier).strip()
-    if not numero_dossier:
-        return set()
-
-    used = set()
-    pattern = re.compile(r"^" + re.escape(numero_dossier) + r"-(\d+)$", re.I)
-
+    if not numero_dossier: return set()
+    used=set(); pattern=re.compile(r"^"+re.escape(numero_dossier)+r"-(\d+)$", re.I)
+    def add(ref):
+        m=pattern.fullmatch(_as_text(ref).strip())
+        if m: used.add(int(m.group(1)))
     try:
         for ticket in list_tickets():
-            enl = ticket.get("enlevement") or {}
-            for bon in enl.get("bons_livraison") or []:
-                for colis in bon.get("colis") or []:
-                    ref = _as_text(colis).strip()
-                    m = pattern.fullmatch(ref)
-                    if m:
-                        used.add(int(m.group(1)))
-    except Exception as e:
-        print(f"[COLIS] Lecture historique impossible pour {numero_dossier}: {e}")
-
+            for bon in (ticket.get("enlevement") or {}).get("bons_livraison") or []:
+                for ref in bon.get("colis") or []: add(ref)
+            for rec in ticket.get("receptionsAvisArrivee") or []:
+                for ref in rec.get("colis") or []: add(ref)
+        safe_dossier=urllib.parse.quote(numero_dossier,safe='')
+        rows=supabase_rest_request("GET","articles",f"select=dernier_colis&dossier=eq.{safe_dossier}&limit=10000") or []
+        for row in rows:
+            for ref in _as_text(row.get("dernier_colis")).split(','): add(ref)
+    except Exception as e: print(f"[COLIS] Lecture historique impossible pour {numero_dossier}: {e}")
     return used
 
+
+
+
+def _resolve_colis_repartition(selected_items, raw_assignments, colis_refs):
+    expected={}
+    for item in selected_items:
+        idx=int(item.get('index'))
+        for unit_offset, esi_id in enumerate(item.get('esi_ids') or []): expected[(idx,unit_offset)]=esi_id
+    assignments={}
+    for entry in raw_assignments or []:
+        try: key=(int(entry.get('index')),int(entry.get('unit_offset'))); ci=int(entry.get('colis_index'))
+        except Exception: continue
+        if key not in expected or ci<0 or ci>=len(colis_refs): continue
+        assignments[key]=ci
+    if set(assignments)!=set(expected): raise ValueError("Chaque article physique doit être associé à un colis.")
+    used=set(assignments.values())
+    if len(colis_refs)>len(expected): raise ValueError("Le nombre de colis ne peut pas dépasser le nombre d'articles réceptionnés.")
+    if used != set(range(len(colis_refs))): raise ValueError("Chaque colis créé doit contenir au moins un article.")
+    return {expected[k]:colis_refs[ci] for k,ci in assignments.items()}
+
+def _apply_colis_to_selected_items(selected_items, colis_by_esi, reception_ref, lieu_stockage):
+    for item in selected_items:
+        mapping={esi:colis_by_esi.get(esi,'') for esi in item.get('esi_ids') or []}
+        item['colis_par_esi']=mapping
+        item['colis']=list(dict.fromkeys(x for x in mapping.values() if x))
+        item['reception_ref']=reception_ref; item['lieu_stockage']=lieu_stockage
 
 def _allocate_colis_numbers(numero_dossier, count):
     """Génère des références dossier-001, dossier-002... jamais déjà utilisées."""
@@ -5164,6 +5203,7 @@ def api_create_bon_livraison(ticket_id):
 
     items_reception = data.get('items_reception')
     selected_indexes = data.get('selected_indexes') or []
+    colis_repartition = data.get('colis_repartition') or []
 
     if not receptionne_par:
         return jsonify({'ok': False, 'error': 'Nom et prénom du réceptionnaire obligatoires'}), 400
@@ -5305,13 +5345,13 @@ def api_create_bon_livraison(ticket_id):
     with _BLR_LOCK:
         blr_ref = _next_blr_reference()
         colis_refs = _allocate_colis_numbers(numero_dossier, nombre_colis)
-
-        # Lie explicitement chaque ligne réceptionnée au bon et aux colis générés.
-        # Les esi_ids identifient les unités physiques réellement réceptionnées.
-        for selected_item in selected:
-            selected_item['reception_ref'] = blr_ref
-            selected_item['colis'] = list(colis_refs)
-            selected_item['lieu_stockage'] = lieu_stockage
+        try:
+            colis_by_esi = _resolve_colis_repartition(selected, colis_repartition, colis_refs)
+        except ValueError as e:
+            return jsonify({'ok': False, 'error': str(e)}), 400
+        _apply_colis_to_selected_items(selected, colis_by_esi, blr_ref, lieu_stockage)
+        for label in article_labels:
+            label['colis'] = colis_by_esi.get(label.get('esi_id'), '')
 
         bon = {
             'reference': blr_ref,
@@ -5394,7 +5434,7 @@ def api_create_bon_livraison(ticket_id):
                 reception_esi_ids,
                 lieu_stockage=lieu_stockage,
                 statut_logistique="Réceptionné",
-                colis=colis_refs,
+                colis_by_esi=colis_by_esi,
                 reception_ref=blr_ref,
                 receptionne_par=receptionne_par,
             )
