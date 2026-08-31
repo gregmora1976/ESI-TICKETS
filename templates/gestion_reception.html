@@ -493,7 +493,12 @@ async function cancelSpecificReception(reference){
     }
     await loadTickets();
     const refreshed=tickets.find(t=>t.id===ticketId);
-    if(refreshed){openedTicket=refreshed;renderTicketModal(false);}else{closeTicket();}
+    if(refreshed){
+      openedTicket=refreshed;
+      renderTicketModal(false);
+    }else{
+      closeTicket();
+    }
     alert(`La réception ${reference} a été annulée.`);
   }catch(e){alert(e.message||"Impossible d'annuler cette réception.");}
 }
@@ -879,7 +884,7 @@ function openDeliveryModal(){
       <input id="deliveryPackageCount" type="number" min="1" step="1" value="1">
     </div><div id="deliveryColisRepartition" class="colis-repartition"></div>`;
 
-  const bons=(extraction(openedTicket).bons_livraison||[]);
+  const bons=(extraction(openedTicket).bons_livraison||[]).filter(b=>!b.annulee);
   if(bons.length){
     html+=`<div class="section"><div class="section-title">Bons déjà générés</div>`;
     bons.slice().reverse().forEach(b=>{
