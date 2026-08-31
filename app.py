@@ -5718,18 +5718,58 @@ def api_update_status(ticket_id):
 
 @app.route('/api/tickets/<ticket_id>/annuler-enlevement', methods=['PATCH'])
 def api_annuler_enlevement(ticket_id):
-    """Annule une demande d'enlevement sans la supprimer de l'historique."""
+    """Annule un ticket du planning réception uniquement s'il n'a plus de réception active."""
     ticket = load_ticket(ticket_id)
     if not ticket:
         return jsonify({'ok': False, 'error': 'Ticket introuvable'}), 404
 
     module_normalise = _as_text(ticket.get('module')).replace("’", "'").strip()
-    if module_normalise not in ("Demande d'enlèvement", "Demande d'enlevement") and not _as_text(ticket_id).startswith('ENL-'):
-        return jsonify({'ok': False, 'error': "Ce ticket n'est pas une demande d'enlèvement"}), 400
+    is_enlevement = (
+        module_normalise in ("Demande d'enlèvement", "Demande d'enlevement")
+        or _as_text(ticket_id).startswith('ENL-')
+    )
+    is_avis = (
+        module_normalise == "Avis d'arrivée"
+        or _as_text(ticket_id).startswith('ARR-')
+    )
+    if not (is_enlevement or is_avis):
+        return jsonify({'ok': False, 'error': "Ce ticket n'appartient pas au planning réception"}), 400
+
+    if is_avis:
+        active_receptions = [
+            r for r in (ticket.get('receptionsAvisArrivee') or [])
+            if not bool((r or {}).get('annulee'))
+        ]
+    else:
+        enl = ticket.get('enlevement') or {}
+        active_receptions = [
+            r for r in (enl.get('bons_livraison') or [])
+            if not bool((r or {}).get('annulee'))
+        ]
+
+    if active_receptions:
+        refs = [
+            _as_text((r or {}).get('reference')).strip()
+            for r in active_receptions
+            if _as_text((r or {}).get('reference')).strip()
+        ]
+        detail = ', '.join(refs) if refs else f"{len(active_receptions)} réception(s) active(s)"
+        return jsonify({
+            'ok': False,
+            'error': f"Impossible d'annuler le ticket : annule d'abord la/les réception(s) active(s) ({detail}).",
+            'active_receptions': len(active_receptions),
+            'references': refs,
+        }), 409
 
     ticket['status'] = 'Annulé'
-    ticket['updatedAt'] = datetime.now().isoformat()
+    ticket['annule_le'] = datetime.now().isoformat()
+    ticket['updatedAt'] = ticket['annule_le']
     save_ticket(ticket)
+
+    checked = load_ticket(ticket_id)
+    if not checked or _as_text(checked.get('status')).strip().lower() not in ('annulé', 'annule'):
+        return jsonify({'ok': False, 'error': "Le ticket n'a pas pu être confirmé comme annulé après sauvegarde."}), 500
+
     return jsonify({'ok': True, 'status': 'Annulé'})
 
 
