@@ -73,7 +73,7 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
         <thead><tr>
           <th class="select-col"><input class="select-all" id="selectAll" type="checkbox" title="Tout sélectionner"></th>
           <th>N° ESI</th><th>Référence</th><th>Description</th><th>Dossier</th><th>Client</th>
-          <th>Projet</th><th>Dimensions</th><th>Poids</th><th>Stockage</th>
+          <th>Projet</th><th>Dimensions</th><th>Poids</th><th>Stockage</th><th>N° colis</th>
         </tr></thead>
         <tbody id="body"></tbody>
       </table>
@@ -198,7 +198,7 @@ async function load(){
       <td><strong>${esc(a.reference||'-')}</strong></td>
       <td>${esc(a.description||'-')}</td><td>${esc(dossierAuto(a))}</td><td>${esc(a.client||'-')}</td>
       <td>${esc(a.projet||'-')}</td><td>${esc(dims||'-')}</td><td>${esc(a.poids_kg||'-')}</td>
-      <td>${esc(a.lieu_stockage||'-')}</td>`;
+      <td>${esc(a.lieu_stockage||'-')}</td><td><strong>${esc(a.dernier_colis||'-')}</strong></td>`;
     body.appendChild(tr);
   });
   info.textContent=`${rows.length} article(s) affiché(s)`;

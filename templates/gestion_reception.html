@@ -536,10 +536,6 @@ function buildColisRepartition(prefix, checkClass, qtyClass, packageInputId){
 function readColisRepartition(prefix){return [...document.querySelectorAll('.'+prefix+'-colis-select')].map(x=>({index:Number(x.dataset.index),unit_offset:Number(x.dataset.unitOffset),colis_index:Number(x.value)}));}
 
 function closeReceptionModal(){
-  document.querySelectorAll('.arrival-reception-qty').forEach(q=>q.addEventListener('input',()=>buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount')));
-  document.getElementById('arrivalReceptionPackageCount')?.addEventListener('input',()=>buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount'));
-  buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount');
-
   const b=document.getElementById('receptionModalBackdrop');
   b.classList.remove('open');b.setAttribute('aria-hidden','true');
   document.getElementById('receptionValidateBtn').style.display='inline-block';
@@ -656,6 +652,15 @@ function openReceptionModal(){
       buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount');
     });
   });
+  document.querySelectorAll('.arrival-reception-qty').forEach(qty=>{
+    qty.addEventListener('input',()=>buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount'));
+    qty.addEventListener('change',()=>buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount'));
+  });
+  document.getElementById('arrivalReceptionPackageCount')?.addEventListener('input',()=>buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount'));
+  document.getElementById('arrivalReceptionPackageCount')?.addEventListener('change',()=>buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount'));
+
+  // Initialise immédiatement la répartition Article -> Colis à l'ouverture.
+  buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount');
 
   const b=document.getElementById('receptionModalBackdrop');
   b.classList.add('open');b.setAttribute('aria-hidden','false');
@@ -689,6 +694,22 @@ async function validateArrivalReception(){
     return;
   }
 
+  const repartition=readColisRepartition('arrival');
+  const totalUnits=selected.reduce((sum,x)=>sum+x.quantite_recue,0);
+  if(repartition.length!==totalUnits){
+    alert("Chaque article physique doit être associé à un colis.");
+    buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount');
+    return;
+  }
+  if(packageCount>totalUnits){
+    alert("Le nombre de colis ne peut pas dépasser le nombre d'articles réceptionnés.");
+    return;
+  }
+  if(new Set(repartition.map(x=>x.colis_index)).size!==packageCount){
+    alert("Chaque colis créé doit contenir au moins un article.");
+    return;
+  }
+
   const btn=document.getElementById('receptionValidateBtn');
   btn.disabled=true;btn.textContent='Génération des étiquettes...';
 
@@ -705,7 +726,7 @@ async function validateArrivalReception(){
         commentaire:comment,
         items_reception:selected,
         selected_indexes:selected.map(x=>x.index),
-        colis_repartition:readColisRepartition('arrival')
+        colis_repartition:repartition
       })
     });
 
@@ -914,6 +935,22 @@ async function validateDelivery(){
     return;
   }
 
+  const repartition=readColisRepartition('delivery');
+  const totalUnits=selected.reduce((sum,x)=>sum+x.quantite_recue,0);
+  if(repartition.length!==totalUnits){
+    alert("Chaque article physique doit être associé à un colis.");
+    buildColisRepartition('delivery','delivery-check','delivery-qty','deliveryPackageCount');
+    return;
+  }
+  if(packageCount>totalUnits){
+    alert("Le nombre de colis ne peut pas dépasser le nombre d'articles réceptionnés.");
+    return;
+  }
+  if(new Set(repartition.map(x=>x.colis_index)).size!==packageCount){
+    alert("Chaque colis créé doit contenir au moins un article.");
+    return;
+  }
+
   const btn=document.getElementById('deliveryValidateBtn');
   btn.disabled=true;btn.textContent='Génération du bon et des étiquettes...';
   try{
@@ -928,7 +965,7 @@ async function validateDelivery(){
         nombre_colis:packageCount,
         items_reception:selected,
         selected_indexes:selected.map(x=>x.index),
-        colis_repartition:readColisRepartition('delivery')
+        colis_repartition:repartition
       })
     });
     const data=await res.json().catch(()=>({}));
