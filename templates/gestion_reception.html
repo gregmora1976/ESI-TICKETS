@@ -479,7 +479,11 @@ async function cancelSpecificReception(reference){
   if(!confirm(`Annuler uniquement la réception ${reference} ?\n\nLes quantités réceptionnées seront restaurées et les associations article / colis de cette réception seront retirées. Le ticket restera actif.`)) return;
   try{
     const ticketId=openedTicket.id;
-    const res=await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/receptions/${encodeURIComponent(reference)}`,{method:'DELETE'});
+    const res=await fetch(`/api/tickets/${encodeURIComponent(ticketId)}`,{
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'annuler_reception',reference})
+    });
     const raw=await res.text();
     let data={};
     try{data=raw?JSON.parse(raw):{};}catch(_e){}
