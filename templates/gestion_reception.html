@@ -326,7 +326,7 @@ function renderTicketModal(editing=false){
           html+=`<strong>${esc(ref)}</strong>`;
         }
 
-        html+=` — ${esc(r.date_reception||'')} — ${esc(r.receptionne_par||'')} — ${esc(r.lieu_stockage||'')}</div>`;
+        html+=` — ${esc(r.date_reception||'')} — ${esc(r.receptionne_par||'')} — ${esc(r.lieu_stockage||'')} <button class="btn danger" type="button" style="padding:5px 8px;margin-left:8px" onclick="cancelSpecificReception('${esc(r.reference||'')}')">Annuler cette réception</button></div>`;
 
         if(r.colis&&r.colis.length){
           html+=`<div class="delivery-meta">Colis : ${esc(r.colis.join(', '))}</div>`;
@@ -435,7 +435,7 @@ function renderTicketModal(editing=false){
       html+=`<div style="margin:10px 0 14px">
         <div>
           <a class="file-link" target="_blank" href="${href}"><strong>${esc(b.reference||filename)}</strong></a>
-          — ${esc(b.date_reception||'')} — ${esc(b.receptionne_par||'')} — ${esc(b.lieu_stockage||'')}
+          — ${esc(b.date_reception||'')} — ${esc(b.receptionne_par||'')} — ${esc(b.lieu_stockage||'')} <button class="btn danger" type="button" style="padding:5px 8px;margin-left:8px" onclick="cancelSpecificReception('${esc(b.reference||'')}')">Annuler cette réception</button>
         </div>`;
 
       if(articlesFilename||colisFilename){
@@ -474,6 +474,21 @@ function openTicket(t){
   renderTicketModal(false);
   const b=document.getElementById('ticketModalBackdrop');b.classList.add('open');b.setAttribute('aria-hidden','false');
 }
+async function cancelSpecificReception(reference){
+  if(!openedTicket||!reference) return;
+  if(!confirm(`Annuler uniquement la réception ${reference} ?\n\nLes quantités réceptionnées seront restaurées et les associations article / colis de cette réception seront retirées. Le ticket restera actif.`)) return;
+  try{
+    const ticketId=openedTicket.id;
+    const res=await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/receptions/${encodeURIComponent(reference)}`,{method:'DELETE'});
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok||!data.ok) throw new Error(data.error||"Impossible d'annuler cette réception");
+    await loadTickets();
+    const refreshed=tickets.find(t=>t.id===ticketId);
+    if(refreshed){openedTicket=refreshed;renderTicketModal(false);}else{closeTicket();}
+    alert(`La réception ${reference} a été annulée.`);
+  }catch(e){alert(e.message||"Impossible d'annuler cette réception.");}
+}
+
 function closeTicket(){
   openedTicket=null;
   const b=document.getElementById('ticketModalBackdrop');b.classList.remove('open');b.setAttribute('aria-hidden','true');
