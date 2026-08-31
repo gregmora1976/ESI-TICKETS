@@ -480,8 +480,13 @@ async function cancelSpecificReception(reference){
   try{
     const ticketId=openedTicket.id;
     const res=await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/receptions/${encodeURIComponent(reference)}`,{method:'DELETE'});
-    const data=await res.json().catch(()=>({}));
-    if(!res.ok||!data.ok) throw new Error(data.error||"Impossible d'annuler cette réception");
+    const raw=await res.text();
+    let data={};
+    try{data=raw?JSON.parse(raw):{};}catch(_e){}
+    if(!res.ok||!data.ok){
+      const detail=data.error||raw.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,260);
+      throw new Error(detail||`Impossible d'annuler cette réception (HTTP ${res.status})`);
+    }
     await loadTickets();
     const refreshed=tickets.find(t=>t.id===ticketId);
     if(refreshed){openedTicket=refreshed;renderTicketModal(false);}else{closeTicket();}
