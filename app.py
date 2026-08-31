@@ -4940,12 +4940,12 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
 
     # Goods table.
     table_top = 517
-    widths = [68, 78, 177, 78, 55, 79]
-    headers = ['N° ESI','Ref. item','Description de la marchandise','Dimensions','Qte recue','Stockage']
+    widths = [58, 68, 145, 82, 64, 48, 70]
+    headers = ['N° ESI','Ref. item','Description de la marchandise','N° COLIS','Dimensions','Qte recue','Stockage']
     x = 30
     for w, h in zip(widths, headers):
         rect(x, table_top-38, w, 38, fill=NAVY, stroke=WHITE, lw=0.4)
-        fit_txt(x+4, table_top-17, h, w-8, 6.7, True, 2, 8, WHITE)
+        fit_txt(x+4, table_top-17, h, w-8, 6.4, True, 2, 8, WHITE)
         x += w
 
     rows = bon.get('items') or []
@@ -4957,17 +4957,25 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
         fill = (0.99, 0.985, 0.955)
         row = rows[ridx] if ridx < len(rows) else {}
         received = row.get('quantite') or ''
+        esi_ids = [str(v).strip() for v in (row.get('esi_ids') or []) if str(v).strip()]
+        colis_par_esi = row.get('colis_par_esi') if isinstance(row.get('colis_par_esi'), dict) else {}
+        numeros_colis = [
+            _as_text(colis_par_esi.get(esi_id)).strip()
+            for esi_id in esi_ids
+            if _as_text(colis_par_esi.get(esi_id)).strip()
+        ]
         vals = [
-            ', '.join(row.get('esi_ids') or []),
+            ', '.join(esi_ids),
             row.get('reference'),
             row.get('designation') or row.get('description'),
+            ', '.join(numeros_colis),
             row.get('dimensions'),
             received,
             bon.get('lieu_stockage') if row else ''
         ]
         for w, value in zip(widths, vals):
             rect(x, y0, w, row_h, fill=fill, stroke=LINE)
-            fit_txt(x+4, y0+18, value, w-8, 6.6, False, 2, 8)
+            fit_txt(x+4, y0+18, value, w-8, 6.3, False, 2, 8)
             x += w
 
     table_bottom = table_top - 38 - max_rows*row_h
