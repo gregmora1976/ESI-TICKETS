@@ -66,6 +66,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .form-row{margin-top:12px}.form-row label{display:block;font-size:13px;font-weight:900;color:var(--muted);margin-bottom:5px}
 .form-row input{width:100%;border:1px solid #cbd5e1;border-radius:9px;padding:10px;font:inherit}
 
+.colis-repartition{margin-top:12px;border:1px solid var(--line);border-radius:12px;padding:12px;background:#fff}.colis-repartition-title{font-size:13px;font-weight:900;margin-bottom:8px}.colis-unit{display:grid;grid-template-columns:1fr minmax(160px,220px);gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid #eef2f7}.colis-unit:last-child{border-bottom:none}.colis-unit select{width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:7px;background:#fff;font-weight:800}
 @media(max-width:600px){.detail-grid{grid-template-columns:1fr;gap:4px}.detail-value{margin-bottom:8px}}
 @media(max-width:900px){.month-grid,.week-head{grid-template-columns:1fr}.week-head{display:none}.day{min-height:auto;border-right:none}}
 </style>
@@ -516,7 +517,29 @@ async function saveTicketEdits(){
 
 
 
+
+function buildColisRepartition(prefix, checkClass, qtyClass, packageInputId){
+  const box=document.getElementById(prefix+'ColisRepartition'); if(!box) return;
+  const count=Math.max(1,Number(document.getElementById(packageInputId)?.value||1));
+  const units=[];
+  document.querySelectorAll('.'+checkClass+':checked:not(:disabled)').forEach(cb=>{
+    const index=Number(cb.dataset.index), qty=Math.max(0,Math.floor(Number(document.querySelector('.'+qtyClass+'[data-index="'+index+'"]')?.value||0)));
+    const source=prefix==='arrival'?((avisData(openedTicket).items||[])[index]||{}):(items(openedTicket)[index]||{});
+    const ids=Array.isArray(source.esi_ids)?source.esi_ids:[]; const already=receivedQty(source);
+    for(let u=0;u<qty;u++) units.push({index,unit_offset:u,esi:ids[already+u]||`${source.reference||source.ref||'Article'} #${already+u+1}`});
+  });
+  if(!units.length){box.innerHTML='<div class="muted">Sélectionne les articles à réceptionner.</div>';return;}
+  const opts=Array.from({length:count},(_,i)=>`<option value="${i}">Colis ${i+1}</option>`).join('');
+  box.innerHTML=`<div class="colis-repartition-title">Répartition des articles dans les colis</div>`+units.map((u,i)=>`<div class="colis-unit"><div><strong>${esc(u.esi)}</strong></div><select class="${prefix}-colis-select" data-index="${u.index}" data-unit-offset="${u.unit_offset}">${opts}</select></div>`).join('');
+  box.querySelectorAll('select').forEach((sel,i)=>sel.value=String(i%count));
+}
+function readColisRepartition(prefix){return [...document.querySelectorAll('.'+prefix+'-colis-select')].map(x=>({index:Number(x.dataset.index),unit_offset:Number(x.dataset.unitOffset),colis_index:Number(x.value)}));}
+
 function closeReceptionModal(){
+  document.querySelectorAll('.arrival-reception-qty').forEach(q=>q.addEventListener('input',()=>buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount')));
+  document.getElementById('arrivalReceptionPackageCount')?.addEventListener('input',()=>buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount'));
+  buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount');
+
   const b=document.getElementById('receptionModalBackdrop');
   b.classList.remove('open');b.setAttribute('aria-hidden','true');
   document.getElementById('receptionValidateBtn').style.display='inline-block';
@@ -575,7 +598,7 @@ function openReceptionModal(){
     <div class="form-row">
       <label for="arrivalReceptionPackageCount">Nombre total de colis pour cette réception</label>
       <input id="arrivalReceptionPackageCount" type="number" min="1" step="1" value="1">
-    </div>
+    </div><div id="arrivalColisRepartition" class="colis-repartition"></div>
     <div class="form-row">
       <label for="arrivalReceptionComment">Commentaire de réception</label>
       <input id="arrivalReceptionComment" type="text" placeholder="Commentaire facultatif">
@@ -630,6 +653,7 @@ function openReceptionModal(){
     cb.addEventListener('change',()=>{
       const qty=document.querySelector(`.arrival-reception-qty[data-index="${cb.dataset.index}"]`);
       if(qty) qty.disabled=!cb.checked;
+      buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount');
     });
   });
 
@@ -680,7 +704,8 @@ async function validateArrivalReception(){
         nombre_colis:packageCount,
         commentaire:comment,
         items_reception:selected,
-        selected_indexes:selected.map(x=>x.index)
+        selected_indexes:selected.map(x=>x.index),
+        colis_repartition:readColisRepartition('arrival')
       })
     });
 
@@ -755,6 +780,7 @@ function recalcDeliveryPackageCount(){
   });
 
   packageInput.value=Math.max(total,1);
+  buildColisRepartition('delivery','delivery-check','delivery-qty','deliveryPackageCount');
 }
 
 function openDeliveryModal(){
@@ -806,7 +832,7 @@ function openDeliveryModal(){
     <div class="form-row">
       <label for="deliveryPackageCount">Nombre total de colis pour cette réception</label>
       <input id="deliveryPackageCount" type="number" min="1" step="1" value="1">
-    </div>`;
+    </div><div id="deliveryColisRepartition" class="colis-repartition"></div>`;
 
   const bons=(extraction(openedTicket).bons_livraison||[]);
   if(bons.length){
@@ -857,6 +883,8 @@ function openDeliveryModal(){
   // Valeur initiale = quantité totale des articles actuellement sélectionnés.
   // Le champ reste ensuite librement modifiable par l'utilisateur.
   recalcDeliveryPackageCount();
+  document.getElementById('deliveryPackageCount')?.addEventListener('input',()=>buildColisRepartition('delivery','delivery-check','delivery-qty','deliveryPackageCount'));
+  buildColisRepartition('delivery','delivery-check','delivery-qty','deliveryPackageCount');
 
   const b=document.getElementById('deliveryModalBackdrop');
   b.classList.add('open');b.setAttribute('aria-hidden','false');
@@ -899,7 +927,8 @@ async function validateDelivery(){
         numero_dossier:dossierNumber,
         nombre_colis:packageCount,
         items_reception:selected,
-        selected_indexes:selected.map(x=>x.index)
+        selected_indexes:selected.map(x=>x.index),
+        colis_repartition:readColisRepartition('delivery')
       })
     });
     const data=await res.json().catch(()=>({}));

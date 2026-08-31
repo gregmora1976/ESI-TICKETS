@@ -434,8 +434,9 @@ async function openArticleDetail(esi){
       ['N° ESI',a.esi_id],['Référence',a.reference],['Description',a.description],['Dossier',dossierAuto(a)],
       ['Client',a.client],['Projet / expo',a.projet],['Dimensions',dims],['Poids',a.poids_kg],
       ['Volume',a.volume_m3],['Surface',a.surface_m2],['Réf. caisse',a.ref_caisse],
-      ['Stockage actuel',a.lieu_stockage],['Créé le',fmtDate(a.created_at)],['Dernière mise à jour',fmtDate(a.updated_at)]
+      ['Stockage actuel',a.lieu_stockage],['N° colis actuel',a.dernier_colis],['Créé le',fmtDate(a.created_at)],['Dernière mise à jour',fmtDate(a.updated_at)]
     ])}</div>`;
+    html+=`<div class="section"><div class="section-title">Association colis</div><div class="form-row"><label>N° colis actuel</label><select id="articleColisSelect" class="import-input"><option value="">Aucun colis</option></select></div><div class="modal-actions"><button class="btn primary" type="button" id="saveArticleColisBtn">Enregistrer le colis</button></div></div>`;
 
     if(d.avis_arrivee){
       const x=d.avis_arrivee, exp=x.expediteur||{}, tr=x.transporteur||{};
@@ -492,6 +493,12 @@ async function openArticleDetail(esi){
     html+=`</div>`;
 
     content.innerHTML=html;
+    const dossier=dossierAuto(a); const select=document.getElementById('articleColisSelect');
+    if(select && dossier && dossier!=='-'){
+      const cr=await fetch('/api/articles/colis-by-dossier?dossier='+encodeURIComponent(dossier)); const cd=await apiJson(cr);
+      (cd.colis||[]).forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;select.appendChild(o)}); select.value=String(a.dernier_colis||'').trim();
+      document.getElementById('saveArticleColisBtn').onclick=async()=>{const rr=await fetch('/api/articles/'+encodeURIComponent(esi)+'/colis',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({colis:select.value})});const rd=await apiJson(rr);if(!rr.ok)throw new Error(rd.error||'Modification impossible');alert('Association colis mise à jour.');await load();openArticleDetail(esi);};
+    }
   }catch(e){
     content.innerHTML=`<div class="empty">${esc(e.message||'Impossible de charger l’article.')}</div>`;
   }
@@ -511,7 +518,7 @@ const editableFields=[
   ['reference','Référence'],['description','Description'],['dossier','Dossier'],['client','Client'],['projet','Projet / expo'],
   ['ref_caisse','Réf. caisse'],['transporteur_ref','Réf. transporteur'],['longueur_cm','Longueur (cm)'],['largeur_cm','Largeur (cm)'],
   ['hauteur_cm','Hauteur (cm)'],['volume_m3','Volume (m³)'],['surface_m2','Surface (m²)'],['poids_kg','Poids (kg)'],
-  ['lieu_stockage','Lieu de stockage'],['statut_logistique','Statut logistique']
+  ['lieu_stockage','Lieu de stockage'],['statut_logistique','Statut logistique'],['dernier_colis','N° colis']
 ];
 function closeEditModal(){
   const b=document.getElementById('editModalBackdrop');
