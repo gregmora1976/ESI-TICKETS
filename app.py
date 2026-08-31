@@ -967,8 +967,11 @@ def _article_reception_history_from_ticket(ticket, article):
             "lieu_stockage": reception.get("lieu_stockage") or linked_item.get("lieu_stockage") or "",
             "numero_dossier": reception.get("numero_dossier") or article.get("dossier") or "",
             "nombre_colis": reception.get("nombre_colis") or "",
-            "colis": reception.get("colis") or linked_item.get("colis") or [],
-            "quantite": linked_item.get("quantite") or "",
+            # Pour la fiche article, affiche le colis précis de cet ESI et non la liste globale de la réception.
+            "colis": ([linked_item.get("colis_par_esi", {}).get(esi_id)]
+                      if linked_item.get("colis_par_esi", {}).get(esi_id)
+                      else (linked_item.get("colis") or reception.get("colis") or [])),
+            "quantite": "1",
             "files": files,
         })
 
