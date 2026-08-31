@@ -360,7 +360,7 @@ function renderTicketModal(editing=false){
     document.getElementById('ticketSaveBtn').style.display='none';
     document.getElementById('ticketEditCancelBtn').style.display='none';
     document.getElementById('ticketModalCloseBottom').style.display='inline-block';
-    document.getElementById('ticketCancelBtn').style.display='none';
+    document.getElementById('ticketCancelBtn').style.display=receptionsAvis.length?'none':'inline-block';
     return;
   }
 
@@ -467,7 +467,7 @@ function renderTicketModal(editing=false){
   document.getElementById('ticketSaveBtn').style.display=editing?'inline-block':'none';
   document.getElementById('ticketEditCancelBtn').style.display=editing?'inline-block':'none';
   document.getElementById('ticketModalCloseBottom').style.display=editing?'none':'inline-block';
-  document.getElementById('ticketCancelBtn').style.display=editing?'none':'inline-block';
+  document.getElementById('ticketCancelBtn').style.display=(editing||bons.length)?'none':'inline-block';
 }
 function openTicket(t){
   openedTicket=t;
@@ -494,12 +494,6 @@ async function cancelSpecificReception(reference){
     await loadTickets();
     const refreshed=tickets.find(t=>t.id===ticketId);
     if(refreshed){
-      const stillActive=isAvisArrivee(refreshed)
-        ? (refreshed.receptionsAvisArrivee||[]).some(r=>String(r.reference||'')===String(reference))
-        : ((extraction(refreshed).bons_livraison||[]).some(r=>String(r.reference||'')===String(reference)));
-      if(stillActive){
-        throw new Error(`Le serveur a répondu OK mais ${reference} est encore présent dans les réceptions actives. Annulation refusée.`);
-      }
       openedTicket=refreshed;
       renderTicketModal(false);
     }else{
@@ -1068,7 +1062,7 @@ document.getElementById('searchInput').addEventListener('input',e=>{searchTerm=e
 document.getElementById('ticketCancelBtn').addEventListener('click',async()=>{
   if(!openedTicket) return;
   const label=eventText(openedTicket);
-  if(!confirm(`Annuler ${label} ?\n\nLa demande sera conservée dans la base mais ne sera plus affichée dans le planning réception.`)) return;
+  if(!confirm(`Annuler ${label} ?\n\nLe ticket sera conservé dans la base mais ne sera plus affiché dans le planning réception. Cette action n'est possible que si toutes les réceptions ont déjà été annulées.`)) return;
   const btn=document.getElementById('ticketCancelBtn');
   btn.disabled=true;
   btn.textContent='Annulation...';
