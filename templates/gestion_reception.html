@@ -494,6 +494,12 @@ async function cancelSpecificReception(reference){
     await loadTickets();
     const refreshed=tickets.find(t=>t.id===ticketId);
     if(refreshed){
+      const stillActive=isAvisArrivee(refreshed)
+        ? (refreshed.receptionsAvisArrivee||[]).some(r=>String(r.reference||'')===String(reference))
+        : ((extraction(refreshed).bons_livraison||[]).some(r=>String(r.reference||'')===String(reference)));
+      if(stillActive){
+        throw new Error(`Le serveur a répondu OK mais ${reference} est encore présent dans les réceptions actives. Annulation refusée.`);
+      }
       openedTicket=refreshed;
       renderTicketModal(false);
     }else{
