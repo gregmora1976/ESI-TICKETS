@@ -6699,41 +6699,172 @@ def api_ticket_articles_lies(ticket_id):
         if esi_id and esi_id not in esi_ids:
             esi_ids.append(esi_id)
 
+    # Référence canonique de la caisse : N° dossier + N° caisse.
+    # Exemple : dossier 101129, caisse 1 -> 101129-01.
+    dossier_caisse = _as_text(ticket.get('dossier')).strip()
+    numero_brut = _as_text(ticket.get('ref')).strip()
+    numero_norm = _normalise_numero_caisse(numero_brut) if numero_brut else ''
+    if not dossier_caisse or not numero_norm:
+        return jsonify({
+            'ok': False,
+            'error': "Impossible de déterminer la référence de caisse (N° dossier ou N° caisse manquant)."
+        }), 400
+
+    numero_caisse = numero_norm.zfill(2) if numero_norm.isdigit() else numero_brut
+    caisse_ref = f"{dossier_caisse}-{numero_caisse}"
+    equivalent_refs = {caisse_ref, f"{dossier_caisse}-{numero_norm}"}
+
+    # Mémorise l'ancienne sélection pour savoir quels articles ont été retirés.
+    previous_ids = []
+    for item in ticket.get('articles_lies') or []:
+        previous_id = _as_text(item.get('esi_id') if isinstance(item, dict) else item).strip()
+        if previous_id and previous_id not in previous_ids:
+            previous_ids.append(previous_id)
+
+    all_ids = list(dict.fromkeys(previous_ids + esi_ids))
+
     try:
+        rows_by_id = {}
+        for offset in range(0, len(all_ids), 100):
+            part = all_ids[offset:offset + 100]
+            if not part:
+                continue
+            encoded = urllib.parse.quote(','.join(part), safe=',-_')
+            rows = supabase_rest_request(
+                'GET', 'articles',
+                'select=*&esi_id=in.(' + encoded + ')&limit=100'
+            ) or []
+            for row in rows:
+                row_esi = _as_text(row.get('esi_id')).strip()
+                if row_esi:
+                    rows_by_id[row_esi] = dict(row)
+
         selected = []
-        if esi_ids:
-            by_id = {}
-            for offset in range(0, len(esi_ids), 100):
-                part = esi_ids[offset:offset + 100]
-                encoded = urllib.parse.quote(','.join(part), safe=',-_')
-                rows = supabase_rest_request(
-                    'GET', 'articles',
-                    'select=esi_id,dossier,reference,type_objet&esi_id=in.(' + encoded + ')&limit=100'
-                ) or []
-                for row in rows:
-                    esi_id = _as_text(row.get('esi_id')).strip()
-                    type_objet = _as_text(row.get('type_objet') or 'PRODUIT').strip().upper()
-                    if esi_id and type_objet != 'CONTENANT':
-                        by_id[esi_id] = {
-                            'esi_id': esi_id,
-                            'dossier': _as_text(row.get('dossier')).strip(),
-                            'reference': _as_text(row.get('reference')).strip(),
+        missing = []
+        conflicts = []
+
+        for esi_id in esi_ids:
+            row = rows_by_id.get(esi_id)
+            if not row:
+                missing.append(esi_id)
+                continue
+
+            type_objet = _as_text(row.get('type_objet') or 'PRODUIT').strip().upper()
+            if type_objet == 'CONTENANT':
+                missing.append(esi_id)
+                continue
+
+            current_ref = _as_text(row.get('ref_caisse')).strip()
+            if current_ref and current_ref not in equivalent_refs:
+                conflicts.append({
+                    'esi_id': esi_id,
+                    'ref_caisse': current_ref,
+                })
+                continue
+
+            selected.append({
+                'esi_id': esi_id,
+                'dossier': _as_text(row.get('dossier')).strip(),
+                'reference': _as_text(row.get('reference')).strip(),
+            })
+
+        if missing:
+            return jsonify({
+                'ok': False,
+                'error': 'Certains articles sont introuvables ou sont des CONTENANTS : ' + ', '.join(missing[:10])
+            }), 400
+
+        if conflicts:
+            details = ', '.join(
+                f"{x['esi_id']} ({x['ref_caisse']})" for x in conflicts[:10]
+            )
+            return jsonify({
+                'ok': False,
+                'error': "Certains articles sont déjà liés à une autre caisse : " + details
+            }), 409
+
+        now = datetime.now().isoformat()
+        changed_articles = []
+
+        with _ARTICLE_LOCK:
+            try:
+                # 1) Met à jour la table ARTICLES.
+                for esi_id in all_ids:
+                    row = rows_by_id.get(esi_id)
+                    if not row:
+                        continue
+
+                    current_ref = _as_text(row.get('ref_caisse')).strip()
+
+                    if esi_id in esi_ids:
+                        # Article coché : il appartient à cette caisse.
+                        target_ref = caisse_ref
+                    elif esi_id in previous_ids and current_ref in equivalent_refs:
+                        # Article décoché : on retire uniquement le lien vers CETTE caisse.
+                        target_ref = ''
+                    else:
+                        continue
+
+                    if current_ref == target_ref:
+                        continue
+
+                    patch = {
+                        'ref_caisse': target_ref,
+                        'updated_at': now,
+                    }
+                    merged = dict(row)
+                    merged.update(patch)
+                    patch['search_text'] = _article_search_text(merged)
+
+                    supabase_rest_request(
+                        'PATCH', 'articles',
+                        'esi_id=eq.' + urllib.parse.quote(esi_id, safe='-'),
+                        patch,
+                        prefer='return=minimal'
+                    )
+                    changed_articles.append({
+                        'esi_id': esi_id,
+                        'ref_caisse': current_ref,
+                        'updated_at': row.get('updated_at'),
+                        'search_text': row.get('search_text'),
+                    })
+
+                # 2) Conserve aussi la sélection dans le ticket comme auparavant.
+                ticket['articles_lies'] = selected
+                ticket['updatedAt'] = now
+                save_ticket(ticket)
+
+            except Exception:
+                # Si la sauvegarde échoue, remet au mieux les articles dans leur état précédent.
+                for old in reversed(changed_articles):
+                    try:
+                        rollback_patch = {
+                            'ref_caisse': old.get('ref_caisse') or '',
+                            'updated_at': old.get('updated_at') or now,
+                            'search_text': old.get('search_text') or '',
                         }
+                        supabase_rest_request(
+                            'PATCH', 'articles',
+                            'esi_id=eq.' + urllib.parse.quote(old['esi_id'], safe='-'),
+                            rollback_patch,
+                            prefer='return=minimal'
+                        )
+                    except Exception as rollback_error:
+                        print(
+                            f"[ARTICLES LIES] Rollback impossible pour {old.get('esi_id')}: "
+                            f"{rollback_error}"
+                        )
+                raise
 
-            missing = [x for x in esi_ids if x not in by_id]
-            if missing:
-                return jsonify({
-                    'ok': False,
-                    'error': 'Certains articles sont introuvables ou sont des CONTENANTS : ' + ', '.join(missing[:10])
-                }), 400
-            selected = [by_id[x] for x in esi_ids]
+        return jsonify({
+            'ok': True,
+            'articles': selected,
+            'count': len(selected),
+            'ref_caisse': caisse_ref,
+        })
 
-        # Stockage dans raw_json du ticket via save_ticket : aucune nouvelle colonne necessaire.
-        ticket['articles_lies'] = selected
-        ticket['updatedAt'] = datetime.now().isoformat()
-        save_ticket(ticket)
-        return jsonify({'ok': True, 'articles': selected, 'count': len(selected)})
     except Exception as e:
+        print(f"[ARTICLES LIES] Erreur synchro caisse {ticket_id}: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
