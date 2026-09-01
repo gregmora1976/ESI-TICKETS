@@ -863,9 +863,156 @@ def _article_ids_for_received_units(item, previous_qty, qty_received):
     return ids[start:end]
 
 
+ARTICLES_MANUAL_CREATE_JS = r"""(function(){
+'use strict';
+
+function escManual(v){return String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#039;'}[c]))}
+
+function ensureManualCreateUI(){
+  const actions=document.querySelector('.actions');
+  if(!actions || document.getElementById('manualArticleCreateBtn')) return;
+
+  const btn=document.createElement('button');
+  btn.className='btn primary';
+  btn.id='manualArticleCreateBtn';
+  btn.type='button';
+  btn.textContent='+ Créer un article';
+  const excelBtn=document.getElementById('excelImportBtn');
+  if(excelBtn) actions.insertBefore(btn, excelBtn); else actions.appendChild(btn);
+
+  const bg=document.createElement('div');
+  bg.className='modal-backdrop';
+  bg.id='manualArticleModalBackdrop';
+  bg.setAttribute('aria-hidden','true');
+  bg.innerHTML=`<div class="modal" role="dialog" aria-modal="true" style="width:min(940px,96vw)">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">Créer un article manuellement</div>
+        <div class="modal-sub">Le N° ESI sera généré automatiquement.</div>
+      </div>
+      <button class="modal-close" id="manualArticleModalClose" type="button">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="edit-grid" id="manualArticleGrid">
+        <div class="edit-field"><label>Type</label><select id="manualType"><option value="PRODUIT">PRODUIT</option><option value="CONTENANT">CONTENANT</option></select></div>
+        <div class="edit-field"><label>N° dossier *</label><input id="manualDossier" autocomplete="off" placeholder="Ex. 101129"></div>
+        <div class="edit-field"><label>Référence / N° inventaire</label><input id="manualReference" autocomplete="off"></div>
+        <div class="edit-field"><label>Client</label><input id="manualClient" autocomplete="off"></div>
+        <div class="edit-field"><label>Projet / exposition</label><input id="manualProjet" autocomplete="off"></div>
+        <div class="edit-field"><label>Réf. caisse</label><input id="manualRefCaisse" autocomplete="off" placeholder="Ex. 101129-01"></div>
+        <div class="edit-field"><label>Réf. transporteur</label><input id="manualTransporteurRef" autocomplete="off"></div>
+        <div class="edit-field"><label>Lieu de stockage</label><input id="manualLieuStockage" autocomplete="off"></div>
+        <div class="edit-field" style="grid-column:1/-1"><label>Description / désignation</label><textarea id="manualDescription"></textarea></div>
+        <div class="edit-field"><label>Longueur (cm)</label><input id="manualLongueur" inputmode="decimal"></div>
+        <div class="edit-field"><label>Largeur (cm)</label><input id="manualLargeur" inputmode="decimal"></div>
+        <div class="edit-field"><label>Hauteur (cm)</label><input id="manualHauteur" inputmode="decimal"></div>
+        <div class="edit-field"><label>Poids (kg)</label><input id="manualPoids" inputmode="decimal"></div>
+        <div class="edit-field"><label>Volume (m³)</label><input id="manualVolume" inputmode="decimal"></div>
+        <div class="edit-field"><label>Surface (m²)</label><input id="manualSurface" inputmode="decimal"></div>
+        <div class="edit-field"><label>Statut logistique</label><input id="manualStatut" value="Créé"></div>
+      </div>
+      <div id="manualArticleHint" class="muted" style="margin-top:12px;font-size:12px">Si ce N° de dossier existe déjà, Client et Projet seront repris automatiquement depuis la base.</div>
+      <div class="modal-actions">
+        <button class="btn" id="manualArticleCancel" type="button">Annuler</button>
+        <button class="btn primary" id="manualArticleSave" type="button">Créer l'article</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(bg);
+
+  const ids=['manualType','manualDossier','manualReference','manualClient','manualProjet','manualRefCaisse','manualTransporteurRef','manualLieuStockage','manualDescription','manualLongueur','manualLargeur','manualHauteur','manualPoids','manualVolume','manualSurface','manualStatut'];
+  function el(id){return document.getElementById(id)}
+  function clearForm(){
+    ids.forEach(id=>{const node=el(id); if(!node)return; if(id==='manualType')node.value='PRODUIT'; else if(id==='manualStatut')node.value='Créé'; else node.value='';});
+    el('manualArticleHint').textContent='Si ce N° de dossier existe déjà, Client et Projet seront repris automatiquement depuis la base.';
+  }
+  function openModal(){clearForm();bg.classList.add('open');bg.setAttribute('aria-hidden','false');setTimeout(()=>el('manualDossier').focus(),50)}
+  function closeModal(){bg.classList.remove('open');bg.setAttribute('aria-hidden','true')}
+
+  btn.onclick=openModal;
+  el('manualArticleModalClose').onclick=closeModal;
+  el('manualArticleCancel').onclick=closeModal;
+  bg.addEventListener('click',e=>{if(e.target===bg)closeModal()});
+
+  let identitySeq=0;
+  async function autofillDossier(){
+    const dossier=String(el('manualDossier').value||'').trim();
+    const seq=++identitySeq;
+    if(!dossier)return;
+    try{
+      const r=await fetch('/api/articles/by-dossier?dossier='+encodeURIComponent(dossier),{cache:'no-store'});
+      const d=await r.json();
+      if(seq!==identitySeq||!r.ok)return;
+      const rows=d.articles||[];
+      const first=rows.find(x=>String(x.client||'').trim()||String(x.projet||'').trim());
+      if(first){
+        if(String(first.client||'').trim())el('manualClient').value=first.client;
+        if(String(first.projet||'').trim())el('manualProjet').value=first.projet;
+        el('manualArticleHint').textContent='Dossier existant : Client et Projet ont été repris automatiquement.';
+      }else{
+        el('manualArticleHint').textContent='Nouveau dossier ou dossier sans identité connue : renseigne Client et Projet si nécessaire.';
+      }
+    }catch(e){}
+  }
+  el('manualDossier').addEventListener('change',autofillDossier);
+  el('manualDossier').addEventListener('blur',autofillDossier);
+
+  el('manualArticleSave').onclick=async()=>{
+    const dossier=String(el('manualDossier').value||'').trim();
+    const reference=String(el('manualReference').value||'').trim();
+    const description=String(el('manualDescription').value||'').trim();
+    if(!dossier){alert('Le N° de dossier est obligatoire.');el('manualDossier').focus();return}
+    if(!reference&&!description){alert('Renseigne au minimum une référence ou une description.');el('manualReference').focus();return}
+
+    const payload={
+      type_objet:el('manualType').value,
+      dossier,
+      reference,
+      description,
+      client:String(el('manualClient').value||'').trim(),
+      projet:String(el('manualProjet').value||'').trim(),
+      ref_caisse:String(el('manualRefCaisse').value||'').trim(),
+      transporteur_ref:String(el('manualTransporteurRef').value||'').trim(),
+      lieu_stockage:String(el('manualLieuStockage').value||'').trim(),
+      longueur_cm:String(el('manualLongueur').value||'').trim(),
+      largeur_cm:String(el('manualLargeur').value||'').trim(),
+      hauteur_cm:String(el('manualHauteur').value||'').trim(),
+      poids_kg:String(el('manualPoids').value||'').trim(),
+      volume_m3:String(el('manualVolume').value||'').trim(),
+      surface_m2:String(el('manualSurface').value||'').trim(),
+      statut_logistique:String(el('manualStatut').value||'').trim()||'Créé'
+    };
+
+    const save=el('manualArticleSave');
+    save.disabled=true;save.textContent='Création…';
+    try{
+      const r=await fetch('/api/articles/manual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const text=await r.text();let d={};try{d=text?JSON.parse(text):{}}catch(e){}
+      if(!r.ok)throw new Error(d.error||'Impossible de créer l’article');
+      const esi=(d.article&&d.article.esi_id)||d.esi_id||'';
+      closeModal();
+      if(typeof load==='function')await load();
+      if(esi&&typeof openArticleDetail==='function')await openArticleDetail(esi);
+      else alert('Article créé'+(esi?' : '+esi:''));
+    }catch(e){alert(e.message||'Impossible de créer l’article')}
+    finally{save.disabled=false;save.textContent="Créer l'article"}
+  };
+}
+
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',ensureManualCreateUI);else ensureManualCreateUI();
+})();"""
+
 @app.route('/articles')
 def articles_page():
-    return render_template('articles.html')
+    page = render_template('articles.html')
+    inline = '<script>' + ARTICLES_MANUAL_CREATE_JS + '</script>'
+    if '</body>' in page:
+        page = page.replace('</body>', inline + '\n</body>', 1)
+    else:
+        page += inline
+    response = app.make_response(page)
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return response
 
 
 @app.route('/api/articles')
@@ -885,6 +1032,79 @@ def api_articles():
 
     rows = supabase_rest_request("GET", "articles", query) or []
     return jsonify([_article_row_to_public(row) for row in rows])
+
+
+@app.route('/api/articles/manual', methods=['POST'])
+def api_article_create_manual():
+    """Crée un article ou un contenant directement depuis la base Articles."""
+    data = request.get_json(silent=True) or {}
+
+    type_objet = _as_text(data.get('type_objet') or 'PRODUIT').strip().upper()
+    if type_objet not in ('PRODUIT', 'CONTENANT'):
+        return jsonify({'ok': False, 'error': 'Type invalide : PRODUIT ou CONTENANT attendu'}), 400
+
+    dossier = _as_text(data.get('dossier')).strip()
+    reference = _as_text(data.get('reference')).strip()
+    description = _as_text(data.get('description')).strip()
+
+    if not dossier:
+        return jsonify({'ok': False, 'error': 'Le N° de dossier est obligatoire'}), 400
+    if not reference and not description:
+        return jsonify({'ok': False, 'error': 'Renseigne au minimum une référence ou une description'}), 400
+
+    try:
+        identity = _article_dossier_identity(dossier)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'Impossible de lire les informations du dossier : {e}'}), 500
+
+    # Pour un dossier déjà connu, l'identité existante reste prioritaire afin
+    # d'éviter des Client / Projet différents pour un même N° de dossier.
+    client = _as_text(identity.get('client')).strip() or _as_text(data.get('client')).strip()
+    projet = _as_text(identity.get('projet')).strip() or _as_text(data.get('projet')).strip()
+    now = datetime.now().isoformat()
+
+    payload = {
+        'ticket_id': None,
+        'source_module': 'Création manuelle',
+        'source_index': None,
+        'unit_index': 1,
+        'type_objet': type_objet,
+        'reference': reference,
+        'description': description,
+        'dossier': dossier,
+        'client': client,
+        'projet': projet,
+        'ref_caisse': _as_text(data.get('ref_caisse')).strip(),
+        'transporteur_ref': _as_text(data.get('transporteur_ref')).strip(),
+        'longueur_cm': _as_text(data.get('longueur_cm')).strip(),
+        'largeur_cm': _as_text(data.get('largeur_cm')).strip(),
+        'hauteur_cm': _as_text(data.get('hauteur_cm')).strip(),
+        'volume_m3': _as_text(data.get('volume_m3')).strip(),
+        'surface_m2': _as_text(data.get('surface_m2')).strip(),
+        'poids_kg': _as_text(data.get('poids_kg')).strip(),
+        'lieu_stockage': _as_text(data.get('lieu_stockage')).strip(),
+        'statut_logistique': _as_text(data.get('statut_logistique')).strip() or 'Créé',
+        'created_at': now,
+        'updated_at': now,
+        'raw_json': {
+            'source': 'creation_manuelle',
+            'dossier': dossier,
+            'created_at': now,
+        },
+    }
+    payload['search_text'] = _article_search_text(payload)
+
+    try:
+        with _ARTICLE_LOCK:
+            article = _create_article_record(payload)
+        return jsonify({
+            'ok': True,
+            'esi_id': article.get('esi_id'),
+            'article': article,
+        }), 201
+    except Exception as e:
+        print(f"[ARTICLE MANUEL] Création impossible : {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 @app.route('/api/articles/link-search')
@@ -1064,7 +1284,7 @@ def _article_reception_history_from_ticket(ticket, article):
 
 
 _ARTICLE_EDITABLE_FIELDS = {
-    "reference", "description", "dossier", "client", "projet",
+    "type_objet", "reference", "description", "dossier", "client", "projet",
     "ref_caisse", "transporteur_ref",
     "longueur_cm", "largeur_cm", "hauteur_cm",
     "volume_m3", "surface_m2", "poids_kg",
