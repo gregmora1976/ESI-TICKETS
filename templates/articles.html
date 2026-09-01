@@ -335,11 +335,16 @@ function articlePhotoMarkup(a,editing){
   return `<div class="article-photo-edit-wrap">
     <div class="article-photo editing" id="articlePhotoBox">
       <img id="articlePhotoPreview" class="${photo?'':'photo-hidden'}" src="${photo?esc(photo):''}" alt="Aperçu photo">
-      <div class="article-photo-empty ${photo?'photo-hidden':''}" id="articlePhotoEmpty"><div class="article-photo-empty-mark"></div><strong>Photo de l'œuvre</strong><span>Clique sur « Choisir une photo »</span></div>
+      <div class="article-photo-empty ${photo?'photo-hidden':''}" id="articlePhotoEmpty"><div class="article-photo-empty-mark"></div><strong>Photo de l'œuvre</strong><span>Prendre une photo ou choisir dans la galerie</span></div>
     </div>
-    <input id="articlePhotoInput" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" style="display:none">
-    <div class="article-photo-actions"><button class="btn primary" type="button" id="articleChoosePhotoBtn">${photo?'Remplacer la photo':'Choisir une photo'}</button><button class="btn danger" type="button" id="articleDeletePhotoBtn" ${photo?'':'disabled'}>Supprimer</button></div>
-    <div class="photo-help" id="articlePhotoHelp">${filename?`Photo actuelle : <strong>${esc(filename)}</strong><br>`:''}JPG, PNG ou WEBP — 15 Mo maximum.</div>
+    <input id="articleCameraInput" type="file" accept="image/*" capture="environment" style="display:none">
+    <input id="articleGalleryInput" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" style="display:none">
+    <div class="article-photo-actions">
+      <button class="btn primary" type="button" id="articleTakePhotoBtn">📷 Prendre une photo</button>
+      <button class="btn" type="button" id="articleChoosePhotoBtn">🖼 Choisir une photo</button>
+      <button class="btn danger" type="button" id="articleDeletePhotoBtn" ${photo?'':'disabled'}>Supprimer</button>
+    </div>
+    <div class="photo-help" id="articlePhotoHelp">${filename?`Photo actuelle : <strong>${esc(filename)}</strong><br>`:''}Sur tablette, « Prendre une photo » ouvre la caméra arrière. JPG, PNG ou WEBP — 15 Mo maximum.</div>
   </div>`;
 }
 function setArticlePhotoPreview(src,hasPhoto){
@@ -349,23 +354,30 @@ function setArticlePhotoPreview(src,hasPhoto){
   if(del)del.disabled=!hasPhoto;
 }
 function setupArticlePhotoEditor(a){
-  const input=document.getElementById('articlePhotoInput'),choose=document.getElementById('articleChoosePhotoBtn'),del=document.getElementById('articleDeletePhotoBtn'),help=document.getElementById('articlePhotoHelp');
-  if(!input||!choose)return;
-  choose.onclick=()=>input.click();
-  input.onchange=()=>{
-    const file=input.files&&input.files[0];if(!file)return;
+  const cameraInput=document.getElementById('articleCameraInput'),galleryInput=document.getElementById('articleGalleryInput'),take=document.getElementById('articleTakePhotoBtn'),choose=document.getElementById('articleChoosePhotoBtn'),del=document.getElementById('articleDeletePhotoBtn'),help=document.getElementById('articlePhotoHelp');
+  if(!cameraInput||!galleryInput||!take||!choose)return;
+
+  function selectPhoto(file,input){
+    if(!file)return;
     const allowed=['image/jpeg','image/png','image/webp'];
-    if(!allowed.includes(String(file.type||'').toLowerCase())){alert('Utilise une photo JPG, PNG ou WEBP.');input.value='';return}
+    const type=String(file.type||'').toLowerCase();
+    if(type&&!allowed.includes(type)){alert('Utilise une photo JPG, PNG ou WEBP.');input.value='';return}
     if(file.size>15*1024*1024){alert('La photo dépasse 15 Mo.');input.value='';return}
     if(articleDetailState.previewUrl){try{URL.revokeObjectURL(articleDetailState.previewUrl)}catch(e){}}
     articleDetailState.photoFile=file;articleDetailState.removePhoto=false;articleDetailState.previewUrl=URL.createObjectURL(file);
     setArticlePhotoPreview(articleDetailState.previewUrl,true);
     if(del)del.disabled=false;
-    if(help)help.innerHTML=`Nouvelle photo : <strong>${esc(file.name)}</strong><br>Elle sera enregistrée avec la fiche.`;
-  };
+    if(help)help.innerHTML=`Nouvelle photo : <strong>${esc(file.name||'photo prise avec la tablette')}</strong><br>Elle sera enregistrée avec la fiche.`;
+  }
+
+  take.onclick=()=>{cameraInput.value='';cameraInput.click()};
+  choose.onclick=()=>{galleryInput.value='';galleryInput.click()};
+  cameraInput.onchange=()=>selectPhoto(cameraInput.files&&cameraInput.files[0],cameraInput);
+  galleryInput.onchange=()=>selectPhoto(galleryInput.files&&galleryInput.files[0],galleryInput);
+
   if(del)del.onclick=()=>{
     if(articleDetailState.previewUrl){try{URL.revokeObjectURL(articleDetailState.previewUrl)}catch(e){}}
-    articleDetailState.photoFile=null;articleDetailState.previewUrl='';articleDetailState.removePhoto=true;input.value='';
+    articleDetailState.photoFile=null;articleDetailState.previewUrl='';articleDetailState.removePhoto=true;cameraInput.value='';galleryInput.value='';
     setArticlePhotoPreview('',false);
     if(help)help.textContent='La photo sera supprimée lors de l’enregistrement.';
   };
