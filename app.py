@@ -1328,6 +1328,130 @@ def api_articles_colis_by_dossier():
     nums=sorted(_existing_colis_numbers(dossier))
     return jsonify({'ok':True,'dossier':dossier,'colis':[f"{dossier}-{n:03d}" for n in nums]})
 
+@app.route('/api/articles/<esi_id>/photo', methods=['GET', 'POST', 'DELETE'])
+def api_article_photo(esi_id):
+    """Affiche, ajoute/remplace ou retire la photo principale d'un article."""
+    esi_id = _as_text(esi_id).strip()
+    safe_esi = urllib.parse.quote(esi_id, safe='-')
+    rows = supabase_rest_request(
+        'GET', 'articles', f'select=*&esi_id=eq.{safe_esi}&limit=1'
+    ) or []
+    if not rows:
+        return jsonify({'ok': False, 'error': 'Article introuvable'}), 404
+
+    article = dict(rows[0])
+    raw = article.get('raw_json') if isinstance(article.get('raw_json'), dict) else {}
+    raw = dict(raw or {})
+
+    if request.method == 'GET':
+        storage_path = _as_text(raw.get('photo_storage_path')).strip()
+        if not storage_path:
+            abort(404)
+        try:
+            return redirect(supabase_signed_download_url(storage_path, expires_in=900))
+        except Exception as e:
+            print(f'[ARTICLE PHOTO] URL signee impossible pour {esi_id}: {e}')
+            try:
+                data = supabase_download_bytes(storage_path)
+            except Exception:
+                abort(404)
+            return send_file(
+                BytesIO(data),
+                mimetype=_as_text(raw.get('photo_content_type')).strip() or 'image/jpeg',
+                download_name=_as_text(raw.get('photo_filename')).strip() or f'{esi_id}.jpg',
+            )
+
+    if request.method == 'DELETE':
+        for key in (
+            'photo_storage_path', 'photo_filename', 'photo_content_type',
+            'photo_updated_at', 'photo_url', 'photo', 'image_url'
+        ):
+            raw.pop(key, None)
+        raw['photo_deleted_at'] = datetime.now().isoformat()
+        patch = {
+            'raw_json': raw,
+            'updated_at': datetime.now().isoformat(),
+        }
+        merged = dict(article)
+        merged.update(patch)
+        patch['search_text'] = _article_search_text(merged)
+        supabase_rest_request(
+            'PATCH', 'articles', f'esi_id=eq.{safe_esi}', patch, prefer='return=minimal'
+        )
+        return jsonify({'ok': True, 'esi_id': esi_id, 'photo_url': ''})
+
+    fs = request.files.get('photo') or request.files.get('file')
+    if not fs or not fs.filename:
+        return jsonify({'ok': False, 'error': 'Photo manquante'}), 400
+
+    filename = _as_text(fs.filename).strip()
+    ext = Path(filename).suffix.lower()
+    allowed_ext = {'.jpg', '.jpeg', '.png', '.webp'}
+    if ext not in allowed_ext:
+        return jsonify({
+            'ok': False,
+            'error': 'Format photo non pris en charge. Utilise JPG, PNG ou WEBP.'
+        }), 400
+
+    content = fs.read()
+    if not content:
+        return jsonify({'ok': False, 'error': 'Le fichier image est vide'}), 400
+    if len(content) > 15 * 1024 * 1024:
+        return jsonify({'ok': False, 'error': 'La photo dépasse la limite de 15 Mo'}), 400
+
+    # Vérification simple de la signature du fichier pour éviter qu'un autre type
+    # de contenu soit envoyé avec une extension d'image.
+    valid_signature = False
+    if ext in ('.jpg', '.jpeg'):
+        valid_signature = content.startswith(b'\xff\xd8\xff')
+    elif ext == '.png':
+        valid_signature = content.startswith(b'\x89PNG\r\n\x1a\n')
+    elif ext == '.webp':
+        valid_signature = len(content) >= 12 and content[:4] == b'RIFF' and content[8:12] == b'WEBP'
+    if not valid_signature:
+        return jsonify({'ok': False, 'error': 'Le fichier ne semble pas être une image valide'}), 400
+
+    safe_name = safe_filename(filename) or ('photo' + ext)
+    stamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
+    storage_path = f'article_photos/{safe_filename(esi_id)}/{stamp}_{safe_name}'
+    content_type = _as_text(fs.content_type).strip().lower()
+    if content_type not in {'image/jpeg', 'image/png', 'image/webp'}:
+        content_type = {
+            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.png': 'image/png', '.webp': 'image/webp'
+        }[ext]
+
+    try:
+        supabase_upload_bytes(storage_path, content, content_type)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f"Impossible d'enregistrer la photo : {e}"}), 500
+
+    raw['photo_storage_path'] = storage_path
+    raw['photo_filename'] = filename
+    raw['photo_content_type'] = content_type
+    raw['photo_updated_at'] = datetime.now().isoformat()
+    raw.pop('photo_deleted_at', None)
+
+    patch = {
+        'raw_json': raw,
+        'updated_at': datetime.now().isoformat(),
+    }
+    merged = dict(article)
+    merged.update(patch)
+    patch['search_text'] = _article_search_text(merged)
+    supabase_rest_request(
+        'PATCH', 'articles', f'esi_id=eq.{safe_esi}', patch, prefer='return=minimal'
+    )
+
+    photo_url = f'/api/articles/{urllib.parse.quote(esi_id, safe="-")}/photo?v={urllib.parse.quote(raw["photo_updated_at"], safe="")}'
+    return jsonify({
+        'ok': True,
+        'esi_id': esi_id,
+        'photo_url': photo_url,
+        'filename': filename,
+    })
+
+
 @app.route('/api/articles/<esi_id>/colis', methods=['PATCH'])
 def api_article_update_colis(esi_id):
     safe_esi=urllib.parse.quote(_as_text(esi_id).strip(),safe='-')
@@ -1356,6 +1480,17 @@ def api_article_detail(esi_id):
         return jsonify({"error": "Article introuvable"}), 404
 
     article = _article_row_to_public(rows[0])
+    article_raw = article.get("raw_json") if isinstance(article.get("raw_json"), dict) else {}
+    article_raw = dict(article_raw or {})
+    photo_storage_path = _as_text(article_raw.get("photo_storage_path")).strip()
+    if photo_storage_path:
+        photo_version = _as_text(article_raw.get("photo_updated_at") or article.get("updated_at")).strip()
+        article["photo_url"] = (
+            f"/api/articles/{urllib.parse.quote(esi_id, safe='-')}/photo"
+            + ("?v=" + urllib.parse.quote(photo_version, safe='') if photo_version else "")
+        )
+        article["photo_filename"] = _as_text(article_raw.get("photo_filename")).strip()
+
     ticket_id = _as_text(article.get("ticket_id")).strip()
     ticket = load_ticket(ticket_id) if ticket_id else None
 
@@ -1416,7 +1551,7 @@ def api_article_detail(esi_id):
 
         detail["receptions"] = _article_reception_history_from_ticket(ticket, article)
 
-    raw = article.get("raw_json") if isinstance(article.get("raw_json"), dict) else {}
+    raw = article_raw
     raw_receptions = raw.get("receptions") or []
     if raw_receptions:
         known_refs = {str(x.get("reference") or "") for x in detail["receptions"]}
