@@ -7015,21 +7015,26 @@ def api_ticket_articles_lies(ticket_id):
                         continue
 
                     current_ref = _as_text(row.get('ref_caisse')).strip()
+                    current_colis = _as_text(row.get('dernier_colis')).strip()
 
                     if esi_id in esi_ids:
-                        # Article coché : il appartient à cette caisse.
+                        # Article coché : le N° de caisse EST aussi le N° de colis.
                         target_ref = caisse_ref
-                    elif esi_id in previous_ids and current_ref in equivalent_refs:
-                        # Article décoché : on retire uniquement le lien vers CETTE caisse.
-                        target_ref = ''
+                        target_colis = caisse_ref
+                    elif esi_id in previous_ids:
+                        # Article décoché : retire uniquement les valeurs qui correspondent
+                        # à CETTE caisse, sans effacer une autre affectation éventuelle.
+                        target_ref = '' if current_ref in equivalent_refs else current_ref
+                        target_colis = '' if current_colis in equivalent_refs else current_colis
                     else:
                         continue
 
-                    if current_ref == target_ref:
+                    if current_ref == target_ref and current_colis == target_colis:
                         continue
 
                     patch = {
                         'ref_caisse': target_ref,
+                        'dernier_colis': target_colis,
                         'updated_at': now,
                     }
                     merged = dict(row)
@@ -7045,6 +7050,7 @@ def api_ticket_articles_lies(ticket_id):
                     changed_articles.append({
                         'esi_id': esi_id,
                         'ref_caisse': current_ref,
+                        'dernier_colis': current_colis,
                         'updated_at': row.get('updated_at'),
                         'search_text': row.get('search_text'),
                     })
@@ -7060,6 +7066,7 @@ def api_ticket_articles_lies(ticket_id):
                     try:
                         rollback_patch = {
                             'ref_caisse': old.get('ref_caisse') or '',
+                            'dernier_colis': old.get('dernier_colis') or '',
                             'updated_at': old.get('updated_at') or now,
                             'search_text': old.get('search_text') or '',
                         }
@@ -7081,6 +7088,7 @@ def api_ticket_articles_lies(ticket_id):
             'articles': selected,
             'count': len(selected),
             'ref_caisse': caisse_ref,
+            'numero_colis': caisse_ref,
         })
 
     except Exception as e:
