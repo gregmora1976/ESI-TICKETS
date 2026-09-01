@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -1167,7 +1166,11 @@ setupManagerDrop();
 loadConfigStatus();
 loadAutocompleteCache();
 refreshTickets();
-setInterval(refreshTickets, 10000);
+setInterval(() => {
+  if (!state.editMode) {
+    refreshTickets();
+  }
+}, 10000);
 </script>
 
 </body>
