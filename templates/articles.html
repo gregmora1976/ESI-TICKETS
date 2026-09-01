@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ESI TICKETS — Base articles</title>
 <style>
-:root{--blue:#0ea5e9;--navy:#0f2f4f;--line:#dbe7f0;--muted:#64748b;--bg:#eef6fb;--text:#0f172a}
+:root{--blue:#0ea5e9;--blue-dark:#0284c7;--navy:#0f2f4f;--line:#dbe7f0;--muted:#64748b;--bg:#eef6fb;--text:#0f172a;--field:#eaf6ff}
 *{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;background:linear-gradient(180deg,#eaf5fb,#f8fafc);color:var(--text)}
 .wrap{max-width:1500px;margin:18px auto;padding:0 18px}.card{background:#fff;border:1px solid var(--line);border-radius:22px;box-shadow:0 12px 30px rgba(15,23,42,.08)}
 .head{padding:22px 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px;justify-content:space-between;flex-wrap:wrap}
@@ -26,20 +26,43 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
 .section-title{font-size:12px;font-weight:950;text-transform:uppercase;color:var(--muted);letter-spacing:.05em;margin-bottom:10px}
 .detail-grid{display:grid;grid-template-columns:180px 1fr;gap:8px 14px}.detail-label{font-size:12px;color:var(--muted);font-weight:800}.detail-value{font-size:13px;font-weight:700;white-space:pre-wrap;overflow-wrap:anywhere}
 .history-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px}.history-title{font-weight:950}.file-link{display:inline-block;margin:5px 5px 0 0;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:#fff;color:#0369a1;font-weight:800;text-decoration:none}
+.selection-actions{display:none;align-items:center;gap:8px;flex-wrap:wrap;padding:0 24px 14px}.selection-actions.show{display:flex}.btn.danger{background:#dc2626;border-color:#dc2626;color:#fff}.selection-count{font-size:12px;color:var(--muted);font-weight:800;margin-right:4px}.edit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.edit-field{border:1px solid var(--line);border-radius:12px;padding:10px;background:#fff}.edit-field label{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:900;margin-bottom:7px}.edit-field input,.edit-field textarea{width:100%;border:1px solid #bfd4e3;border-radius:10px;padding:9px 10px;font:inherit}.edit-field textarea{min-height:72px;resize:vertical}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.import-box{border:1px solid var(--line);border-radius:14px;padding:14px;background:#f8fafc}.import-label{display:block;font-size:12px;font-weight:900;margin-bottom:7px;color:#334155}.import-input{width:100%;border:1px solid #bfd4e3;background:#eaf6ff;border-radius:12px;padding:11px 12px;font-size:14px}.drop-zone{margin-top:14px;border:2px dashed #7dd3fc;border-radius:16px;padding:28px 18px;text-align:center;background:#f0f9ff;cursor:pointer;transition:.15s ease}.drop-zone:hover,.drop-zone.dragover{background:#e0f2fe;border-color:#0ea5e9}.drop-zone-title{font-weight:950;color:#0369a1;font-size:16px}.drop-zone-sub{margin-top:6px;color:var(--muted);font-size:12px}.drop-file{margin-top:10px;font-size:13px;font-weight:800;color:#0f172a;overflow-wrap:anywhere}.import-status{margin-top:12px;font-size:12px;color:var(--muted);min-height:18px}
 
-.selection-actions{display:none;align-items:center;gap:8px;flex-wrap:wrap;padding:0 24px 14px}.selection-actions.show{display:flex}.btn.danger{background:#dc2626;border-color:#dc2626;color:#fff}.selection-count{font-size:12px;color:var(--muted);font-weight:800;margin-right:4px}.edit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.edit-field{border:1px solid var(--line);border-radius:12px;padding:10px;background:#fff}.edit-field label{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:900;margin-bottom:7px}.edit-field input,.edit-field textarea{width:100%;border:1px solid #bfd4e3;border-radius:10px;padding:9px 10px;font:inherit}.edit-field textarea{min-height:72px;resize:vertical}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}@media(max-width:700px){.edit-grid{grid-template-columns:1fr}}
-@media(max-width:700px){.detail-grid{grid-template-columns:1fr}.detail-value{margin-bottom:6px}}
-
-.import-box{border:1px solid var(--line);border-radius:14px;padding:14px;background:#f8fafc}
-.import-label{display:block;font-size:12px;font-weight:900;margin-bottom:7px;color:#334155}
-.import-input{width:100%;border:1px solid #bfd4e3;background:#eaf6ff;border-radius:12px;padding:11px 12px;font-size:14px}
-.drop-zone{margin-top:14px;border:2px dashed #7dd3fc;border-radius:16px;padding:28px 18px;text-align:center;background:#f0f9ff;cursor:pointer;transition:.15s ease}
-.drop-zone:hover,.drop-zone.dragover{background:#e0f2fe;border-color:#0ea5e9}
-.drop-zone-title{font-weight:950;color:#0369a1;font-size:16px}
-.drop-zone-sub{margin-top:6px;color:var(--muted);font-size:12px}
-.drop-file{margin-top:10px;font-size:13px;font-weight:800;color:#0f172a;overflow-wrap:anywhere}
-.import-status{margin-top:12px;font-size:12px;color:var(--muted);min-height:18px}
-
+/* Fiche détaillée article : structure "carte d'identité" dans le style ESI TICKETS */
+.article-modal{width:min(1180px,97vw);max-height:94vh;border-radius:22px;background:#f8fbfd;overflow:auto}
+.article-modal .modal-head{padding:0;border:0;background:#fff;align-items:stretch}
+.article-modal-heading{flex:1;display:flex;align-items:center;gap:16px;padding:18px 22px;border-bottom:1px solid var(--line)}
+.article-modal-heading img{width:70px;max-height:48px;object-fit:contain;flex:0 0 auto}
+.article-modal-heading .modal-title{color:var(--navy);font-size:24px;letter-spacing:.01em}
+.article-modal-heading .modal-sub{font-size:12px}
+.article-modal .modal-close{margin:17px 18px 0 0;background:#eaf6ff;color:var(--navy);font-weight:900;flex:0 0 auto}
+.article-modal .modal-close:hover{background:#dff2ff}
+.article-modal .modal-body{padding:0 22px 24px;background:linear-gradient(180deg,#f4faff 0,#fbfdff 260px,#fff 100%)}
+.article-hero{margin:0 -22px 22px;padding:24px 22px 22px;background:linear-gradient(135deg,var(--navy),#16476f);color:#fff;display:flex;align-items:flex-end;justify-content:space-between;gap:18px;flex-wrap:wrap}
+.article-hero-kicker{font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:#bae6fd}
+.article-hero-title{font-size:30px;line-height:1.05;font-weight:950;margin-top:5px;overflow-wrap:anywhere}
+.article-hero-desc{margin-top:7px;max-width:720px;color:#dbeafe;font-size:13px;font-weight:700;line-height:1.45}
+.article-hero-badges{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.article-hero-badge{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:7px 11px;font-size:11px;font-weight:900;white-space:nowrap}
+.identity-section{background:#fff;border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 7px 22px rgba(15,47,79,.06);margin-top:16px}
+.identity-section-title{display:flex;align-items:center;gap:10px;color:var(--navy);font-size:13px;font-weight:950;text-transform:uppercase;letter-spacing:.055em;margin-bottom:14px}
+.identity-section-title:before{content:"";width:5px;height:20px;border-radius:999px;background:var(--blue);flex:0 0 auto}
+.identity-section-sub{font-size:11px;text-transform:none;letter-spacing:0;color:var(--muted);font-weight:700;margin-left:auto}
+.identity-layout{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:18px;align-items:stretch}
+.identity-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}
+.identity-field{border:1px solid #bfd4e3;background:var(--field);border-radius:12px;padding:10px 12px;min-height:61px}
+.identity-field.span-2{grid-column:span 2}.identity-field-label{font-size:10px;color:#47657d;font-weight:950;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}.identity-field-value{font-size:14px;color:var(--navy);font-weight:850;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.3}.identity-field-value.big{font-size:16px}.identity-field-value.muted-value{color:#718096;font-weight:700}
+.article-photo{border:1px solid #bfd4e3;border-radius:15px;background:#f8fafc;min-height:250px;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+.article-photo img{width:100%;height:100%;min-height:250px;object-fit:contain;background:#fff}
+.article-photo-empty{text-align:center;padding:20px;color:#64748b}.article-photo-empty-mark{width:62px;height:48px;margin:0 auto 12px;border:2px solid #9bcbe7;border-radius:10px;position:relative}.article-photo-empty-mark:before{content:"";position:absolute;width:12px;height:12px;border-radius:50%;background:#9bcbe7;left:9px;top:8px}.article-photo-empty-mark:after{content:"";position:absolute;left:8px;right:8px;bottom:8px;height:20px;background:linear-gradient(145deg,transparent 0 24%,#b8ddf2 25% 49%,transparent 50% 57%,#9bcbe7 58%);clip-path:polygon(0 100%,35% 30%,52% 63%,70% 38%,100% 100%)}.article-photo-empty strong{display:block;color:var(--navy);font-size:12px;text-transform:uppercase}.article-photo-empty span{display:block;margin-top:5px;font-size:11px}
+.metric-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}.metric-card{border:1px solid #bfd4e3;background:var(--field);border-radius:12px;padding:11px;min-height:72px}.metric-label{font-size:10px;color:#47657d;font-weight:950;text-transform:uppercase;letter-spacing:.05em}.metric-line{display:flex;align-items:baseline;gap:5px;margin-top:8px}.metric-value{font-size:20px;font-weight:950;color:var(--navy);overflow-wrap:anywhere}.metric-unit{font-size:11px;font-weight:800;color:var(--muted)}
+.logistics-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.logistics-card{border:1px solid var(--line);border-radius:13px;background:#fff;padding:11px 12px}.logistics-card .identity-field-label{margin-bottom:5px}.logistics-card .identity-field-value{font-size:13px}.colis-editor{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end;margin-top:12px;padding-top:12px;border-top:1px dashed #c7d9e5}.colis-editor label{display:block;font-size:10px;color:#47657d;font-weight:950;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}.colis-editor .import-input{margin:0}.colis-editor .btn{height:42px}
+.linked-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.linked-card{border:1px solid var(--line);border-radius:12px;background:#f8fbfd;padding:11px}.linked-card.span-2{grid-column:span 2}.linked-label{font-size:10px;color:#47657d;font-weight:950;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px}.linked-value{font-size:13px;font-weight:750;color:#213a50;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.4}
+.document-list{display:flex;gap:8px;flex-wrap:wrap}.article-modal .file-link{background:#eaf6ff;border-color:#b8d9ec;color:#0369a1;padding:9px 12px;border-radius:10px}.article-modal .file-link:hover{background:#dff2ff}
+.reception-list{display:grid;gap:12px}.reception-card{background:#fff;border:1px solid var(--line);border-left:5px solid var(--blue);border-radius:14px;padding:14px}.reception-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:11px}.reception-title{font-size:15px;font-weight:950;color:var(--navy)}.reception-date{font-size:11px;font-weight:850;color:#0369a1;background:#eaf6ff;border-radius:999px;padding:6px 9px}.reception-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.reception-field{background:#f8fafc;border:1px solid #e2edf4;border-radius:10px;padding:9px}.reception-field-label{font-size:9px;color:#64748b;font-weight:950;text-transform:uppercase;letter-spacing:.04em}.reception-field-value{font-size:12px;font-weight:800;color:#273a4c;margin-top:4px;overflow-wrap:anywhere}.article-meta{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:10px;color:#7a8c9c;padding:14px 2px 2px}.article-empty{padding:16px;border:1px dashed #b9d4e4;border-radius:12px;background:#f8fbfd;color:var(--muted);font-size:12px;text-align:center}
+@media(max-width:1000px){.identity-layout{grid-template-columns:1fr}.article-photo{min-height:210px}.metric-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.logistics-grid,.reception-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.edit-grid{grid-template-columns:1fr}.detail-grid{grid-template-columns:1fr}.detail-value{margin-bottom:6px}.article-modal .modal-body{padding-left:13px;padding-right:13px}.article-hero{margin-left:-13px;margin-right:-13px;padding-left:13px;padding-right:13px}.article-modal-heading{padding:14px}.article-modal-heading img{width:52px}.article-modal-heading .modal-title{font-size:18px}.article-modal .modal-close{margin:12px 10px 0 0}.article-hero-title{font-size:24px}.identity-section{padding:13px}.identity-fields,.linked-grid,.logistics-grid,.reception-grid{grid-template-columns:1fr}.identity-field.span-2,.linked-card.span-2{grid-column:span 1}.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.colis-editor{grid-template-columns:1fr}.colis-editor .btn{width:100%}}
 </style>
 </head>
 <body>
@@ -83,19 +106,20 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
 </div>
 
 <div class="modal-backdrop" id="articleModalBackdrop" aria-hidden="true">
-  <div class="modal" role="dialog" aria-modal="true">
+  <div class="modal article-modal" role="dialog" aria-modal="true">
     <div class="modal-head">
-      <div>
-        <div class="modal-title" id="articleModalTitle">Article</div>
-        <div class="modal-sub" id="articleModalSub">Historique complet</div>
+      <div class="article-modal-heading">
+        <img src="/static/logo.png" alt="ESI">
+        <div>
+          <div class="modal-title" id="articleModalTitle">CARTE D'IDENTITÉ DE L'ARTICLE</div>
+          <div class="modal-sub" id="articleModalSub">Fiche détaillée et historique</div>
+        </div>
       </div>
       <button class="modal-close" id="articleModalClose" type="button">×</button>
     </div>
     <div class="modal-body" id="articleModalBody"></div>
   </div>
 </div>
-
-
 
 <div class="modal-backdrop" id="excelImportModalBackdrop" aria-hidden="true">
   <div class="modal" role="dialog" aria-modal="true" style="width:min(650px,96vw)">
@@ -110,18 +134,14 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
       <div class="import-box">
         <label class="import-label" for="excelImportDossierInput">N° de dossier</label>
         <input class="import-input" id="excelImportDossierInput" type="text" autocomplete="off" placeholder="Ex. 100524">
-
         <input id="excelImportInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none">
-
         <div class="drop-zone" id="excelDropZone" tabindex="0">
           <div class="drop-zone-title">Glissez votre fichier Excel ici</div>
           <div class="drop-zone-sub">ou cliquez dans cette zone pour sélectionner un fichier .xlsx</div>
           <div class="drop-file" id="excelDropFile">Aucun fichier sélectionné</div>
         </div>
-
         <div class="import-status" id="excelImportStatus"></div>
       </div>
-
       <div class="modal-actions">
         <button class="btn" id="excelImportCancelBtn" type="button">Annuler</button>
         <button class="btn primary" id="excelImportConfirmBtn" type="button" disabled>Importer les articles</button>
@@ -165,16 +185,12 @@ async function apiJson(response){
 function dossierAuto(a){
   const direct=String(a.dossier||'').trim();
   if(direct && direct!=='-') return direct;
-
-  // Secours : les numéros de colis sont de la forme DOSSIER-001.
   const colis=String(a.dernier_colis||'').trim();
   if(colis){
     const first=colis.split(',')[0].trim();
     const m=first.match(/^(.+)-\d{3}$/);
     if(m && m[1]) return m[1];
   }
-
-  // Autres champs éventuellement déjà disponibles dans le référentiel.
   for(const v of [a.numero_dossier,a.dossier_numero,a.transporteur_ref]){
     const s=String(v||'').trim();
     if(s && s!=='-') return s;
@@ -207,7 +223,6 @@ document.getElementById('searchBtn').onclick=load;
 document.getElementById('resetBtn').onclick=()=>{q.value='';load()};
 q.addEventListener('keydown',e=>{if(e.key==='Enter')load()});
 
-
 const excelImportInput=document.getElementById('excelImportInput');
 const excelImportBtn=document.getElementById('excelImportBtn');
 const excelImportModalBackdrop=document.getElementById('excelImportModalBackdrop');
@@ -218,397 +233,203 @@ const excelImportStatus=document.getElementById('excelImportStatus');
 const excelImportConfirmBtn=document.getElementById('excelImportConfirmBtn');
 let excelSelectedFile=null;
 let excelImportRunning=false;
-
 function updateExcelImportReady(){
   const dossier=String(excelImportDossierInput.value||'').trim();
   const validFile=excelSelectedFile && excelSelectedFile.name.toLowerCase().endsWith('.xlsx');
   excelImportConfirmBtn.disabled=excelImportRunning || !(dossier && validFile);
 }
-function setExcelSelectedFile(file){
-  excelSelectedFile=file||null;
-  excelDropFile.textContent=excelSelectedFile?excelSelectedFile.name:'Aucun fichier sélectionné';
-  updateExcelImportReady();
-}
-function openExcelImportModal(){
-  excelImportDossierInput.value='';
-  excelImportInput.value='';
-  excelImportStatus.textContent='';
-  setExcelSelectedFile(null);
-  excelImportModalBackdrop.classList.add('open');
-  excelImportModalBackdrop.setAttribute('aria-hidden','false');
-  setTimeout(()=>excelImportDossierInput.focus(),50);
-}
-function closeExcelImportModal(){
-  if(excelImportRunning) return;
-  excelImportModalBackdrop.classList.remove('open');
-  excelImportModalBackdrop.setAttribute('aria-hidden','true');
-  excelImportDossierInput.value='';
-  excelImportInput.value='';
-  excelImportStatus.textContent='';
-  setExcelSelectedFile(null);
-}
+function setExcelSelectedFile(file){excelSelectedFile=file||null;excelDropFile.textContent=excelSelectedFile?excelSelectedFile.name:'Aucun fichier sélectionné';updateExcelImportReady()}
+function openExcelImportModal(){excelImportDossierInput.value='';excelImportInput.value='';excelImportStatus.textContent='';setExcelSelectedFile(null);excelImportModalBackdrop.classList.add('open');excelImportModalBackdrop.setAttribute('aria-hidden','false');setTimeout(()=>excelImportDossierInput.focus(),50)}
+function closeExcelImportModal(){if(excelImportRunning)return;excelImportModalBackdrop.classList.remove('open');excelImportModalBackdrop.setAttribute('aria-hidden','true');excelImportDossierInput.value='';excelImportInput.value='';excelImportStatus.textContent='';setExcelSelectedFile(null)}
 excelImportBtn.onclick=openExcelImportModal;
 document.getElementById('excelImportModalClose').onclick=closeExcelImportModal;
 document.getElementById('excelImportCancelBtn').onclick=closeExcelImportModal;
-excelImportModalBackdrop.addEventListener('click',e=>{
-  if(e.target.id==='excelImportModalBackdrop') closeExcelImportModal();
-});
+excelImportModalBackdrop.addEventListener('click',e=>{if(e.target.id==='excelImportModalBackdrop')closeExcelImportModal()});
 excelImportDossierInput.addEventListener('input',updateExcelImportReady);
-
 excelDropZone.addEventListener('click',()=>excelImportInput.click());
-excelDropZone.addEventListener('keydown',e=>{
-  if(e.key==='Enter'||e.key===' '){
-    e.preventDefault();
-    excelImportInput.click();
-  }
-});
-excelImportInput.addEventListener('change',()=>{
-  const file=excelImportInput.files&&excelImportInput.files[0];
-  if(!file) return;
-  if(!file.name.toLowerCase().endsWith('.xlsx')){
-    alert('Sélectionne un fichier Excel .xlsx');
-    excelImportInput.value='';
-    setExcelSelectedFile(null);
-    return;
-  }
-  setExcelSelectedFile(file);
-});
-['dragenter','dragover'].forEach(evt=>excelDropZone.addEventListener(evt,e=>{
-  e.preventDefault();
-  e.stopPropagation();
-  excelDropZone.classList.add('dragover');
-}));
-['dragleave','drop'].forEach(evt=>excelDropZone.addEventListener(evt,e=>{
-  e.preventDefault();
-  e.stopPropagation();
-  excelDropZone.classList.remove('dragover');
-}));
-excelDropZone.addEventListener('drop',e=>{
-  const file=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
-  if(!file) return;
-  if(!file.name.toLowerCase().endsWith('.xlsx')){
-    alert('Sélectionne un fichier Excel .xlsx');
-    return;
-  }
-  setExcelSelectedFile(file);
-});
-
+excelDropZone.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();excelImportInput.click()}});
+excelImportInput.addEventListener('change',()=>{const file=excelImportInput.files&&excelImportInput.files[0];if(!file)return;if(!file.name.toLowerCase().endsWith('.xlsx')){alert('Sélectionne un fichier Excel .xlsx');excelImportInput.value='';setExcelSelectedFile(null);return}setExcelSelectedFile(file)});
+['dragenter','dragover'].forEach(evt=>excelDropZone.addEventListener(evt,e=>{e.preventDefault();e.stopPropagation();excelDropZone.classList.add('dragover')}));
+['dragleave','drop'].forEach(evt=>excelDropZone.addEventListener(evt,e=>{e.preventDefault();e.stopPropagation();excelDropZone.classList.remove('dragover')}));
+excelDropZone.addEventListener('drop',e=>{const file=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];if(!file)return;if(!file.name.toLowerCase().endsWith('.xlsx')){alert('Sélectionne un fichier Excel .xlsx');return}setExcelSelectedFile(file)});
 excelImportConfirmBtn.onclick=async()=>{
-  const dossier=String(excelImportDossierInput.value||'').trim();
-  const file=excelSelectedFile;
-  if(!dossier){
-    alert('Le N° de dossier est obligatoire.');
-    excelImportDossierInput.focus();
-    return;
-  }
-  if(!file){
-    alert('Glisse ou sélectionne un fichier Excel .xlsx.');
-    return;
-  }
-
-  if(!confirm(`Importer ${file.name} dans le dossier ${dossier} ?\n\nLes N° ESI seront créés automatiquement et les doublons seront ignorés.`)) return;
-
-  const fd=new FormData();
-  fd.append('file',file);
-  fd.append('dossier',dossier);
-
-  excelImportRunning=true;
-  excelImportConfirmBtn.textContent='Import en cours…';
-  excelImportStatus.textContent='Import Excel en cours…';
-  updateExcelImportReady();
-
+  const dossier=String(excelImportDossierInput.value||'').trim(),file=excelSelectedFile;
+  if(!dossier){alert('Le N° de dossier est obligatoire.');excelImportDossierInput.focus();return}
+  if(!file){alert('Glisse ou sélectionne un fichier Excel .xlsx.');return}
+  if(!confirm(`Importer ${file.name} dans le dossier ${dossier} ?\n\nLes N° ESI seront créés automatiquement et les doublons seront ignorés.`))return;
+  const fd=new FormData();fd.append('file',file);fd.append('dossier',dossier);
+  excelImportRunning=true;excelImportConfirmBtn.textContent='Import en cours…';excelImportStatus.textContent='Import Excel en cours…';updateExcelImportReady();
   try{
-    const r=await fetch('/api/articles/import-excel',{method:'POST',body:fd});
-    const d=await apiJson(r);
-    if(!r.ok && r.status!==207) throw new Error(d.error||'Erreur lors de l’import Excel');
-
-    const erreurs=(d.errors||[]);
-    let message=`Import Excel terminé.\n\n`+
-      `Dossier : ${d.dossier||dossier}\n`+
-      `Lignes lues : ${d.lignes_lues||0}\n`+
-      `Articles demandés : ${d.articles_demandes||0}\n`+
-      `Articles créés : ${d.articles_crees||0}\n`+
-      `Doublons ignorés : ${d.doublons_ignores||0}\n`+
-      `Lignes ignorées : ${d.lignes_ignorees||0}`;
-    if(erreurs.length){
-      message+=`\n\nErreurs : ${erreurs.length}`;
-      const apercu=erreurs.slice(0,5).map(x=>`Ligne ${x.ligne||'?'} : ${x.error||'Erreur'}`).join('\n');
-      if(apercu) message+=`\n${apercu}`;
-    }
-    alert(message);
-    excelImportRunning=false;
-    closeExcelImportModal();
-    await load();
-  }catch(e){
-    excelImportStatus.textContent=e.message||"Erreur lors de l'import Excel.";
-    alert(e.message||"Erreur lors de l'import Excel.");
-  }finally{
-    excelImportRunning=false;
-    excelImportConfirmBtn.textContent='Importer les articles';
-    updateExcelImportReady();
-  }
+    const r=await fetch('/api/articles/import-excel',{method:'POST',body:fd});const d=await apiJson(r);if(!r.ok&&r.status!==207)throw new Error(d.error||'Erreur lors de l’import Excel');
+    const erreurs=d.errors||[];let message=`Import Excel terminé.\n\nDossier : ${d.dossier||dossier}\nLignes lues : ${d.lignes_lues||0}\nArticles demandés : ${d.articles_demandes||0}\nArticles créés : ${d.articles_crees||0}\nDoublons ignorés : ${d.doublons_ignores||0}\nLignes ignorées : ${d.lignes_ignorees||0}`;
+    if(erreurs.length){message+=`\n\nErreurs : ${erreurs.length}`;const apercu=erreurs.slice(0,5).map(x=>`Ligne ${x.ligne||'?'} : ${x.error||'Erreur'}`).join('\n');if(apercu)message+=`\n${apercu}`}
+    alert(message);excelImportRunning=false;closeExcelImportModal();await load();
+  }catch(e){excelImportStatus.textContent=e.message||"Erreur lors de l'import Excel.";alert(e.message||"Erreur lors de l'import Excel.")}
+  finally{excelImportRunning=false;excelImportConfirmBtn.textContent='Importer les articles';updateExcelImportReady()}
 };
 
 document.getElementById('migrateBtn').onclick=async()=>{
-  if(!confirm("Attribuer un numéro ESI aux articles déjà présents dans les tickets ?")) return;
-  const b=document.getElementById('migrateBtn'); b.disabled=true; b.textContent='Import en cours…';
-  try{
-    const r=await fetch('/api/articles/migrate',{method:'POST'});
-    const d=await apiJson(r);
-    alert(`Import terminé.\nTickets parcourus : ${d.tickets||0}\nArticles créés : ${d.articles_crees||0}\nErreurs : ${(d.errors||[]).length}`);
-    load();
-  }catch(e){alert("Erreur lors de l'import.");}
-  finally{b.disabled=false;b.textContent='Importer les articles existants';}
+  if(!confirm("Attribuer un numéro ESI aux articles déjà présents dans les tickets ?"))return;
+  const b=document.getElementById('migrateBtn');b.disabled=true;b.textContent='Import en cours…';
+  try{const r=await fetch('/api/articles/migrate',{method:'POST'});const d=await apiJson(r);alert(`Import terminé.\nTickets parcourus : ${d.tickets||0}\nArticles créés : ${d.articles_crees||0}\nErreurs : ${(d.errors||[]).length}`);load()}
+  catch(e){alert("Erreur lors de l'import.")}finally{b.disabled=false;b.textContent='Importer les articles existants'}
 };
 
 document.getElementById('duplicatesBtn').onclick=async()=>{
-  const b=document.getElementById('duplicatesBtn');
-  b.disabled=true; b.textContent='Recherche…';
+  const b=document.getElementById('duplicatesBtn');b.disabled=true;b.textContent='Recherche…';
   try{
-    const r=await fetch('/api/articles/duplicates',{cache:'no-store'});
-    const d=await apiJson(r);
-    if(!r.ok) throw new Error(d.error||'Impossible de rechercher les doublons');
-
-    if(!(d.duplicate_count||0)){
-      alert('Aucun doublon sûr détecté.');
-      return;
-    }
-
-    let message=`${d.duplicate_count||0} doublon(s) détecté(s) dans ${d.group_count||0} groupe(s).\n`+
-      `${d.deletable_count||0} ligne(s) peuvent être supprimées automatiquement.`;
-    if(d.protected_count){
-      message+=`\n${d.protected_count} ligne(s) sont protégées car liées à un historique.`;
-    }
-    if(!(d.deletable_count||0)){
-      alert(message);
-      return;
-    }
-    message+='\n\nSupprimer maintenant les lignes en double ?\nUne occurrence sera toujours conservée.';
-    if(!confirm(message)) return;
-
-    b.textContent='Suppression des doublons…';
-    const rd=await fetch('/api/articles/delete-duplicates',{method:'POST'});
-    const dd=await apiJson(rd);
-    if(!rd.ok&&rd.status!==207) throw new Error(dd.error||'Erreur lors de la suppression des doublons');
-    let result=`${dd.deleted_count||0} ligne(s) en double supprimée(s).`;
-    if(dd.protected_count) result+=`\n${dd.protected_count} ligne(s) protégée(s) conservée(s).`;
-    if((dd.errors||[]).length) result+=`\nErreurs : ${(dd.errors||[]).length}`;
-    alert(result);
-    await load();
-  }catch(e){
-    alert(e.message||'Erreur lors de la recherche des doublons.');
-  }finally{
-    b.disabled=false; b.textContent='Rechercher les doublons';
-  }
+    const r=await fetch('/api/articles/duplicates',{cache:'no-store'});const d=await apiJson(r);if(!r.ok)throw new Error(d.error||'Impossible de rechercher les doublons');
+    if(!(d.duplicate_count||0)){alert('Aucun doublon sûr détecté.');return}
+    let message=`${d.duplicate_count||0} doublon(s) détecté(s) dans ${d.group_count||0} groupe(s).\n${d.deletable_count||0} ligne(s) peuvent être supprimées automatiquement.`;
+    if(d.protected_count)message+=`\n${d.protected_count} ligne(s) sont protégées car liées à un historique.`;
+    if(!(d.deletable_count||0)){alert(message);return}
+    message+='\n\nSupprimer maintenant les lignes en double ?\nUne occurrence sera toujours conservée.';if(!confirm(message))return;
+    b.textContent='Suppression des doublons…';const rd=await fetch('/api/articles/delete-duplicates',{method:'POST'});const dd=await apiJson(rd);if(!rd.ok&&rd.status!==207)throw new Error(dd.error||'Erreur lors de la suppression des doublons');
+    let result=`${dd.deleted_count||0} ligne(s) en double supprimée(s).`;if(dd.protected_count)result+=`\n${dd.protected_count} ligne(s) protégée(s) conservée(s).`;if((dd.errors||[]).length)result+=`\nErreurs : ${(dd.errors||[]).length}`;alert(result);await load();
+  }catch(e){alert(e.message||'Erreur lors de la recherche des doublons.')}
+  finally{b.disabled=false;b.textContent='Rechercher les doublons'}
 };
 
-function detailRows(rows){
-  return `<div class="detail-grid">${rows.map(([l,v])=>`
-    <div class="detail-label">${esc(l)}</div><div class="detail-value">${esc(v||'-')}</div>`).join('')}</div>`;
+function valueText(v){const s=String(v??'').trim();return s&&s!=='-'?s:'-'}
+function identityField(label,value,cls=''){
+  const v=valueText(value);return `<div class="identity-field ${cls}"><div class="identity-field-label">${esc(label)}</div><div class="identity-field-value ${v==='-'?'muted-value':''}">${esc(v)}</div></div>`;
 }
-function fmtDate(v){
-  if(!v) return '-';
-  const d=new Date(v);
-  return Number.isNaN(d.getTime())?String(v):d.toLocaleString('fr-FR');
+function metricCard(label,value,unit=''){
+  const v=valueText(value);return `<div class="metric-card"><div class="metric-label">${esc(label)}</div><div class="metric-line"><div class="metric-value">${esc(v)}</div>${unit&&v!=='-'?`<div class="metric-unit">${esc(unit)}</div>`:''}</div></div>`;
 }
-function closeArticleModal(){
-  const b=document.getElementById('articleModalBackdrop');
-  b.classList.remove('open'); b.setAttribute('aria-hidden','true');
+function linkedCard(label,value,cls=''){
+  return `<div class="linked-card ${cls}"><div class="linked-label">${esc(label)}</div><div class="linked-value">${esc(valueText(value))}</div></div>`;
+}
+function logisticsCard(label,value){return `<div class="logistics-card"><div class="identity-field-label">${esc(label)}</div><div class="identity-field-value">${esc(valueText(value))}</div></div>`}
+function receptionField(label,value){return `<div class="reception-field"><div class="reception-field-label">${esc(label)}</div><div class="reception-field-value">${esc(valueText(value))}</div></div>`}
+function fmtDate(v){if(!v)return '-';const d=new Date(v);return Number.isNaN(d.getTime())?String(v):d.toLocaleString('fr-FR')}
+function closeArticleModal(){const b=document.getElementById('articleModalBackdrop');b.classList.remove('open');b.setAttribute('aria-hidden','true')}
+function articlePhotoUrl(a){
+  const raw=a&&typeof a.raw_json==='object'&&a.raw_json?a.raw_json:{};
+  return String(a.photo_url||a.photo||raw.photo_url||raw.photo||raw.image_url||'').trim();
 }
 async function openArticleDetail(esi){
-  const b=document.getElementById('articleModalBackdrop');
-  const content=document.getElementById('articleModalBody');
-  document.getElementById('articleModalTitle').textContent=esi;
-  document.getElementById('articleModalSub').textContent='Historique complet de l’article';
-  content.innerHTML='<div class="muted">Chargement…</div>';
-  b.classList.add('open'); b.setAttribute('aria-hidden','false');
-
+  const b=document.getElementById('articleModalBackdrop'),content=document.getElementById('articleModalBody');
+  document.getElementById('articleModalTitle').textContent="CARTE D'IDENTITÉ DE L'ARTICLE";
+  document.getElementById('articleModalSub').textContent=`${esi} • Fiche détaillée et historique`;
+  content.innerHTML='<div class="muted" style="padding:28px">Chargement…</div>';
+  b.classList.add('open');b.setAttribute('aria-hidden','false');
   try{
-    const r=await fetch('/api/articles/'+encodeURIComponent(esi),{cache:'no-store'});
-    const d=await apiJson(r);
-    if(!r.ok) throw new Error(d.error||'Article introuvable');
-    const a=d.article||{};
-    const dims=[a.longueur_cm,a.largeur_cm,a.hauteur_cm].filter(Boolean).join(' x ');
+    const r=await fetch('/api/articles/'+encodeURIComponent(esi),{cache:'no-store'}),d=await apiJson(r);if(!r.ok)throw new Error(d.error||'Article introuvable');
+    const a=d.article||{},dossier=dossierAuto(a),photo=articlePhotoUrl(a);
+    const heroTitle=valueText(a.reference)!=='-'?a.reference:(valueText(a.description)!=='-'?a.description:a.esi_id||esi);
+    const heroDesc=valueText(a.description)!=='-'&&a.description!==heroTitle?a.description:'';
+    let html=`<div class="article-hero">
+      <div><div class="article-hero-kicker">Carte d'identité • ${esc(a.esi_id||esi)}</div><div class="article-hero-title">${esc(heroTitle)}</div>${heroDesc?`<div class="article-hero-desc">${esc(heroDesc)}</div>`:''}</div>
+      <div class="article-hero-badges"><span class="article-hero-badge">Dossier ${esc(valueText(dossier))}</span><span class="article-hero-badge">${esc(valueText(a.statut_logistique||'Article'))}</span></div>
+    </div>`;
 
-    let html=`<div class="section"><div class="section-title">Identification article</div>${detailRows([
-      ['N° ESI',a.esi_id],['Référence',a.reference],['Description',a.description],['Dossier',dossierAuto(a)],
-      ['Client',a.client],['Projet / expo',a.projet],['Dimensions',dims],['Poids',a.poids_kg],
-      ['Volume',a.volume_m3],['Surface',a.surface_m2],['Réf. caisse',a.ref_caisse],
-      ['Stockage actuel',a.lieu_stockage],['N° colis actuel',a.dernier_colis],['Créé le',fmtDate(a.created_at)],['Dernière mise à jour',fmtDate(a.updated_at)]
-    ])}</div>`;
-    html+=`<div class="section"><div class="section-title">Association colis</div><div class="form-row"><label>N° colis actuel</label><select id="articleColisSelect" class="import-input"><option value="">Aucun colis</option></select></div><div class="modal-actions"><button class="btn primary" type="button" id="saveArticleColisBtn">Enregistrer le colis</button></div></div>`;
+    html+=`<div class="identity-section">
+      <div class="identity-section-title">Identification <span class="identity-section-sub">Référentiel article ESI TICKETS</span></div>
+      <div class="identity-layout">
+        <div class="identity-fields">
+          ${identityField('N° ESI',a.esi_id)}
+          ${identityField('Référence',a.reference)}
+          ${identityField('Dossier',dossier)}
+          ${identityField('Client',a.client)}
+          ${identityField('Projet / exposition',a.projet,'span-2')}
+          ${identityField('Description / désignation',a.description,'span-2')}
+          ${identityField('Réf. caisse',a.ref_caisse)}
+          ${identityField('Réf. transporteur',a.transporteur_ref)}
+        </div>
+        <div class="article-photo">${photo?`<img src="${esc(photo)}" alt="Photo de ${esc(a.esi_id||esi)}">`:`<div class="article-photo-empty"><div class="article-photo-empty-mark"></div><strong>Photo de l'œuvre</strong><span>Aucune photo enregistrée</span></div>`}</div>
+      </div>
+    </div>`;
+
+    html+=`<div class="identity-section">
+      <div class="identity-section-title">Dimensions et caractéristiques</div>
+      <div class="metric-grid">
+        ${metricCard('Longueur',a.longueur_cm,'cm')}${metricCard('Largeur',a.largeur_cm,'cm')}${metricCard('Hauteur',a.hauteur_cm,'cm')}
+        ${metricCard('Volume',a.volume_m3,'m³')}${metricCard('Surface',a.surface_m2,'m²')}${metricCard('Poids',a.poids_kg,'kg')}
+      </div>
+    </div>`;
+
+    html+=`<div class="identity-section">
+      <div class="identity-section-title">Suivi logistique</div>
+      <div class="logistics-grid">
+        ${logisticsCard('Statut',a.statut_logistique)}${logisticsCard('Stockage actuel',a.lieu_stockage)}${logisticsCard('N° colis actuel',a.dernier_colis)}${logisticsCard('Dernière réception',a.derniere_reception_ref)}
+      </div>
+      <div class="colis-editor"><div><label for="articleColisSelect">Association du colis</label><select id="articleColisSelect" class="import-input"><option value="">Aucun colis</option></select></div><button class="btn primary" type="button" id="saveArticleColisBtn">Enregistrer le colis</button></div>
+    </div>`;
 
     if(d.avis_arrivee){
-      const x=d.avis_arrivee, exp=x.expediteur||{}, tr=x.transporteur||{};
-      html+=`<div class="section"><div class="section-title">Avis d’arrivée lié</div>${detailRows([
-        ['Réf. dossier',x.dossier_ref],['Client',x.client],['Projet / expo',x.projet],
-        ['Réception prévue',x.date_reception_prevue],['Coordinateur',x.coordinateur],
-        ['Expéditeur',exp.nom],['Adresse expéditeur',exp.adresse],['Contact expéditeur',exp.contact],
-        ['Transporteur',tr.nom],['Adresse transporteur',tr.adresse],['Contact transporteur',tr.contact],
-        ['Référence transporteur',tr.reference],['Commentaire',x.commentaire]
-      ])}</div>`;
+      const x=d.avis_arrivee,exp=x.expediteur||{},tr=x.transporteur||{};
+      html+=`<div class="identity-section"><div class="identity-section-title">Avis d’arrivée lié</div><div class="linked-grid">
+        ${linkedCard('Réf. dossier',x.dossier_ref)}${linkedCard('Réception prévue',x.date_reception_prevue)}${linkedCard('Client',x.client)}${linkedCard('Projet / exposition',x.projet)}
+        ${linkedCard('Coordinateur',x.coordinateur)}${linkedCard('Expéditeur',exp.nom)}${linkedCard('Adresse expéditeur',exp.adresse,'span-2')}${linkedCard('Contact expéditeur',exp.contact)}${linkedCard('Transporteur',tr.nom)}
+        ${linkedCard('Adresse transporteur',tr.adresse,'span-2')}${linkedCard('Contact transporteur',tr.contact)}${linkedCard('Référence transporteur',tr.reference)}${linkedCard('Commentaire',x.commentaire,'span-2')}
+      </div></div>`;
     }
 
     if(d.demande_enlevement){
       const x=d.demande_enlevement;
-      html+=`<div class="section"><div class="section-title">Demande d’enlèvement liée</div>${detailRows([
-        ['N° bon enlèvement',x.numero_bon],['Client',x.client],['Projet / expo',x.projet],
-        ['Coordinateur',x.coordinateur],['Date enlèvement',x.date_enlevement],
-        ['Adresse départ',x.adresse_depart],['Adresse destination',x.adresse_destination],
-        ['Notes',x.notes],['Instructions',x.instructions]
-      ])}</div>`;
+      html+=`<div class="identity-section"><div class="identity-section-title">Demande d’enlèvement liée</div><div class="linked-grid">
+        ${linkedCard('N° bon enlèvement',x.numero_bon)}${linkedCard('Date enlèvement',x.date_enlevement)}${linkedCard('Client',x.client)}${linkedCard('Projet / exposition',x.projet)}
+        ${linkedCard('Coordinateur',x.coordinateur)}${linkedCard('Adresse départ',x.adresse_depart)}${linkedCard('Adresse destination',x.adresse_destination)}${linkedCard('Notes',x.notes)}${linkedCard('Instructions',x.instructions,'span-2')}
+      </div></div>`;
     }
 
     if((d.documents_source||[]).length){
-      html+=`<div class="section"><div class="section-title">Documents source</div>`;
-      (d.documents_source||[]).forEach(f=>{
-        html+=`<a class="file-link" target="_blank" href="${esc(f.url)}">${esc(f.name)}</a>`;
-      });
-      html+=`</div>`;
+      html+=`<div class="identity-section"><div class="identity-section-title">Documents source</div><div class="document-list">`;
+      (d.documents_source||[]).forEach(f=>{html+=`<a class="file-link" target="_blank" href="${esc(f.url)}">${esc(f.name)}</a>`});
+      html+=`</div></div>`;
     }
 
-    html+=`<div class="section"><div class="section-title">Historique des réceptions</div>`;
+    html+=`<div class="identity-section"><div class="identity-section-title">Historique des réceptions</div>`;
     if((d.receptions||[]).length){
-      (d.receptions||[]).forEach(r=>{
-        html+=`<div class="history-card">
-          <div class="history-title">${esc(r.reference||'Réception')}</div>
-          ${detailRows([
-            ['Date',r.date_affichee||fmtDate(r.date)],['Réceptionné par',r.receptionne_par],
-            ['Quantité réceptionnée',r.quantite],['Lieu de stockage',r.lieu_stockage],
-            ['N° dossier',r.numero_dossier],['Nombre de colis',r.nombre_colis],
-            ['Colis',(r.colis||[]).join(', ')]
-          ])}`;
-        if((r.files||[]).length){
-          html+=`<div style="margin-top:8px">`;
-          (r.files||[]).forEach(f=>{
-            html+=`<a class="file-link" target="_blank" href="${esc(f.url)}">${esc(f.name)}</a>`;
-          });
-          html+=`</div>`;
-        }
+      html+=`<div class="reception-list">`;
+      (d.receptions||[]).forEach(rec=>{
+        const date=rec.date_affichee||fmtDate(rec.date);
+        html+=`<div class="reception-card"><div class="reception-head"><div class="reception-title">${esc(rec.reference||'Réception')}</div><div class="reception-date">${esc(valueText(date))}</div></div>
+          <div class="reception-grid">${receptionField('Réceptionné par',rec.receptionne_par)}${receptionField('Quantité reçue',rec.quantite)}${receptionField('Lieu de stockage',rec.lieu_stockage)}${receptionField('N° dossier',rec.numero_dossier)}${receptionField('Nombre de colis',rec.nombre_colis)}${receptionField('Colis',(rec.colis||[]).join(', '))}</div>`;
+        if((rec.files||[]).length){html+=`<div class="document-list" style="margin-top:10px">`;rec.files.forEach(f=>{html+=`<a class="file-link" target="_blank" href="${esc(f.url)}">${esc(f.name)}</a>`});html+=`</div>`}
         html+=`</div>`;
       });
-    }else{
-      html+=`<div class="muted">Aucune réception enregistrée pour cet article.</div>`;
-    }
+      html+=`</div>`;
+    }else html+=`<div class="article-empty">Aucune réception enregistrée pour cet article.</div>`;
     html+=`</div>`;
+    html+=`<div class="article-meta"><span>Créé le : ${esc(fmtDate(a.created_at))}</span><span>Dernière mise à jour : ${esc(fmtDate(a.updated_at))}</span></div>`;
 
     content.innerHTML=html;
-    const dossier=dossierAuto(a); const select=document.getElementById('articleColisSelect');
-    if(select && dossier && dossier!=='-'){
-      const cr=await fetch('/api/articles/colis-by-dossier?dossier='+encodeURIComponent(dossier)); const cd=await apiJson(cr);
-      (cd.colis||[]).forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;select.appendChild(o)}); select.value=String(a.dernier_colis||'').trim();
-      document.getElementById('saveArticleColisBtn').onclick=async()=>{const rr=await fetch('/api/articles/'+encodeURIComponent(esi)+'/colis',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({colis:select.value})});const rd=await apiJson(rr);if(!rr.ok)throw new Error(rd.error||'Modification impossible');alert('Association colis mise à jour.');await load();openArticleDetail(esi);};
+    const select=document.getElementById('articleColisSelect'),saveBtn=document.getElementById('saveArticleColisBtn');
+    if(select&&dossier&&dossier!=='-'){
+      const cr=await fetch('/api/articles/colis-by-dossier?dossier='+encodeURIComponent(dossier)),cd=await apiJson(cr);
+      (cd.colis||[]).forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;select.appendChild(o)});select.value=String(a.dernier_colis||'').trim();
+      if(saveBtn)saveBtn.onclick=async()=>{try{saveBtn.disabled=true;saveBtn.textContent='Enregistrement…';const rr=await fetch('/api/articles/'+encodeURIComponent(esi)+'/colis',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({colis:select.value})}),rd=await apiJson(rr);if(!rr.ok)throw new Error(rd.error||'Modification impossible');alert('Association colis mise à jour.');await load();await openArticleDetail(esi)}catch(e){alert(e.message||'Modification impossible')}finally{saveBtn.disabled=false;saveBtn.textContent='Enregistrer le colis'}};
+    }else{
+      if(select){select.disabled=true;select.innerHTML='<option value="">Aucun dossier disponible</option>'}if(saveBtn)saveBtn.disabled=true;
     }
-  }catch(e){
-    content.innerHTML=`<div class="empty">${esc(e.message||'Impossible de charger l’article.')}</div>`;
-  }
+  }catch(e){content.innerHTML=`<div class="empty">${esc(e.message||'Impossible de charger l’article.')}</div>`}
 }
 
-
-function selectedEsiIds(){
-  return [...document.querySelectorAll('.row-check:checked')].map(cb=>cb.dataset.esi).filter(Boolean);
-}
-function updateSelectionActions(){
-  const ids=selectedEsiIds();
-  const bar=document.getElementById('selectionActions');
-  document.getElementById('selectionCount').textContent=`${ids.length} article${ids.length>1?'s':''} sélectionné${ids.length>1?'s':''}`;
-  bar.classList.toggle('show',ids.length>0);
-}
-const editableFields=[
-  ['reference','Référence'],['description','Description'],['dossier','Dossier'],['client','Client'],['projet','Projet / expo'],
-  ['ref_caisse','Réf. caisse'],['transporteur_ref','Réf. transporteur'],['longueur_cm','Longueur (cm)'],['largeur_cm','Largeur (cm)'],
-  ['hauteur_cm','Hauteur (cm)'],['volume_m3','Volume (m³)'],['surface_m2','Surface (m²)'],['poids_kg','Poids (kg)'],
-  ['lieu_stockage','Lieu de stockage'],['statut_logistique','Statut logistique'],['dernier_colis','N° colis']
-];
-function closeEditModal(){
-  const b=document.getElementById('editModalBackdrop');
-  b.classList.remove('open'); b.setAttribute('aria-hidden','true');
-}
+function selectedEsiIds(){return [...document.querySelectorAll('.row-check:checked')].map(cb=>cb.dataset.esi).filter(Boolean)}
+function updateSelectionActions(){const ids=selectedEsiIds(),bar=document.getElementById('selectionActions');document.getElementById('selectionCount').textContent=`${ids.length} article${ids.length>1?'s':''} sélectionné${ids.length>1?'s':''}`;bar.classList.toggle('show',ids.length>0)}
+const editableFields=[['reference','Référence'],['description','Description'],['dossier','Dossier'],['client','Client'],['projet','Projet / expo'],['ref_caisse','Réf. caisse'],['transporteur_ref','Réf. transporteur'],['longueur_cm','Longueur (cm)'],['largeur_cm','Largeur (cm)'],['hauteur_cm','Hauteur (cm)'],['volume_m3','Volume (m³)'],['surface_m2','Surface (m²)'],['poids_kg','Poids (kg)'],['lieu_stockage','Lieu de stockage'],['statut_logistique','Statut logistique'],['dernier_colis','N° colis']];
+function closeEditModal(){const b=document.getElementById('editModalBackdrop');b.classList.remove('open');b.setAttribute('aria-hidden','true')}
 function openEditModal(){
-  const ids=selectedEsiIds();
-  if(!ids.length) return;
-  const single=ids.length===1;
-  const article=single?currentRows.find(x=>String(x.esi_id)===ids[0]):null;
-  document.getElementById('editModalTitle').textContent=single?`Modifier ${ids[0]}`:`Modifier ${ids.length} articles`;
-  document.getElementById('editModalSub').textContent=single?'Tous les champs article peuvent être modifiés sauf le N° ESI.':'Seuls les champs cochés seront appliqués à tous les articles sélectionnés.';
-  const grid=document.getElementById('editGrid');
-  grid.innerHTML=editableFields.map(([field,label])=>{
-    const value=single?String((article&&article[field])??''):'';
-    const textarea=field==='description';
-    return `<div class="edit-field">
-      <label><input type="checkbox" class="edit-apply" data-field="${field}" ${single?'checked':''}> ${esc(label)}</label>
-      ${textarea?`<textarea class="edit-value" data-field="${field}">${esc(value)}</textarea>`:`<input class="edit-value" data-field="${field}" value="${esc(value)}">`}
-    </div>`;
-  }).join('');
-  const b=document.getElementById('editModalBackdrop');
-  b.classList.add('open'); b.setAttribute('aria-hidden','false');
+  const ids=selectedEsiIds();if(!ids.length)return;const single=ids.length===1,article=single?currentRows.find(x=>String(x.esi_id)===ids[0]):null;
+  document.getElementById('editModalTitle').textContent=single?`Modifier ${ids[0]}`:`Modifier ${ids.length} articles`;document.getElementById('editModalSub').textContent=single?'Tous les champs article peuvent être modifiés sauf le N° ESI.':'Seuls les champs cochés seront appliqués à tous les articles sélectionnés.';
+  const grid=document.getElementById('editGrid');grid.innerHTML=editableFields.map(([field,label])=>{const value=single?String((article&&article[field])??''):'',textarea=field==='description';return `<div class="edit-field"><label><input type="checkbox" class="edit-apply" data-field="${field}" ${single?'checked':''}> ${esc(label)}</label>${textarea?`<textarea class="edit-value" data-field="${field}">${esc(value)}</textarea>`:`<input class="edit-value" data-field="${field}" value="${esc(value)}">`}</div>`}).join('');
+  const b=document.getElementById('editModalBackdrop');b.classList.add('open');b.setAttribute('aria-hidden','false');
 }
-document.getElementById('editSelectedBtn').onclick=openEditModal;
-document.getElementById('editModalClose').onclick=closeEditModal;
-document.getElementById('editCancelBtn').onclick=closeEditModal;
-document.getElementById('editModalBackdrop').addEventListener('click',e=>{if(e.target.id==='editModalBackdrop')closeEditModal()});
+document.getElementById('editSelectedBtn').onclick=openEditModal;document.getElementById('editModalClose').onclick=closeEditModal;document.getElementById('editCancelBtn').onclick=closeEditModal;document.getElementById('editModalBackdrop').addEventListener('click',e=>{if(e.target.id==='editModalBackdrop')closeEditModal()});
 document.getElementById('editSaveBtn').onclick=async()=>{
-  const ids=selectedEsiIds();
-  const changes={};
-  document.querySelectorAll('.edit-apply:checked').forEach(cb=>{
-    const field=cb.dataset.field;
-    const input=document.querySelector(`.edit-value[data-field="${field}"]`);
-    changes[field]=input?input.value:'';
-  });
-  if(!Object.keys(changes).length){alert('Coche au moins un champ à modifier.');return;}
-  const btn=document.getElementById('editSaveBtn'); btn.disabled=true; btn.textContent='Enregistrement…';
-  try{
-    const r=await fetch('/api/articles/bulk-update',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({esi_ids:ids,changes})});
-    const d=await apiJson(r);
-    if(!r.ok&&r.status!==207) throw new Error(d.error||'Erreur de modification');
-    let msg=`${d.updated_count||0} article(s) modifié(s).`;
-    if((d.errors||[]).length) msg+=`
-Erreurs : ${(d.errors||[]).length}`;
-    alert(msg); closeEditModal(); await load(); updateSelectionActions();
-  }catch(e){alert(e.message||'Erreur de modification.');}
-  finally{btn.disabled=false;btn.textContent='Enregistrer';}
+  const ids=selectedEsiIds(),changes={};document.querySelectorAll('.edit-apply:checked').forEach(cb=>{const field=cb.dataset.field,input=document.querySelector(`.edit-value[data-field="${field}"]`);changes[field]=input?input.value:''});if(!Object.keys(changes).length){alert('Coche au moins un champ à modifier.');return}
+  const btn=document.getElementById('editSaveBtn');btn.disabled=true;btn.textContent='Enregistrement…';try{const r=await fetch('/api/articles/bulk-update',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({esi_ids:ids,changes})}),d=await apiJson(r);if(!r.ok&&r.status!==207)throw new Error(d.error||'Erreur de modification');let msg=`${d.updated_count||0} article(s) modifié(s).`;if((d.errors||[]).length)msg+=`\nErreurs : ${(d.errors||[]).length}`;alert(msg);closeEditModal();await load();updateSelectionActions()}catch(e){alert(e.message||'Erreur de modification.')}finally{btn.disabled=false;btn.textContent='Enregistrer'}
 };
 document.getElementById('deleteSelectedBtn').onclick=async()=>{
-  const ids=selectedEsiIds();
-  if(!ids.length) return;
-  if(!confirm(`Supprimer définitivement ${ids.length} article${ids.length>1?'s':''} ?
-
-Les articles déjà liés à un ticket ou à une réception seront protégés et ne seront pas supprimés.`)) return;
-  const btn=document.getElementById('deleteSelectedBtn'); btn.disabled=true; btn.textContent='Suppression…';
-  try{
-    const r=await fetch('/api/articles/bulk-delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({esi_ids:ids})});
-    const d=await apiJson(r);
-    if(!r.ok&&r.status!==207) throw new Error(d.error||'Erreur de suppression');
-    let msg=`${d.deleted_count||0} article(s) supprimé(s).`;
-    if((d.protected||[]).length) msg+=`
-${(d.protected||[]).length} article(s) protégé(s) car liés à un historique.`;
-    if((d.errors||[]).length) msg+=`
-Erreurs : ${(d.errors||[]).length}`;
-    alert(msg); await load(); updateSelectionActions();
-  }catch(e){alert(e.message||'Erreur de suppression.');}
-  finally{btn.disabled=false;btn.textContent='Supprimer';}
+  const ids=selectedEsiIds();if(!ids.length)return;if(!confirm(`Supprimer définitivement ${ids.length} article${ids.length>1?'s':''} ?\n\nLes articles déjà liés à un ticket ou à une réception seront protégés et ne seront pas supprimés.`))return;
+  const btn=document.getElementById('deleteSelectedBtn');btn.disabled=true;btn.textContent='Suppression…';try{const r=await fetch('/api/articles/bulk-delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({esi_ids:ids})}),d=await apiJson(r);if(!r.ok&&r.status!==207)throw new Error(d.error||'Erreur de suppression');let msg=`${d.deleted_count||0} article(s) supprimé(s).`;if((d.protected||[]).length)msg+=`\n${(d.protected||[]).length} article(s) protégé(s) car liés à un historique.`;if((d.errors||[]).length)msg+=`\nErreurs : ${(d.errors||[]).length}`;alert(msg);await load();updateSelectionActions()}catch(e){alert(e.message||'Erreur de suppression.')}finally{btn.disabled=false;btn.textContent='Supprimer'}
 };
-
-document.getElementById('selectAll').addEventListener('change',e=>{
-  document.querySelectorAll('.row-check').forEach(cb=>cb.checked=e.target.checked);
-  updateSelectionActions();
-});
-body.addEventListener('change',e=>{
-  if(!e.target.classList.contains('row-check')) return;
-  const boxes=[...document.querySelectorAll('.row-check')];
-  document.getElementById('selectAll').checked=boxes.length>0&&boxes.every(x=>x.checked);
-  updateSelectionActions();
-});
-body.addEventListener('click',e=>{
-  const link=e.target.closest('.esi-link');
-  if(!link) return;
-  e.preventDefault();
-  openArticleDetail(link.dataset.esi);
-});
-document.getElementById('articleModalClose').onclick=closeArticleModal;
-document.getElementById('articleModalBackdrop').addEventListener('click',e=>{if(e.target.id==='articleModalBackdrop')closeArticleModal()});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeArticleModal()});
-
+document.getElementById('selectAll').addEventListener('change',e=>{document.querySelectorAll('.row-check').forEach(cb=>cb.checked=e.target.checked);updateSelectionActions()});
+body.addEventListener('change',e=>{if(!e.target.classList.contains('row-check'))return;const boxes=[...document.querySelectorAll('.row-check')];document.getElementById('selectAll').checked=boxes.length>0&&boxes.every(x=>x.checked);updateSelectionActions()});
+body.addEventListener('click',e=>{const link=e.target.closest('.esi-link');if(!link)return;e.preventDefault();openArticleDetail(link.dataset.esi)});
+document.getElementById('articleModalClose').onclick=closeArticleModal;document.getElementById('articleModalBackdrop').addEventListener('click',e=>{if(e.target.id==='articleModalBackdrop')closeArticleModal()});document.addEventListener('keydown',e=>{if(e.key==='Escape')closeArticleModal()});
 load();
 </script>
 </body>
