@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ESI TICKETS — Base articles</title>
+<title>ESI TICKETS — Articles & contenants</title>
 <style>
 :root{--blue:#0ea5e9;--blue-dark:#0284c7;--navy:#0f2f4f;--line:#dbe7f0;--muted:#64748b;--bg:#eef6fb;--text:#0f172a;--field:#eaf6ff}
 *{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;background:linear-gradient(180deg,#eaf5fb,#f8fafc);color:var(--text)}
@@ -11,11 +11,11 @@
 .head{padding:22px 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px;justify-content:space-between;flex-wrap:wrap}
 .brand{display:flex;align-items:center;gap:14px}.brand img{width:72px;max-height:52px;object-fit:contain}.title{font-size:25px;font-weight:900}.sub{font-size:12px;color:var(--muted);margin-top:3px}
 .actions{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid var(--line);background:#fff;border-radius:12px;padding:10px 14px;font-weight:800;cursor:pointer}.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
-.searchbar{padding:18px 24px;display:flex;gap:10px;flex-wrap:wrap}.searchbar input{flex:1;min-width:260px;border:1px solid #bfd4e3;background:#eaf6ff;border-radius:14px;padding:13px 15px;font-size:15px}
+.searchbar{padding:18px 24px;display:flex;gap:10px;flex-wrap:wrap}.searchbar input{flex:1;min-width:260px;border:1px solid #bfd4e3;background:#eaf6ff;border-radius:14px;padding:13px 15px;font-size:15px}.searchbar select{min-width:170px;border:1px solid #bfd4e3;background:#eaf6ff;border-radius:14px;padding:12px 13px;font-size:14px;font-weight:800;color:var(--navy)}
 .info{padding:0 24px 14px;color:var(--muted);font-size:12px}.tablewrap{overflow:auto;border-top:1px solid var(--line)}
 table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:12px}th{position:sticky;top:0;background:#f8fafc;font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.04em}
 .esi{font-weight:950;color:#0369a1;font-size:14px;white-space:nowrap}.muted{color:var(--muted)}.empty{padding:35px;text-align:center;color:var(--muted)}
-.badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#e0f2fe;color:#075985;font-weight:800}
+.badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#e0f2fe;color:#075985;font-weight:800}.type-badge{display:inline-flex;align-items:center;justify-content:center;padding:5px 9px;border-radius:999px;font-size:10px;font-weight:950;letter-spacing:.045em;white-space:nowrap}.type-badge.produit{background:#e0f2fe;color:#075985;border:1px solid #bae6fd}.type-badge.contenant{background:#e8eef5;color:var(--navy);border:1px solid #b9c9d8}.container-row td{background:#f8fbfd}.container-row td:nth-child(2){box-shadow:inset 4px 0 0 var(--navy)}
 .select-col{width:44px;text-align:center}.row-check,.select-all{width:16px;height:16px;cursor:pointer}
 .esi-link{color:#0369a1;font-weight:950;text-decoration:none;white-space:nowrap}.esi-link:hover{text-decoration:underline}
 .modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.48);display:none;align-items:center;justify-content:center;padding:20px;z-index:1000}
@@ -26,7 +26,7 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
 .section-title{font-size:12px;font-weight:950;text-transform:uppercase;color:var(--muted);letter-spacing:.05em;margin-bottom:10px}
 .detail-grid{display:grid;grid-template-columns:180px 1fr;gap:8px 14px}.detail-label{font-size:12px;color:var(--muted);font-weight:800}.detail-value{font-size:13px;font-weight:700;white-space:pre-wrap;overflow-wrap:anywhere}
 .history-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px}.history-title{font-weight:950}.file-link{display:inline-block;margin:5px 5px 0 0;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:#fff;color:#0369a1;font-weight:800;text-decoration:none}
-.selection-actions{display:none;align-items:center;gap:8px;flex-wrap:wrap;padding:0 24px 14px}.selection-actions.show{display:flex}.btn.danger{background:#dc2626;border-color:#dc2626;color:#fff}.selection-count{font-size:12px;color:var(--muted);font-weight:800;margin-right:4px}.edit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.edit-field{border:1px solid var(--line);border-radius:12px;padding:10px;background:#fff}.edit-field label{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:900;margin-bottom:7px}.edit-field input,.edit-field textarea{width:100%;border:1px solid #bfd4e3;border-radius:10px;padding:9px 10px;font:inherit}.edit-field textarea{min-height:72px;resize:vertical}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.selection-actions{display:none;align-items:center;gap:8px;flex-wrap:wrap;padding:0 24px 14px}.selection-actions.show{display:flex}.btn.danger{background:#dc2626;border-color:#dc2626;color:#fff}.selection-count{font-size:12px;color:var(--muted);font-weight:800;margin-right:4px}.edit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.edit-field{border:1px solid var(--line);border-radius:12px;padding:10px;background:#fff}.edit-field label{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:900;margin-bottom:7px}.edit-field input,.edit-field textarea,.edit-field select{width:100%;border:1px solid #bfd4e3;border-radius:10px;padding:9px 10px;font:inherit;background:#fff}.edit-field textarea{min-height:72px;resize:vertical}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .import-box{border:1px solid var(--line);border-radius:14px;padding:14px;background:#f8fafc}.import-label{display:block;font-size:12px;font-weight:900;margin-bottom:7px;color:#334155}.import-input{width:100%;border:1px solid #bfd4e3;background:#eaf6ff;border-radius:12px;padding:11px 12px;font-size:14px}.drop-zone{margin-top:14px;border:2px dashed #7dd3fc;border-radius:16px;padding:28px 18px;text-align:center;background:#f0f9ff;cursor:pointer;transition:.15s ease}.drop-zone:hover,.drop-zone.dragover{background:#e0f2fe;border-color:#0ea5e9}.drop-zone-title{font-weight:950;color:#0369a1;font-size:16px}.drop-zone-sub{margin-top:6px;color:var(--muted);font-size:12px}.drop-file{margin-top:10px;font-size:13px;font-weight:800;color:#0f172a;overflow-wrap:anywhere}.import-status{margin-top:12px;font-size:12px;color:var(--muted);min-height:18px}
 
 /* Fiche détaillée article : structure "carte d'identité" dans le style ESI TICKETS */
@@ -44,7 +44,7 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
 .article-hero-title{font-size:30px;line-height:1.05;font-weight:950;margin-top:5px;overflow-wrap:anywhere}
 .article-hero-desc{margin-top:7px;max-width:720px;color:#dbeafe;font-size:13px;font-weight:700;line-height:1.45}
 .article-hero-badges{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.article-hero-badge{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:7px 11px;font-size:11px;font-weight:900;white-space:nowrap}
+.article-hero-badge{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:7px 11px;font-size:11px;font-weight:900;white-space:nowrap}.article-hero-badge.type-main{background:#fff;color:var(--navy);border-color:#fff}
 .identity-section{background:#fff;border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 7px 22px rgba(15,47,79,.06);margin-top:16px}
 .identity-section-title{display:flex;align-items:center;gap:10px;color:var(--navy);font-size:13px;font-weight:950;text-transform:uppercase;letter-spacing:.055em;margin-bottom:14px}
 .identity-section-title:before{content:"";width:5px;height:20px;border-radius:999px;background:var(--blue);flex:0 0 auto}
@@ -76,7 +76,7 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
     <div class="head">
       <div class="brand">
         <img src="/static/logo.png" alt="ESI">
-        <div><div class="title">BASE ARTICLES</div><div class="sub">Référentiel global ESI TICKETS</div></div>
+        <div><div class="title">BASE ARTICLES & CONTENANTS</div><div class="sub">Référentiel global des produits et contenants ESI TICKETS</div></div>
       </div>
       <div class="actions">
         <button class="btn" onclick="location.href='/gestion-reception'">Gestion réception</button>
@@ -87,6 +87,11 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
     </div>
     <div class="searchbar">
       <input id="q" placeholder="Rechercher : ESI-125, référence, dossier, client, projet, description, stockage...">
+      <select id="typeFilter" aria-label="Filtrer par type">
+        <option value="">Tous les types</option>
+        <option value="PRODUIT">Produits</option>
+        <option value="CONTENANT">Contenants</option>
+      </select>
       <button class="btn primary" id="searchBtn">Rechercher</button>
       <button class="btn" id="resetBtn">Tout afficher</button>
     </div>
@@ -100,7 +105,7 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
       <table>
         <thead><tr>
           <th class="select-col"><input class="select-all" id="selectAll" type="checkbox" title="Tout sélectionner"></th>
-          <th>N° ESI</th><th>Référence</th><th>Description</th><th>Dossier</th><th>Client</th>
+          <th>N° ESI</th><th>Type</th><th>Référence</th><th>Description</th><th>Dossier</th><th>Client</th>
           <th>Projet</th><th>Dimensions</th><th>Poids</th><th>Stockage</th><th>N° colis</th>
         </tr></thead>
         <tbody id="body"></tbody>
@@ -176,9 +181,11 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
 </div>
 
 <script>
-const q=document.getElementById('q'),body=document.getElementById('body'),empty=document.getElementById('empty'),info=document.getElementById('info');
+const q=document.getElementById('q'),typeFilter=document.getElementById('typeFilter'),body=document.getElementById('body'),empty=document.getElementById('empty'),info=document.getElementById('info');
 let currentRows=[];
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+function articleType(a){return String((a&&a.type_objet)||'PRODUIT').trim().toUpperCase()==='CONTENANT'?'CONTENANT':'PRODUIT'}
+function typeBadge(a){const t=articleType(a);return `<span class="type-badge ${t==='CONTENANT'?'contenant':'produit'}">${esc(t)}</span>`}
 async function apiJson(response){
   const text=await response.text();
   if(!text) return {};
@@ -204,7 +211,9 @@ function dossierAuto(a){
 }
 async function load(){
   info.textContent='Recherche…';
-  const r=await fetch('/api/articles?q='+encodeURIComponent(q.value.trim())+'&limit=500');
+  let url='/api/articles?q='+encodeURIComponent(q.value.trim())+'&limit=500';
+  if(typeFilter.value)url+='&type_objet='+encodeURIComponent(typeFilter.value);
+  const r=await fetch(url);
   const rows=await r.json();
   body.innerHTML='';
   empty.style.display=rows.length?'none':'block';
@@ -212,20 +221,24 @@ async function load(){
   document.getElementById('selectAll').checked=false;
   updateSelectionActions();
   rows.forEach(a=>{
-    const dims=[a.longueur_cm,a.largeur_cm,a.hauteur_cm].filter(Boolean).join(' x ');
+    const dims=[a.longueur_cm,a.largeur_cm,a.hauteur_cm].filter(Boolean).join(' x '),type=articleType(a);
     const tr=document.createElement('tr');
+    if(type==='CONTENANT')tr.classList.add('container-row');
     tr.innerHTML=`<td class="select-col"><input class="row-check" type="checkbox" data-esi="${esc(a.esi_id)}"></td>
       <td><a href="#" class="esi-link" data-esi="${esc(a.esi_id)}">${esc(a.esi_id)}</a></td>
+      <td>${typeBadge(a)}</td>
       <td><strong>${esc(a.reference||'-')}</strong></td>
       <td>${esc(a.description||'-')}</td><td>${esc(dossierAuto(a))}</td><td>${esc(a.client||'-')}</td>
       <td>${esc(a.projet||'-')}</td><td>${esc(dims||'-')}</td><td>${esc(a.poids_kg||'-')}</td>
       <td>${esc(a.lieu_stockage||'-')}</td><td><strong>${esc(a.dernier_colis||'-')}</strong></td>`;
     body.appendChild(tr);
   });
-  info.textContent=`${rows.length} article(s) affiché(s)`;
+  const label=typeFilter.value==='CONTENANT'?'contenant(s)':(typeFilter.value==='PRODUIT'?'produit(s)':'élément(s)');
+  info.textContent=`${rows.length} ${label} affiché(s)`;
 }
 document.getElementById('searchBtn').onclick=load;
-document.getElementById('resetBtn').onclick=()=>{q.value='';load()};
+document.getElementById('resetBtn').onclick=()=>{q.value='';typeFilter.value='';load()};
+typeFilter.addEventListener('change',load);
 q.addEventListener('keydown',e=>{if(e.key==='Enter')load()});
 
 const excelImportInput=document.getElementById('excelImportInput');
@@ -303,6 +316,10 @@ function articleEditField(label,field,value,cls='',textarea=false){
   const v=String(value??'');
   return `<div class="identity-field ${cls}"><div class="identity-field-label">${esc(label)}</div>${textarea?`<textarea class="article-edit-textarea" data-article-field="${esc(field)}">${esc(v)}</textarea>`:`<input class="article-edit-input" data-article-field="${esc(field)}" value="${esc(v)}">`}</div>`;
 }
+function articleTypeEditField(value){
+  const t=String(value||'PRODUIT').toUpperCase()==='CONTENANT'?'CONTENANT':'PRODUIT';
+  return `<div class="identity-field"><div class="identity-field-label">Type</div><select class="article-edit-input" data-article-field="type_objet"><option value="PRODUIT" ${t==='PRODUIT'?'selected':''}>PRODUIT</option><option value="CONTENANT" ${t==='CONTENANT'?'selected':''}>CONTENANT</option></select></div>`;
+}
 function metricCard(label,value,unit=''){
   const v=valueText(value);return `<div class="metric-card"><div class="metric-label">${esc(label)}</div><div class="metric-line"><div class="metric-value">${esc(v)}</div>${unit&&v!=='-'?`<div class="metric-unit">${esc(unit)}</div>`:''}</div></div>`;
 }
@@ -328,14 +345,14 @@ function articlePhotoUrl(a){
   return String(a.photo_url||a.photo||raw.photo_url||raw.photo||raw.image_url||'').trim();
 }
 function articlePhotoMarkup(a,editing){
-  const photo=articlePhotoUrl(a),filename=String(a.photo_filename||'').trim();
+  const photo=articlePhotoUrl(a),filename=String(a.photo_filename||'').trim(),isContainer=articleType(a)==='CONTENANT',photoLabel=isContainer?'Photo du contenant':'Photo du produit';
   if(!editing){
-    return `<div class="article-photo">${photo?`<img src="${esc(photo)}" alt="Photo de ${esc(a.esi_id||'article')}">`:`<div class="article-photo-empty"><div class="article-photo-empty-mark"></div><strong>Photo de l'œuvre</strong><span>Aucune photo enregistrée</span></div>`}</div>`;
+    return `<div class="article-photo">${photo?`<img src="${esc(photo)}" alt="${esc(photoLabel)} ${esc(a.esi_id||'')}">`:`<div class="article-photo-empty"><div class="article-photo-empty-mark"></div><strong>${esc(photoLabel)}</strong><span>Aucune photo enregistrée</span></div>`}</div>`;
   }
   return `<div class="article-photo-edit-wrap">
     <div class="article-photo editing" id="articlePhotoBox">
       <img id="articlePhotoPreview" class="${photo?'':'photo-hidden'}" src="${photo?esc(photo):''}" alt="Aperçu photo">
-      <div class="article-photo-empty ${photo?'photo-hidden':''}" id="articlePhotoEmpty"><div class="article-photo-empty-mark"></div><strong>Photo de l'œuvre</strong><span>Prendre une photo ou choisir dans la galerie</span></div>
+      <div class="article-photo-empty ${photo?'photo-hidden':''}" id="articlePhotoEmpty"><div class="article-photo-empty-mark"></div><strong>${esc(photoLabel)}</strong><span>Prendre une photo ou choisir dans la galerie</span></div>
     </div>
     <input id="articleCameraInput" type="file" accept="image/*" capture="environment" style="display:none">
     <input id="articleGalleryInput" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" style="display:none">
@@ -397,23 +414,27 @@ async function setupArticleColisEditor(a,dossier,editing){
   }else{select.disabled=true;select.innerHTML='<option value="">Aucun dossier disponible</option>';if(saveBtn)saveBtn.disabled=true}
 }
 function renderArticleDetail(d,editing=false){
-  const content=document.getElementById('articleModalBody'),a=d.article||{},esi=articleDetailState.esi,dossier=dossierAuto(a),photo=articlePhotoUrl(a);
+  const content=document.getElementById('articleModalBody'),a=d.article||{},esi=articleDetailState.esi,dossier=dossierAuto(a),type=articleType(a),isContainer=type==='CONTENANT';
+  const typeLabel=isContainer?'CONTENANT':'PRODUIT',typeTitle=isContainer?"CARTE D'IDENTITÉ DU CONTENANT":"CARTE D'IDENTITÉ DU PRODUIT";
+  document.getElementById('articleModalTitle').textContent=typeTitle;
+  document.getElementById('articleModalSub').textContent=`${a.esi_id||esi} • ${isContainer?'Fiche contenant et suivi logistique':'Fiche détaillée et historique'}`;
   const heroTitle=valueText(a.reference)!=='-'?a.reference:(valueText(a.description)!=='-'?a.description:a.esi_id||esi);
   const heroDesc=valueText(a.description)!=='-'&&a.description!==heroTitle?a.description:'';
   let html=`<div class="article-hero">
-    <div><div class="article-hero-kicker">Carte d'identité • ${esc(a.esi_id||esi)}</div><div class="article-hero-title">${esc(heroTitle)}</div>${heroDesc?`<div class="article-hero-desc">${esc(heroDesc)}</div>`:''}</div>
-    <div class="article-hero-right"><div class="article-hero-badges"><span class="article-hero-badge">Dossier ${esc(valueText(dossier))}</span><span class="article-hero-badge">${esc(valueText(a.statut_logistique||'Article'))}</span></div><div class="article-hero-actions">${editing?`<button class="btn hero-action secondary" type="button" id="articleCancelEditBtn">Annuler</button><button class="btn hero-action" type="button" id="articleSaveEditBtn">Enregistrer</button>`:`<button class="btn hero-action" type="button" id="articleEditBtn">Modifier</button>`}</div></div>
+    <div><div class="article-hero-kicker">${esc(typeLabel)} • ${esc(a.esi_id||esi)}</div><div class="article-hero-title">${esc(heroTitle)}</div>${heroDesc?`<div class="article-hero-desc">${esc(heroDesc)}</div>`:''}</div>
+    <div class="article-hero-right"><div class="article-hero-badges"><span class="article-hero-badge type-main">${esc(typeLabel)}</span><span class="article-hero-badge">Dossier ${esc(valueText(dossier))}</span><span class="article-hero-badge">${esc(valueText(a.statut_logistique||typeLabel))}</span></div><div class="article-hero-actions">${editing?`<button class="btn hero-action secondary" type="button" id="articleCancelEditBtn">Annuler</button><button class="btn hero-action" type="button" id="articleSaveEditBtn">Enregistrer</button>`:`<button class="btn hero-action" type="button" id="articleEditBtn">Modifier</button>`}</div></div>
   </div>`;
 
-  html+=`<div class="identity-section"><div class="identity-section-title">Identification <span class="identity-section-sub">Référentiel article ESI TICKETS</span></div><div class="identity-layout"><div class="identity-fields">
+  html+=`<div class="identity-section"><div class="identity-section-title">Identification <span class="identity-section-sub">Référentiel ${isContainer?'contenant':'produit'} ESI TICKETS</span></div><div class="identity-layout"><div class="identity-fields">
     ${identityField('N° ESI',a.esi_id,'article-readonly')}
-    ${editing?articleEditField('Référence','reference',a.reference):identityField('Référence',a.reference)}
+    ${editing?articleTypeEditField(type):identityField('Type',type)}
+    ${editing?articleEditField(isContainer?'Référence contenant':'Référence','reference',a.reference):identityField(isContainer?'Référence contenant':'Référence',a.reference)}
     ${editing?articleEditField('Dossier','dossier',dossier==='-'?'':dossier):identityField('Dossier',dossier)}
     ${editing?articleEditField('Client','client',a.client):identityField('Client',a.client)}
-    ${editing?articleEditField('Projet / exposition','projet',a.projet,'span-2'):identityField('Projet / exposition',a.projet,'span-2')}
-    ${editing?articleEditField('Description / désignation','description',a.description,'span-2',true):identityField('Description / désignation',a.description,'span-2')}
-    ${editing?articleEditField('Réf. caisse','ref_caisse',a.ref_caisse):identityField('Réf. caisse',a.ref_caisse)}
-    ${editing?articleEditField('Réf. transporteur','transporteur_ref',a.transporteur_ref):identityField('Réf. transporteur',a.transporteur_ref)}
+    ${editing?articleEditField('Projet / exposition','projet',a.projet):identityField('Projet / exposition',a.projet)}
+    ${editing?articleEditField(isContainer?'Description du contenant':'Description / désignation','description',a.description,'span-2',true):identityField(isContainer?'Description du contenant':'Description / désignation',a.description,'span-2')}
+    ${isContainer?'':(editing?articleEditField('Réf. caisse','ref_caisse',a.ref_caisse):identityField('Réf. caisse',a.ref_caisse))}
+    ${editing?articleEditField(isContainer?'Réf. transporteur / BL':'Réf. transporteur','transporteur_ref',a.transporteur_ref):identityField(isContainer?'Réf. transporteur / BL':'Réf. transporteur',a.transporteur_ref)}
   </div>${articlePhotoMarkup(a,editing)}</div></div>`;
 
   html+=`<div class="identity-section"><div class="identity-section-title">Dimensions et caractéristiques</div><div class="metric-grid">
@@ -425,17 +446,26 @@ function renderArticleDetail(d,editing=false){
     ${editing?metricEditCard('Poids','poids_kg',a.poids_kg,'kg'):metricCard('Poids',a.poids_kg,'kg')}
   </div></div>`;
 
-  html+=`<div class="identity-section"><div class="identity-section-title">Suivi logistique</div><div class="logistics-grid">
-    ${editing?logisticsEditCard('Statut','statut_logistique',a.statut_logistique):logisticsCard('Statut',a.statut_logistique)}
-    ${editing?logisticsEditCard('Stockage actuel','lieu_stockage',a.lieu_stockage):logisticsCard('Stockage actuel',a.lieu_stockage)}
-    ${logisticsCard('N° colis actuel',a.dernier_colis)}${logisticsCard('Dernière réception',a.derniere_reception_ref)}
-  </div><div class="colis-editor"><div><label for="articleColisSelect">Association du colis</label><select id="articleColisSelect" class="import-input"><option value="">Aucun colis</option></select>${editing?'<div class="colis-edit-note">Le colis sélectionné sera enregistré avec la fiche.</div>':''}</div>${editing?'':'<button class="btn primary" type="button" id="saveArticleColisBtn">Enregistrer le colis</button>'}</div></div>`;
+  if(isContainer){
+    html+=`<div class="identity-section"><div class="identity-section-title">Suivi du contenant</div><div class="logistics-grid">
+      ${editing?logisticsEditCard('Statut','statut_logistique',a.statut_logistique):logisticsCard('Statut',a.statut_logistique)}
+      ${editing?logisticsEditCard('Stockage actuel','lieu_stockage',a.lieu_stockage):logisticsCard('Stockage actuel',a.lieu_stockage)}
+      ${logisticsCard('Référence contenant',a.reference)}${logisticsCard('Dernière réception / BL',a.derniere_reception_ref||a.transporteur_ref)}
+    </div></div>`;
+  }else{
+    html+=`<div class="identity-section"><div class="identity-section-title">Suivi logistique</div><div class="logistics-grid">
+      ${editing?logisticsEditCard('Statut','statut_logistique',a.statut_logistique):logisticsCard('Statut',a.statut_logistique)}
+      ${editing?logisticsEditCard('Stockage actuel','lieu_stockage',a.lieu_stockage):logisticsCard('Stockage actuel',a.lieu_stockage)}
+      ${logisticsCard('N° colis actuel',a.dernier_colis)}${logisticsCard('Dernière réception',a.derniere_reception_ref)}
+    </div><div class="colis-editor"><div><label for="articleColisSelect">Association du colis</label><select id="articleColisSelect" class="import-input"><option value="">Aucun colis</option></select>${editing?'<div class="colis-edit-note">Le colis sélectionné sera enregistré avec la fiche.</div>':''}</div>${editing?'':'<button class="btn primary" type="button" id="saveArticleColisBtn">Enregistrer le colis</button>'}</div></div>`;
+  }
 
+  if(d.fiche_caisse){const x=d.fiche_caisse;html+=`<div class="identity-section"><div class="identity-section-title">Fiche de caisse liée <span class="identity-section-sub">Synchronisation automatique</span></div><div class="linked-grid">${linkedCard('Ticket caisse',x.ticket_id)}${linkedCard('Référence caisse',x.reference)}${linkedCard('Statut ticket',x.status)}${linkedCard('Type de caisse',x.type_caisse)}${linkedCard('Dimensions extérieures',x.dimensions_ext)}${linkedCard('Poids',x.poids)}${linkedCard('Date mise à disposition',x.date_mise_dispo)}${linkedCard('Chargé de projet',x.charge_projet)}${linkedCard('Prêteur',x.preteur)}${linkedCard('Projet / exposition',x.projet)}${linkedCard('Localisation',x.localisation)}${linkedCard('Réceptionnée',x.receptionnee?'Oui':'Non')}${linkedCard('Réceptionnée le',fmtDate(x.receptionnee_le))}${linkedCard('BL fournisseur',x.bl_numero)}${linkedCard('Date BL',x.bl_date)}</div></div>`}
   if(d.avis_arrivee){const x=d.avis_arrivee,exp=x.expediteur||{},tr=x.transporteur||{};html+=`<div class="identity-section"><div class="identity-section-title">Avis d’arrivée lié</div><div class="linked-grid">${linkedCard('Réf. dossier',x.dossier_ref)}${linkedCard('Réception prévue',x.date_reception_prevue)}${linkedCard('Client',x.client)}${linkedCard('Projet / exposition',x.projet)}${linkedCard('Coordinateur',x.coordinateur)}${linkedCard('Expéditeur',exp.nom)}${linkedCard('Adresse expéditeur',exp.adresse,'span-2')}${linkedCard('Contact expéditeur',exp.contact)}${linkedCard('Transporteur',tr.nom)}${linkedCard('Adresse transporteur',tr.adresse,'span-2')}${linkedCard('Contact transporteur',tr.contact)}${linkedCard('Référence transporteur',tr.reference)}${linkedCard('Commentaire',x.commentaire,'span-2')}</div></div>`}
   if(d.demande_enlevement){const x=d.demande_enlevement;html+=`<div class="identity-section"><div class="identity-section-title">Demande d’enlèvement liée</div><div class="linked-grid">${linkedCard('N° bon enlèvement',x.numero_bon)}${linkedCard('Date enlèvement',x.date_enlevement)}${linkedCard('Client',x.client)}${linkedCard('Projet / exposition',x.projet)}${linkedCard('Coordinateur',x.coordinateur)}${linkedCard('Adresse départ',x.adresse_depart)}${linkedCard('Adresse destination',x.adresse_destination)}${linkedCard('Notes',x.notes)}${linkedCard('Instructions',x.instructions,'span-2')}</div></div>`}
   if((d.documents_source||[]).length){html+=`<div class="identity-section"><div class="identity-section-title">Documents source</div><div class="document-list">`;d.documents_source.forEach(f=>{html+=`<a class="file-link" target="_blank" href="${esc(f.url)}">${esc(f.name)}</a>`});html+=`</div></div>`}
   html+=`<div class="identity-section"><div class="identity-section-title">Historique des réceptions</div>`;
-  if((d.receptions||[]).length){html+=`<div class="reception-list">`;d.receptions.forEach(rec=>{const date=rec.date_affichee||fmtDate(rec.date);html+=`<div class="reception-card"><div class="reception-head"><div class="reception-title">${esc(rec.reference||'Réception')}</div><div class="reception-date">${esc(valueText(date))}</div></div><div class="reception-grid">${receptionField('Réceptionné par',rec.receptionne_par)}${receptionField('Quantité reçue',rec.quantite)}${receptionField('Lieu de stockage',rec.lieu_stockage)}${receptionField('N° dossier',rec.numero_dossier)}${receptionField('Nombre de colis',rec.nombre_colis)}${receptionField('Colis',(rec.colis||[]).join(', '))}</div>`;if((rec.files||[]).length){html+=`<div class="document-list" style="margin-top:10px">`;rec.files.forEach(f=>{html+=`<a class="file-link" target="_blank" href="${esc(f.url)}">${esc(f.name)}</a>`});html+=`</div>`}html+=`</div>`});html+=`</div>`}else html+=`<div class="article-empty">Aucune réception enregistrée pour cet article.</div>`;
+  if((d.receptions||[]).length){html+=`<div class="reception-list">`;d.receptions.forEach(rec=>{const date=rec.date_affichee||fmtDate(rec.date);html+=`<div class="reception-card"><div class="reception-head"><div class="reception-title">${esc(rec.reference||'Réception')}</div><div class="reception-date">${esc(valueText(date))}</div></div><div class="reception-grid">${receptionField('Réceptionné par',rec.receptionne_par)}${receptionField('Quantité reçue',rec.quantite)}${receptionField('Lieu de stockage',rec.lieu_stockage)}${receptionField('N° dossier',rec.numero_dossier)}${receptionField('Nombre de colis',rec.nombre_colis)}${receptionField('Colis',(rec.colis||[]).join(', '))}</div>`;if((rec.files||[]).length){html+=`<div class="document-list" style="margin-top:10px">`;rec.files.forEach(f=>{html+=`<a class="file-link" target="_blank" href="${esc(f.url)}">${esc(f.name)}</a>`});html+=`</div>`}html+=`</div>`});html+=`</div>`}else html+=`<div class="article-empty">Aucune réception enregistrée pour ce ${isContainer?'contenant':'produit'}.</div>`;
   html+=`</div><div class="article-meta"><span>Créé le : ${esc(fmtDate(a.created_at))}</span><span>Dernière mise à jour : ${esc(fmtDate(a.updated_at))}</span></div>`;
   content.innerHTML=html;
 
@@ -444,7 +474,7 @@ function renderArticleDetail(d,editing=false){
   if(cancelBtn)cancelBtn.onclick=()=>{resetArticlePhotoDraft();articleDetailState.editing=false;renderArticleDetail(articleDetailState.detail,false)};
   if(saveEditBtn)saveEditBtn.onclick=saveArticleDetailEdits;
   if(editing)setupArticlePhotoEditor(a);
-  setupArticleColisEditor(a,dossier,editing);
+  if(!isContainer)setupArticleColisEditor(a,dossier,editing);
 }
 async function saveArticleDetailEdits(){
   const esi=articleDetailState.esi,detail=articleDetailState.detail||{},a=detail.article||{},btn=document.getElementById('articleSaveEditBtn');
@@ -467,18 +497,18 @@ async function saveArticleDetailEdits(){
 async function openArticleDetail(esi){
   const b=document.getElementById('articleModalBackdrop'),content=document.getElementById('articleModalBody');
   resetArticlePhotoDraft();articleDetailState={esi:String(esi||''),detail:null,editing:false,photoFile:null,removePhoto:false,previewUrl:''};
-  document.getElementById('articleModalTitle').textContent="CARTE D'IDENTITÉ DE L'ARTICLE";document.getElementById('articleModalSub').textContent=`${esi} • Fiche détaillée et historique`;content.innerHTML='<div class="muted" style="padding:28px">Chargement…</div>';b.classList.add('open');b.setAttribute('aria-hidden','false');
+  document.getElementById('articleModalTitle').textContent="CARTE D'IDENTITÉ";document.getElementById('articleModalSub').textContent=`${esi} • Chargement…`;content.innerHTML='<div class="muted" style="padding:28px">Chargement…</div>';b.classList.add('open');b.setAttribute('aria-hidden','false');
   try{const r=await fetch('/api/articles/'+encodeURIComponent(esi),{cache:'no-store'}),d=await apiJson(r);if(!r.ok)throw new Error(d.error||'Article introuvable');articleDetailState.detail=d;renderArticleDetail(d,false)}catch(e){content.innerHTML=`<div class="empty">${esc(e.message||'Impossible de charger l’article.')}</div>`}
 }
 
 function selectedEsiIds(){return [...document.querySelectorAll('.row-check:checked')].map(cb=>cb.dataset.esi).filter(Boolean)}
-function updateSelectionActions(){const ids=selectedEsiIds(),bar=document.getElementById('selectionActions');document.getElementById('selectionCount').textContent=`${ids.length} article${ids.length>1?'s':''} sélectionné${ids.length>1?'s':''}`;bar.classList.toggle('show',ids.length>0)}
-const editableFields=[['reference','Référence'],['description','Description'],['dossier','Dossier'],['client','Client'],['projet','Projet / expo'],['ref_caisse','Réf. caisse'],['transporteur_ref','Réf. transporteur'],['longueur_cm','Longueur (cm)'],['largeur_cm','Largeur (cm)'],['hauteur_cm','Hauteur (cm)'],['volume_m3','Volume (m³)'],['surface_m2','Surface (m²)'],['poids_kg','Poids (kg)'],['lieu_stockage','Lieu de stockage'],['statut_logistique','Statut logistique'],['dernier_colis','N° colis']];
+function updateSelectionActions(){const ids=selectedEsiIds(),bar=document.getElementById('selectionActions');document.getElementById('selectionCount').textContent=`${ids.length} élément${ids.length>1?'s':''} sélectionné${ids.length>1?'s':''}`;bar.classList.toggle('show',ids.length>0)}
+const editableFields=[['type_objet','Type'],['reference','Référence'],['description','Description'],['dossier','Dossier'],['client','Client'],['projet','Projet / expo'],['ref_caisse','Réf. caisse'],['transporteur_ref','Réf. transporteur'],['longueur_cm','Longueur (cm)'],['largeur_cm','Largeur (cm)'],['hauteur_cm','Hauteur (cm)'],['volume_m3','Volume (m³)'],['surface_m2','Surface (m²)'],['poids_kg','Poids (kg)'],['lieu_stockage','Lieu de stockage'],['statut_logistique','Statut logistique'],['dernier_colis','N° colis']];
 function closeEditModal(){const b=document.getElementById('editModalBackdrop');b.classList.remove('open');b.setAttribute('aria-hidden','true')}
 function openEditModal(){
   const ids=selectedEsiIds();if(!ids.length)return;const single=ids.length===1,article=single?currentRows.find(x=>String(x.esi_id)===ids[0]):null;
-  document.getElementById('editModalTitle').textContent=single?`Modifier ${ids[0]}`:`Modifier ${ids.length} articles`;document.getElementById('editModalSub').textContent=single?'Tous les champs article peuvent être modifiés sauf le N° ESI.':'Seuls les champs cochés seront appliqués à tous les articles sélectionnés.';
-  const grid=document.getElementById('editGrid');grid.innerHTML=editableFields.map(([field,label])=>{const value=single?String((article&&article[field])??''):'',textarea=field==='description';return `<div class="edit-field"><label><input type="checkbox" class="edit-apply" data-field="${field}" ${single?'checked':''}> ${esc(label)}</label>${textarea?`<textarea class="edit-value" data-field="${field}">${esc(value)}</textarea>`:`<input class="edit-value" data-field="${field}" value="${esc(value)}">`}</div>`}).join('');
+  document.getElementById('editModalTitle').textContent=single?`Modifier ${ids[0]}`:`Modifier ${ids.length} éléments`;document.getElementById('editModalSub').textContent=single?'Tous les champs peuvent être modifiés sauf le N° ESI.':'Seuls les champs cochés seront appliqués à tous les éléments sélectionnés.';
+  const grid=document.getElementById('editGrid');grid.innerHTML=editableFields.map(([field,label])=>{const value=single?String((article&&article[field])??''):'',textarea=field==='description',isType=field==='type_objet';let control;if(isType){const t=String(value||'PRODUIT').toUpperCase()==='CONTENANT'?'CONTENANT':'PRODUIT';control=`<select class="edit-value" data-field="${field}"><option value="PRODUIT" ${t==='PRODUIT'?'selected':''}>PRODUIT</option><option value="CONTENANT" ${t==='CONTENANT'?'selected':''}>CONTENANT</option></select>`}else{control=textarea?`<textarea class="edit-value" data-field="${field}">${esc(value)}</textarea>`:`<input class="edit-value" data-field="${field}" value="${esc(value)}">`}return `<div class="edit-field"><label><input type="checkbox" class="edit-apply" data-field="${field}" ${single?'checked':''}> ${esc(label)}</label>${control}</div>`}).join('');
   const b=document.getElementById('editModalBackdrop');b.classList.add('open');b.setAttribute('aria-hidden','false');
 }
 document.getElementById('editSelectedBtn').onclick=openEditModal;document.getElementById('editModalClose').onclick=closeEditModal;document.getElementById('editCancelBtn').onclick=closeEditModal;document.getElementById('editModalBackdrop').addEventListener('click',e=>{if(e.target.id==='editModalBackdrop')closeEditModal()});
