@@ -889,43 +889,81 @@ def api_articles():
 
 @app.route('/api/articles/link-search')
 def api_articles_link_search():
-    """Recherche les PRODUITS liables a une fiche de caisse par dossier ou reference uniquement."""
+    """
+    Recherche les PRODUITS liables a une fiche de caisse.
+
+    - recherche exacte par N dossier en priorite ;
+    - recherche partielle par reference ;
+    - secours par dossier partiel ;
+    - les CONTENANTS sont toujours exclus.
+    """
     q = _as_text(request.args.get('q')).strip()
     if not q:
-        return jsonify({'ok': True, 'articles': []})
+        return jsonify({'ok': True, 'articles': [], 'count': 0})
 
     clean_q = q.replace('*', '').strip()
     if not clean_q:
-        return jsonify({'ok': True, 'articles': []})
+        return jsonify({'ok': True, 'articles': [], 'count': 0})
 
-    pattern = '*' + clean_q + '*'
-    encoded = urllib.parse.quote(pattern, safe='*')
-    query = (
-        'select=esi_id,dossier,reference,type_objet'
-        '&or=(dossier.ilike.' + encoded + ',reference.ilike.' + encoded + ')'
-        '&order=dossier.asc,reference.asc,article_no.asc'
-        '&limit=150'
-    )
+    rows = []
+    seen = set()
+
+    def add_rows(found_rows):
+        for row in found_rows or []:
+            esi_id = _as_text(row.get('esi_id')).strip()
+            if not esi_id or esi_id in seen:
+                continue
+            type_objet = _as_text(row.get('type_objet') or 'PRODUIT').strip().upper()
+            if type_objet == 'CONTENANT':
+                continue
+            seen.add(esi_id)
+            rows.append(row)
 
     try:
-        rows = supabase_rest_request('GET', 'articles', query) or []
+        # 1) N dossier exact : cas principal depuis une fiche de caisse.
+        safe_dossier = urllib.parse.quote(clean_q, safe='')
+        dossier_rows = supabase_rest_request(
+            'GET', 'articles',
+            'select=esi_id,dossier,reference,type_objet,article_no'
+            '&dossier=eq.' + safe_dossier +
+            '&order=article_no.asc&limit=500'
+        ) or []
+        add_rows(dossier_rows)
+
+        # 2) Reference / numero inventaire partiel.
+        safe_ref = urllib.parse.quote('*' + clean_q + '*', safe='*')
+        reference_rows = supabase_rest_request(
+            'GET', 'articles',
+            'select=esi_id,dossier,reference,type_objet,article_no'
+            '&reference=ilike.' + safe_ref +
+            '&order=article_no.asc&limit=150'
+        ) or []
+        add_rows(reference_rows)
+
+        # 3) Secours : dossier partiel.
+        safe_dossier_like = urllib.parse.quote('*' + clean_q + '*', safe='*')
+        dossier_like_rows = supabase_rest_request(
+            'GET', 'articles',
+            'select=esi_id,dossier,reference,type_objet,article_no'
+            '&dossier=ilike.' + safe_dossier_like +
+            '&order=article_no.asc&limit=150'
+        ) or []
+        add_rows(dossier_like_rows)
+
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e), 'articles': []}), 500
 
-    articles = []
-    for row in rows:
-        # Compatibilite avec les anciens enregistrements : NULL/absent = PRODUIT.
-        type_objet = _as_text(row.get('type_objet') or 'PRODUIT').strip().upper()
-        if type_objet == 'CONTENANT':
-            continue
-        esi_id = _as_text(row.get('esi_id')).strip()
-        if not esi_id:
-            continue
-        articles.append({
-            'esi_id': esi_id,
-            'dossier': _as_text(row.get('dossier')).strip(),
-            'reference': _as_text(row.get('reference')).strip(),
-        })
+    articles = [{
+        'esi_id': _as_text(row.get('esi_id')).strip(),
+        'dossier': _as_text(row.get('dossier')).strip(),
+        'reference': _as_text(row.get('reference')).strip(),
+    } for row in rows]
+
+    articles.sort(key=lambda a: (
+        _as_text(a.get('dossier')).casefold(),
+        _as_text(a.get('reference')).casefold(),
+        _as_text(a.get('esi_id')).casefold(),
+    ))
 
     return jsonify({'ok': True, 'articles': articles, 'count': len(articles)})
 
