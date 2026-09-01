@@ -1110,12 +1110,13 @@ def api_article_create_manual():
 @app.route('/api/articles/link-search')
 def api_articles_link_search():
     """
-    Recherche les PRODUITS liables a une fiche de caisse.
+    Recherche globale des PRODUITS liables a une fiche de caisse.
 
-    - recherche exacte par N dossier en priorite ;
-    - recherche partielle par reference ;
-    - secours par dossier partiel ;
-    - les CONTENANTS sont toujours exclus.
+    Le champ search_text est construit a partir de l'ensemble des donnees de
+    l'article : N ESI, dossier, reference, description, client/preteur, projet,
+    dimensions, poids, stockage, caisse/colis, statut, raw_json, etc.
+
+    Les CONTENANTS restent exclus de la liaison a une fiche de caisse.
     """
     q = _as_text(request.args.get('q')).strip()
     if not q:
@@ -1140,35 +1141,29 @@ def api_articles_link_search():
             rows.append(row)
 
     try:
-        # 1) N dossier exact : cas principal depuis une fiche de caisse.
-        safe_dossier = urllib.parse.quote(clean_q, safe='')
-        dossier_rows = supabase_rest_request(
+        # Recherche principale : search_text contient toutes les informations
+        # connues de la fiche article. Cela permet notamment de rechercher par
+        # client/preteur, description, projet, stockage, caisse/colis, etc.
+        safe_pattern = urllib.parse.quote('*' + clean_q + '*', safe='*')
+        global_rows = supabase_rest_request(
             'GET', 'articles',
-            'select=esi_id,dossier,reference,type_objet,article_no'
-            '&dossier=eq.' + safe_dossier +
+            'select=esi_id,dossier,reference,description,client,projet,'
+            'ref_caisse,dernier_colis,lieu_stockage,type_objet,article_no'
+            '&search_text=ilike.' + safe_pattern +
             '&order=article_no.asc&limit=500'
         ) or []
-        add_rows(dossier_rows)
+        add_rows(global_rows)
 
-        # 2) Reference / numero inventaire partiel.
-        safe_ref = urllib.parse.quote('*' + clean_q + '*', safe='*')
-        reference_rows = supabase_rest_request(
+        # Secours pour les anciennes lignes dont search_text pourrait ne pas
+        # encore contenir l'identifiant ESI genere par Supabase.
+        esi_rows = supabase_rest_request(
             'GET', 'articles',
-            'select=esi_id,dossier,reference,type_objet,article_no'
-            '&reference=ilike.' + safe_ref +
-            '&order=article_no.asc&limit=150'
+            'select=esi_id,dossier,reference,description,client,projet,'
+            'ref_caisse,dernier_colis,lieu_stockage,type_objet,article_no'
+            '&esi_id=ilike.' + safe_pattern +
+            '&order=article_no.asc&limit=100'
         ) or []
-        add_rows(reference_rows)
-
-        # 3) Secours : dossier partiel.
-        safe_dossier_like = urllib.parse.quote('*' + clean_q + '*', safe='*')
-        dossier_like_rows = supabase_rest_request(
-            'GET', 'articles',
-            'select=esi_id,dossier,reference,type_objet,article_no'
-            '&dossier=ilike.' + safe_dossier_like +
-            '&order=article_no.asc&limit=150'
-        ) or []
-        add_rows(dossier_like_rows)
+        add_rows(esi_rows)
 
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e), 'articles': []}), 500
@@ -1177,6 +1172,12 @@ def api_articles_link_search():
         'esi_id': _as_text(row.get('esi_id')).strip(),
         'dossier': _as_text(row.get('dossier')).strip(),
         'reference': _as_text(row.get('reference')).strip(),
+        'description': _as_text(row.get('description')).strip(),
+        'client': _as_text(row.get('client')).strip(),
+        'projet': _as_text(row.get('projet')).strip(),
+        'ref_caisse': _as_text(row.get('ref_caisse')).strip(),
+        'dernier_colis': _as_text(row.get('dernier_colis')).strip(),
+        'lieu_stockage': _as_text(row.get('lieu_stockage')).strip(),
     } for row in rows]
 
     articles.sort(key=lambda a: (
@@ -4068,10 +4069,10 @@ if(!document.getElementById(STYLE_ID)){
     .caisse-articles-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:12px}
     .caisse-articles-search input{width:100%;border:1px solid #9bcbe7;background:#fff;border-radius:12px;padding:10px 12px;font:inherit;box-sizing:border-box}
     .caisse-articles-results{margin-top:10px;border:1px solid #dbe7f0;border-radius:12px;background:#fff;max-height:260px;overflow:auto}
-    .caisse-articles-result-head,.caisse-articles-result{display:grid;grid-template-columns:38px minmax(110px,.75fr) minmax(165px,1.25fr);gap:8px;align-items:center;padding:9px 10px}
+    .caisse-articles-result-head,.caisse-articles-result{display:grid;grid-template-columns:38px minmax(72px,.55fr) minmax(90px,.7fr) minmax(120px,1fr) minmax(190px,1.7fr);gap:8px;align-items:center;padding:9px 10px}
     .caisse-articles-result-head{position:sticky;top:0;background:#f8fafc;border-bottom:1px solid #dbe7f0;font-size:10px;font-weight:900;text-transform:uppercase;color:#64748b;z-index:1}
     .caisse-articles-result{border-bottom:1px solid #eef2f7;font-size:12px}.caisse-articles-result:last-child{border-bottom:0}.caisse-articles-result:hover{background:#f0f9ff}
-    .caisse-articles-result input{width:17px;height:17px;cursor:pointer}.caisse-articles-result .ref{font-weight:850;color:#0f2f4f;overflow-wrap:anywhere}.caisse-articles-result .dos{color:#475569;overflow-wrap:anywhere}
+    .caisse-articles-result input{width:17px;height:17px;cursor:pointer}.caisse-articles-result .ref{font-weight:850;color:#0f2f4f;overflow-wrap:anywhere}.caisse-articles-result .dos{color:#475569;overflow-wrap:anywhere}.caisse-articles-result .esi-search{font-weight:900;color:#0369a1;overflow-wrap:anywhere}.caisse-articles-result .info-search{color:#475569;overflow-wrap:anywhere;line-height:1.3}.caisse-articles-result .info-search strong{color:#0f2f4f}
     .caisse-articles-hint{font-size:10px;color:#64748b;margin-top:7px;line-height:1.35}
     .caisse-article-modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:1600;display:none;align-items:center;justify-content:center;padding:18px}.caisse-article-modal-backdrop.show{display:flex}
     .caisse-article-modal{background:#f8fbfd;width:min(1000px,97vw);max-height:93vh;overflow:auto;border-radius:22px;box-shadow:0 26px 80px rgba(15,23,42,.28);border:1px solid #dbe7f0}
@@ -4079,7 +4080,7 @@ if(!document.getElementById(STYLE_ID)){
     .caisse-article-modal-body{padding:18px}.caisse-article-hero{background:linear-gradient(135deg,#0f2f4f,#16476f);color:#fff;border-radius:16px;padding:18px;display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}.caisse-article-hero .ref{font-size:25px;font-weight:950;overflow-wrap:anywhere}.caisse-article-hero .desc{font-size:12px;color:#dbeafe;margin-top:5px;max-width:650px}.caisse-article-hero .esi{font-size:11px;font-weight:900;background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.25);padding:6px 9px;border-radius:999px}
     .caisse-article-detail-layout{display:grid;grid-template-columns:minmax(0,1fr) 240px;gap:14px;margin-top:14px}.caisse-article-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.caisse-article-field{border:1px solid #c9e0ed;background:#fff;border-radius:12px;padding:10px}.caisse-article-field.wide{grid-column:1/-1}.caisse-article-field .k{font-size:9px;font-weight:900;text-transform:uppercase;color:#64748b;letter-spacing:.04em}.caisse-article-field .v{font-size:13px;font-weight:750;color:#16324a;margin-top:5px;white-space:pre-wrap;overflow-wrap:anywhere}.caisse-article-photo{border:1px solid #c9e0ed;background:#fff;border-radius:14px;min-height:220px;display:flex;align-items:center;justify-content:center;overflow:hidden}.caisse-article-photo img{width:100%;height:100%;min-height:220px;object-fit:contain}.caisse-article-no-photo{font-size:11px;color:#64748b;text-align:center;padding:18px}
     .caisse-article-section{margin-top:14px;border:1px solid #dbe7f0;background:#fff;border-radius:14px;padding:13px}.caisse-article-section-title{font-size:11px;font-weight:900;text-transform:uppercase;color:#0369a1;margin-bottom:9px}.caisse-article-history{display:grid;gap:8px}.caisse-article-history-item{border-left:4px solid #0ea5e9;background:#f8fafc;border-radius:10px;padding:9px 10px;font-size:11px;color:#334155}.caisse-article-history-item strong{color:#0f2f4f}
-    @media(max-width:760px){.caisse-articles-search{grid-template-columns:1fr}.caisse-article-detail-layout{grid-template-columns:1fr}.caisse-article-fields{grid-template-columns:1fr}.caisse-article-field.wide{grid-column:auto}.caisse-articles-result-head,.caisse-articles-result{grid-template-columns:34px minmax(90px,.7fr) minmax(120px,1.3fr)}}
+    @media(max-width:760px){.caisse-articles-search{grid-template-columns:1fr}.caisse-article-detail-layout{grid-template-columns:1fr}.caisse-article-fields{grid-template-columns:1fr}.caisse-article-field.wide{grid-column:auto}.caisse-articles-result-head,.caisse-articles-result{grid-template-columns:34px minmax(70px,.55fr) minmax(90px,.7fr) minmax(110px,1fr) minmax(150px,1.4fr)}}
   `;
   document.head.appendChild(style);
 }
@@ -4121,7 +4122,7 @@ function renderPanel(){
   panel.innerHTML=`
     <div class="caisse-articles-title">Articles liés à cette caisse</div>
     <div class="caisse-articles-selected" id="caisseArticlesSelected">${selectedHtml(editing)}</div>
-    ${editing?`<div class="caisse-articles-search"><input id="caisseArticlesSearchInput" autocomplete="off" placeholder="Rechercher par N° dossier ou N° inventaire / référence"><button class="btn secondary" id="caisseArticlesSearchBtn" type="button">Rechercher</button></div><div class="caisse-articles-hint">Résultats : N° dossier + N° inventaire / référence uniquement.</div><div class="caisse-articles-results" id="caisseArticlesResults" style="display:none"></div>`:''}
+    ${editing?`<div class="caisse-articles-search"><input id="caisseArticlesSearchInput" autocomplete="off" placeholder="Recherche globale : client / prêteur, description, référence, dossier, projet..."><button class="btn secondary" id="caisseArticlesSearchBtn" type="button">Rechercher</button></div><div class="caisse-articles-hint">Recherche dans toute la fiche article : client / prêteur, description, référence, N° ESI, dossier, projet, stockage, caisse / colis, dimensions, poids, etc.</div><div class="caisse-articles-results" id="caisseArticlesResults" style="display:none"></div>`:''}
   `;
   bindPanelEvents();
 }
@@ -4164,7 +4165,7 @@ function bindPanelEvents(){
 async function searchArticles(){
   const input=document.getElementById('caisseArticlesSearchInput'),box=document.getElementById('caisseArticlesResults');
   const q=String(input&&input.value||'').trim();
-  if(!q){showNotice('Saisis un N° dossier ou une référence.');return}
+  if(!q){showNotice('Saisis un mot, un client / prêteur, une description, une référence ou un N° dossier.');return}
   if(box){box.style.display='block';box.innerHTML='<div class="small" style="padding:12px">Recherche…</div>'}
   try{
     const r=await fetch('/api/articles/link-search?q='+encodeURIComponent(q),{cache:'no-store'}),d=await r.json();
@@ -4177,7 +4178,7 @@ function renderSearchResults(){
   const box=document.getElementById('caisseArticlesResults');if(!box)return;
   box.style.display='block';
   if(!linkedSearchResults.length){box.innerHTML='<div class="small" style="padding:12px">Aucun article trouvé.</div>';return}
-  box.innerHTML='<div class="caisse-articles-result-head"><div></div><div>N° dossier</div><div>N° inventaire / référence</div></div>'+linkedSearchResults.map(a=>`<label class="caisse-articles-result"><div><input type="checkbox" data-link-esi="${escapeHtml(a.esi_id)}" ${linkedDraft.has(String(a.esi_id))?'checked':''}></div><div class="dos">${escapeHtml(a.dossier||'-')}</div><div class="ref">${escapeHtml(a.reference||'-')}</div></label>`).join('');
+  box.innerHTML='<div class="caisse-articles-result-head"><div></div><div>N° ESI</div><div>N° dossier</div><div>Référence</div><div>Client / description</div></div>'+linkedSearchResults.map(a=>{const infos=[a.client,a.description].filter(x=>String(x||'').trim()).map(x=>escapeHtml(x)).join('<br>');return `<label class="caisse-articles-result"><div><input type="checkbox" data-link-esi="${escapeHtml(a.esi_id)}" ${linkedDraft.has(String(a.esi_id))?'checked':''}></div><div class="esi-search">${escapeHtml(a.esi_id||'-')}</div><div class="dos">${escapeHtml(a.dossier||'-')}</div><div class="ref">${escapeHtml(a.reference||'-')}</div><div class="info-search">${infos||'-'}</div></label>`}).join('');
   box.querySelectorAll('[data-link-esi]').forEach(cb=>cb.addEventListener('change',()=>{
     const a=linkedSearchResults.find(x=>String(x.esi_id)===String(cb.dataset.linkEsi));
     if(!a)return;
