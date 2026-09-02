@@ -248,7 +248,19 @@
 
             <form id="form-enlevement" class="card hidden">
               <div class="section-title">Demande d’enlèvement</div>
-              <div class="small">Dépose uniquement le bon d’enlèvement au format PDF. Après validation, ta demande est enregistrée immédiatement et le document sera analysé automatiquement.</div>
+              <div class="small">Renseigne d’abord le N° dossier : les informations déjà connues sont reprises automatiquement. Dépose ensuite le bon d’enlèvement au format PDF.</div>
+
+              <div class="arrival-block">
+                <h3>Informations dossier</h3>
+                <div class="grid">
+                  <div class="field"><label>N° dossier *</label><input class="input" id="enlevement-dossier" autocomplete="off" /></div>
+                  <div class="field"><label>Nom du client</label><input class="input" id="enlevement-client" autocomplete="off" /></div>
+                  <div class="field"><label>Projet ou expo</label><input class="input" id="enlevement-projet" /></div>
+                  <div class="field"><label>Chargé de projet / coordinateur</label><input class="input" id="enlevement-coordinateur" autocomplete="off" /></div>
+                </div>
+                <div class="small" id="enlevement-dossier-status" style="margin-top:10px">Saisis un N° dossier pour reprendre automatiquement les informations déjà enregistrées.</div>
+              </div>
+
               <div style="height:14px"></div>
               <div class="drop" id="dropEnlevement">
                 <div class="section-title" style="margin-bottom:0">Bon d’enlèvement PDF</div>
@@ -1171,6 +1183,70 @@ async function sendAvisArrivee(){
   }
 }
 
+let enlevementDossierLookupTimer = null;
+let enlevementDossierLookupSeq = 0;
+
+function syncEnlevementIdentityIntoAnalysis(){
+  if(!state.enlevementAnalysis) return;
+  const dossier = document.getElementById('enlevement-dossier').value.trim();
+  const client = document.getElementById('enlevement-client').value.trim();
+  const projet = document.getElementById('enlevement-projet').value.trim();
+  const coordinateur = document.getElementById('enlevement-coordinateur').value.trim();
+  if(dossier) state.enlevementAnalysis.numero_dossier = dossier;
+  if(client) state.enlevementAnalysis.client = client;
+  if(projet) state.enlevementAnalysis.exhibition = projet;
+  if(coordinateur) state.enlevementAnalysis.coordinateur = coordinateur;
+  state.enlevementAnalysis.display_name = [state.enlevementAnalysis.client, state.enlevementAnalysis.numero_bon].filter(Boolean).join(' - ');
+}
+
+async function lookupEnlevementDossier(){
+  const dossierInput = document.getElementById('enlevement-dossier');
+  const clientInput = document.getElementById('enlevement-client');
+  const projetInput = document.getElementById('enlevement-projet');
+  const coordinateurInput = document.getElementById('enlevement-coordinateur');
+  const status = document.getElementById('enlevement-dossier-status');
+  const dossier = dossierInput.value.trim();
+  const seq = ++enlevementDossierLookupSeq;
+
+  if(!dossier){
+    status.textContent = 'Saisis un N° dossier pour reprendre automatiquement les informations déjà enregistrées.';
+    return;
+  }
+
+  status.textContent = 'Recherche des informations du dossier…';
+  try{
+    const res = await fetch('/api/dossiers/lookup?dossier=' + encodeURIComponent(dossier), {cache:'no-store'});
+    const data = await res.json();
+    if(seq !== enlevementDossierLookupSeq) return;
+    if(!res.ok) throw new Error(data.error || 'Recherche du dossier impossible');
+
+    if(data.found){
+      if(String(data.client || '').trim()) clientInput.value = data.client;
+      if(String(data.projet || '').trim()) projetInput.value = data.projet;
+      if(String(data.charge_projet || '').trim()) coordinateurInput.value = data.charge_projet;
+      const filled = [
+        data.client ? 'client' : '',
+        data.projet ? 'projet' : '',
+        data.charge_projet ? 'chargé de projet' : ''
+      ].filter(Boolean);
+      status.textContent = filled.length
+        ? 'Dossier reconnu : ' + filled.join(', ') + ' rempli(s) automatiquement.'
+        : 'Dossier reconnu, mais aucune identité complémentaire n’est encore renseignée.';
+    }else{
+      status.textContent = 'Dossier non trouvé dans les données existantes. Tu peux renseigner les champs manuellement.';
+    }
+    syncEnlevementIdentityIntoAnalysis();
+  }catch(e){
+    if(seq !== enlevementDossierLookupSeq) return;
+    status.textContent = 'Impossible de rechercher ce dossier pour le moment. Les champs restent modifiables manuellement.';
+  }
+}
+
+function scheduleEnlevementDossierLookup(){
+  clearTimeout(enlevementDossierLookupTimer);
+  enlevementDossierLookupTimer = setTimeout(lookupEnlevementDossier, 450);
+}
+
 function renderEnlevementArticleMatches(analysis){
   const box = document.getElementById('enlevementArticleMatch');
   const items = (analysis && analysis.items) || [];
@@ -1227,6 +1303,8 @@ function renderEnlevementArticleMatches(analysis){
 }
 
 async function analyseEnlevementArticles(){
+  const dossier = document.getElementById('enlevement-dossier').value.trim();
+  if(!dossier){ showNotice('Renseigne d’abord le N° dossier.'); document.getElementById('enlevement-dossier').focus(); return false; }
   if(state.filesEnlevement.length !== 1){ showNotice('Merci de déposer un seul bon d’enlèvement au format PDF.'); return false; }
   const file = state.filesEnlevement[0];
   if(!file.name.toLowerCase().endsWith('.pdf')){ showNotice('Le bon d’enlèvement doit être un fichier PDF.'); return false; }
@@ -1251,6 +1329,17 @@ async function analyseEnlevementArticles(){
     }
     if(!res.ok){ throw new Error(data.error || 'Erreur pendant l’analyse'); }
     state.enlevementAnalysis = data.analysis || {};
+
+    // L'identité du dossier saisie dans ESI TICKETS est prioritaire sur l'OCR.
+    // Si un champ n'était pas connu dans la base, l'OCR peut toutefois le compléter.
+    const clientInput = document.getElementById('enlevement-client');
+    const projetInput = document.getElementById('enlevement-projet');
+    const coordinateurInput = document.getElementById('enlevement-coordinateur');
+    if(!clientInput.value.trim() && state.enlevementAnalysis.client) clientInput.value = state.enlevementAnalysis.client;
+    if(!projetInput.value.trim() && state.enlevementAnalysis.exhibition) projetInput.value = state.enlevementAnalysis.exhibition;
+    if(!coordinateurInput.value.trim() && state.enlevementAnalysis.coordinateur) coordinateurInput.value = state.enlevementAnalysis.coordinateur;
+    syncEnlevementIdentityIntoAnalysis();
+
     renderEnlevementArticleMatches(state.enlevementAnalysis);
     sendBtn.textContent = 'Créer le ticket';
     document.getElementById('reanalyzeEnlevement').classList.remove('hidden');
@@ -1267,15 +1356,26 @@ async function analyseEnlevementArticles(){
 }
 
 async function sendEnlevement(){
+  const dossier = document.getElementById('enlevement-dossier').value.trim();
+  if(!dossier){ showNotice('Renseigne d’abord le N° dossier.'); document.getElementById('enlevement-dossier').focus(); return; }
   if(!state.enlevementAnalysis){
     await analyseEnlevementArticles();
     return;
   }
   if(state.filesEnlevement.length !== 1){ showNotice('Merci de déposer un seul bon d’enlèvement au format PDF.'); return; }
   const file = state.filesEnlevement[0];
+  syncEnlevementIdentityIntoAnalysis();
   try{
     const fd = new FormData();
     fd.append('module','Demande d’enlèvement');
+    fd.append('dossier', dossier);
+    fd.append('numeroDossier', dossier);
+    fd.append('enlevementClient', document.getElementById('enlevement-client').value.trim());
+    fd.append('enlevementProjet', document.getElementById('enlevement-projet').value.trim());
+    fd.append('enlevementCoordinateur', document.getElementById('enlevement-coordinateur').value.trim());
+    fd.append('chargeProjet', document.getElementById('enlevement-coordinateur').value.trim());
+    fd.append('expo', document.getElementById('enlevement-projet').value.trim());
+    fd.append('objet', document.getElementById('enlevement-projet').value.trim());
     fd.append('files', file);
     fd.append('enlevementAnalyse', JSON.stringify(state.enlevementAnalysis));
     fd.append('articleSelections', JSON.stringify(state.enlevementSelections));
@@ -1290,6 +1390,7 @@ async function sendEnlevement(){
     document.getElementById('enlevementArticleMatch').innerHTML = '';
     document.getElementById('reanalyzeEnlevement').classList.add('hidden');
     document.getElementById('sendEnlevement').textContent = 'Analyser le bon';
+    document.getElementById('enlevement-dossier-status').textContent = 'Saisis un N° dossier pour reprendre automatiquement les informations déjà enregistrées.';
     renderAllFiles();
     showSuccess(`Votre demande ${data.id} a bien été enregistrée avec les articles sélectionnés.`);
     window.scrollTo({top:0, behavior:'smooth'});
@@ -1812,6 +1913,21 @@ document.getElementById('sendDevis').addEventListener('click', sendDevis);
 document.getElementById('sendAllerVoir').addEventListener('click', sendAllerVoir);
 document.getElementById('sendEnlevement').addEventListener('click', sendEnlevement);
 document.getElementById('reanalyzeEnlevement').addEventListener('click', analyseEnlevementArticles);
+document.getElementById('enlevement-dossier').addEventListener('input', ()=>{
+  state.enlevementAnalysis = null;
+  state.enlevementSelections = [];
+  scheduleEnlevementDossierLookup();
+  const matchBox = document.getElementById('enlevementArticleMatch');
+  matchBox.classList.add('hidden'); matchBox.innerHTML = '';
+  document.getElementById('reanalyzeEnlevement').classList.add('hidden');
+  document.getElementById('sendEnlevement').textContent = 'Analyser le bon';
+});
+document.getElementById('enlevement-dossier').addEventListener('change', lookupEnlevementDossier);
+document.getElementById('enlevement-dossier').addEventListener('blur', lookupEnlevementDossier);
+['enlevement-client','enlevement-projet','enlevement-coordinateur'].forEach(id => {
+  document.getElementById(id).addEventListener('input', syncEnlevementIdentityIntoAnalysis);
+  document.getElementById(id).addEventListener('change', syncEnlevementIdentityIntoAnalysis);
+});
 document.getElementById('sendAvisArrivee').addEventListener('click', sendAvisArrivee);
 document.getElementById('selectAvisArticles').addEventListener('click', openAvisArticlePicker);
 document.getElementById('addAvisItem').addEventListener('click', ()=>addAvisItemRow());
