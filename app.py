@@ -396,8 +396,14 @@ def _article_payload_from_item(ticket, item, source_module=None, source_index=No
         ref_caisse = item.get("ref_caisse") or ""
         transporteur_ref = ((avis.get("transporteur") or {}).get("reference") or "")
     else:
-        dossier = ticket.get("numeroDossier") or ticket.get("numero_dossier") or ""
-        client = enl.get("client") or ticket.get("dossier") or ""
+        dossier = (
+            enl.get("numero_dossier")
+            or enl.get("dossier_numero")
+            or ticket.get("numeroDossier")
+            or ticket.get("numero_dossier")
+            or ""
+        )
+        client = enl.get("client") or ticket.get("client") or ticket.get("dossier") or ""
         projet = enl.get("exhibition") or ticket.get("expo") or ticket.get("objet") or ""
         reference = item.get("reference") or item.get("ref") or ""
         description = item.get("designation") or item.get("description") or ""
@@ -1209,6 +1215,125 @@ def api_articles_by_dossier():
         "dossier": dossier,
         "count": len(articles),
         "articles": articles,
+    })
+
+
+def _dossier_ticket_values(row):
+    """Extrait Client / Projet / Chargé de projet d'un ancien ticket portant ce N° dossier."""
+    raw = row.get("raw_json")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+
+    module = _as_text(row.get("module") or raw.get("module")).replace("’", "'").strip()
+    preteur = _as_text(row.get("preteur") or raw.get("preteur")).strip()
+    projet = _as_text(row.get("expo") or raw.get("expo") or row.get("objet") or raw.get("objet")).strip()
+    charge = _as_text(row.get("charge_projet") or raw.get("chargeProjet")).strip()
+    client = ""
+
+    if module == "Avis d'arrivée":
+        avis = raw.get("avisArrivee") or raw.get("avis_arrivee") or {}
+        if isinstance(avis, dict):
+            client = _as_text(avis.get("client")).strip()
+            projet = _as_text(avis.get("projet")).strip() or projet
+            charge = _as_text(avis.get("coordinateur")).strip() or charge
+    elif module in ("Demande d'enlèvement", "Demande d'enlevement"):
+        enl = raw.get("enlevement") or {}
+        if isinstance(enl, dict):
+            client = _as_text(enl.get("client")).strip()
+            projet = _as_text(enl.get("exhibition")).strip() or projet
+            charge = _as_text(enl.get("coordinateur")).strip() or charge
+    elif module == "Fiche de caisse":
+        # Dans ESI TICKETS, le prêteur est également l'identité client du dossier.
+        client = preteur
+
+    def clean(value):
+        value = _as_text(value).strip()
+        return "" if value in ("", "-") else value
+
+    return {
+        "client": clean(client),
+        "projet": clean(projet),
+        "charge_projet": clean(charge),
+    }
+
+
+@app.route('/api/dossiers/lookup')
+def api_dossier_lookup():
+    """
+    Retourne les informations déjà connues pour un N° de dossier.
+
+    Priorité :
+      1. Client / Projet de la base Articles ;
+      2. données des tickets existants portant exactement ce N° dossier ;
+      3. Chargé de projet depuis le ticket le plus récent qui le renseigne.
+    """
+    dossier = _as_text(request.args.get('dossier')).strip()
+    if not dossier:
+        return jsonify({'ok': False, 'error': 'Le N° de dossier est obligatoire'}), 400
+
+    client = ''
+    projet = ''
+    charge_projet = ''
+    article_count = 0
+    ticket_count = 0
+    sources = []
+
+    # Base Articles : c'est la source la plus fiable pour Client / Projet d'un dossier.
+    try:
+        identity = _article_dossier_identity(dossier)
+        client = _as_text(identity.get('client')).strip()
+        projet = _as_text(identity.get('projet')).strip()
+        safe_dossier = urllib.parse.quote(dossier, safe='')
+        count_rows = supabase_rest_request(
+            'GET', 'articles', f'select=esi_id&dossier=eq.{safe_dossier}&limit=5000'
+        ) or []
+        article_count = len(count_rows)
+        if client or projet or article_count:
+            sources.append('articles')
+    except Exception as e:
+        print(f'[DOSSIER LOOKUP] Base articles indisponible pour {dossier}: {e}')
+
+    # Tickets : complète les informations manquantes et retrouve le chargé de projet.
+    try:
+        safe_dossier = urllib.parse.quote(dossier, safe='')
+        rows = supabase_rest_request(
+            'GET',
+            'tickets',
+            'select=module,dossier,preteur,expo,objet,charge_projet,raw_json,created_at'
+            f'&dossier=eq.{safe_dossier}&order=created_at.desc&limit=200'
+        ) or []
+        ticket_count = len(rows)
+        if rows:
+            sources.append('tickets')
+        for row in rows:
+            values = _dossier_ticket_values(row)
+            if not client and values.get('client'):
+                client = values['client']
+            if not projet and values.get('projet'):
+                projet = values['projet']
+            if not charge_projet and values.get('charge_projet'):
+                charge_projet = values['charge_projet']
+            if client and projet and charge_projet:
+                break
+    except Exception as e:
+        print(f'[DOSSIER LOOKUP] Tickets indisponibles pour {dossier}: {e}')
+
+    found = bool(client or projet or charge_projet or article_count or ticket_count)
+    return jsonify({
+        'ok': True,
+        'found': found,
+        'dossier': dossier,
+        'client': client,
+        'projet': projet,
+        'charge_projet': charge_projet,
+        'article_count': article_count,
+        'ticket_count': ticket_count,
+        'sources': sources,
     })
 
 
@@ -3501,6 +3626,22 @@ def _analyse_enlevement_ticket_background(ticket_id, pdf_bytes):
             print(f"[ENLEVEMENT] Ticket introuvable apres creation : {ticket_id}")
             return
 
+        existing_enl = dict(ticket.get("enlevement") or {})
+        numero_dossier = _as_text(
+            existing_enl.get("numero_dossier")
+            or existing_enl.get("dossier_numero")
+            or ticket.get("numeroDossier")
+            or ticket.get("numero_dossier")
+        ).strip()
+
+        # Les informations choisies/saisies à partir du N° dossier restent prioritaires
+        # sur les valeurs OCR du bon. L'OCR complète seulement les champs manquants.
+        for field in ("client", "coordinateur", "exhibition"):
+            if _as_text(existing_enl.get(field)).strip():
+                parsed[field] = _as_text(existing_enl.get(field)).strip()
+        if numero_dossier:
+            parsed["numero_dossier"] = numero_dossier
+
         ticket["enlevement"] = {
             **parsed,
             # Nom visible côté réception. L'id ENL-xxx reste uniquement technique.
@@ -3512,7 +3653,11 @@ def _analyse_enlevement_ticket_background(ticket_id, pdf_bytes):
             "analysed_at": datetime.now().isoformat(),
         }
 
-        if parsed.get("client"):
+        if numero_dossier:
+            ticket["numeroDossier"] = numero_dossier
+            ticket["dossier"] = numero_dossier
+        elif parsed.get("client"):
+            # Compatibilité avec les anciens tickets qui utilisaient dossier pour le client.
             ticket["dossier"] = parsed["client"]
         if parsed.get("numero_bon"):
             ticket["ref"] = parsed["numero_bon"]
@@ -4612,6 +4757,10 @@ def api_create_ticket():
     avis_arrivee = None
     enlevement_analyse = None
     article_selections = []
+    enlevement_dossier = _as_text(form.get('numeroDossier') or form.get('dossier')).strip() if is_enlevement else ''
+    enlevement_client = _as_text(form.get('enlevementClient')).strip() if is_enlevement else ''
+    enlevement_projet = _as_text(form.get('enlevementProjet')).strip() if is_enlevement else ''
+    enlevement_coordinateur = _as_text(form.get('enlevementCoordinateur') or form.get('chargeProjet')).strip() if is_enlevement else ''
     if is_enlevement:
         raw_analysis = form.get('enlevementAnalyse', '')
         raw_selections = form.get('articleSelections', '')
@@ -4689,6 +4838,12 @@ def api_create_ticket():
         'managerSheets': []
     }
 
+    if is_enlevement and enlevement_dossier:
+        # Pour les nouveaux bons d'enlèvement, dossier contient bien le N° dossier.
+        # numeroDossier reste aussi dans raw_json pour les écrans métier spécialisés.
+        ticket['dossier'] = enlevement_dossier
+        ticket['numeroDossier'] = enlevement_dossier
+
     if is_enlevement:
         if enlevement_analyse:
             clean_analysis = dict(enlevement_analyse)
@@ -4699,9 +4854,30 @@ def api_create_ticket():
             clean_analysis['analysis_status'] = 'ready'
             clean_analysis['analysis_error'] = ''
             clean_analysis['analysed_at'] = datetime.now().isoformat()
+
+            # Le N° dossier et les champs automatiquement rattachés au dossier
+            # sont prioritaires. L'analyse PDF conserve les autres informations du bon.
+            if enlevement_dossier:
+                clean_analysis['numero_dossier'] = enlevement_dossier
+            if enlevement_client:
+                clean_analysis['client'] = enlevement_client
+            if enlevement_projet:
+                clean_analysis['exhibition'] = enlevement_projet
+            if enlevement_coordinateur:
+                clean_analysis['coordinateur'] = enlevement_coordinateur
+            clean_analysis['display_name'] = " - ".join(
+                x for x in [
+                    _as_text(clean_analysis.get('client')).strip(),
+                    _as_text(clean_analysis.get('numero_bon')).strip()
+                ] if x
+            )
             ticket['enlevement'] = clean_analysis
 
-            if clean_analysis.get('client'):
+            if enlevement_dossier:
+                ticket['dossier'] = enlevement_dossier
+                ticket['numeroDossier'] = enlevement_dossier
+            elif clean_analysis.get('client'):
+                # Compatibilité avec les anciens formulaires qui ne fournissent pas de N° dossier.
                 ticket['dossier'] = clean_analysis['client']
             if clean_analysis.get('numero_bon'):
                 ticket['ref'] = clean_analysis['numero_bon']
@@ -4722,6 +4898,10 @@ def api_create_ticket():
             ticket['enlevement'] = {
                 'analysis_status': 'pending',
                 'analysis_error': '',
+                'numero_dossier': enlevement_dossier,
+                'client': enlevement_client,
+                'exhibition': enlevement_projet,
+                'coordinateur': enlevement_coordinateur,
                 'items': [],
                 'references': [],
             }
@@ -5388,7 +5568,7 @@ def api_update_enlevement(ticket_id):
     current = dict(ticket.get('enlevement') or {})
 
     editable = [
-        'client', 'numero_bon', 'date_enlevement',
+        'numero_dossier', 'client', 'numero_bon', 'date_enlevement',
         'coordinateur', 'exhibition',
         'adresse_depart',
         'adresse_destination',
@@ -5424,7 +5604,12 @@ def api_update_enlevement(ticket_id):
     ticket['enlevement'] = current
 
     # Synchronisation avec les champs historiques utilisés ailleurs.
-    ticket['dossier'] = current.get('client', '')
+    numero_dossier = _as_text(current.get('numero_dossier') or ticket.get('numeroDossier')).strip()
+    if numero_dossier:
+        ticket['numeroDossier'] = numero_dossier
+        ticket['dossier'] = numero_dossier
+    else:
+        ticket['dossier'] = current.get('client', '')
     ticket['ref'] = current.get('numero_bon', '')
     ticket['chargeProjet'] = current.get('coordinateur', '') or '-'
     ticket['expo'] = current.get('exhibition', '') or '-'
