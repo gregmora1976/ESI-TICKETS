@@ -295,6 +295,7 @@
                   <div class="field"><label>Date de réception prévue</label><input class="input" id="avis-date-reception" type="date" /></div>
                   <div class="field" style="grid-column:1 / -1"><label>Nom du coordinateur</label><input class="input" id="avis-coordinateur" autocomplete="off" /></div>
                 </div>
+                <div class="small" id="avis-dossier-status" style="margin-top:10px">Saisis la Réf. dossier pour reprendre automatiquement le client, le projet et le coordinateur déjà connus.</div>
               </div>
 
               <div class="grid">
@@ -971,6 +972,8 @@ function collectAvisItems(){
 
 function resetAvisArriveeForm(){
   document.getElementById('form-avis-arrivee').reset();
+  const avisStatus = document.getElementById('avis-dossier-status');
+  if(avisStatus) avisStatus.textContent = 'Saisis la Réf. dossier pour reprendre automatiquement le client, le projet et le coordinateur déjà connus.';
   const tbody = document.getElementById('avisItemsBody');
   tbody.innerHTML = '';
   addAvisItemRow();
@@ -1245,6 +1248,61 @@ async function lookupEnlevementDossier(){
 function scheduleEnlevementDossierLookup(){
   clearTimeout(enlevementDossierLookupTimer);
   enlevementDossierLookupTimer = setTimeout(lookupEnlevementDossier, 450);
+}
+
+let avisDossierLookupTimer = null;
+let avisDossierLookupSeq = 0;
+
+async function lookupAvisDossier(){
+  const dossierInput = document.getElementById('avis-dossier');
+  const clientInput = document.getElementById('avis-client');
+  const projetInput = document.getElementById('avis-projet');
+  const coordinateurInput = document.getElementById('avis-coordinateur');
+  const status = document.getElementById('avis-dossier-status');
+  const dossier = String(dossierInput.value || '').trim();
+  const seq = ++avisDossierLookupSeq;
+
+  if(!dossier){
+    if(status) status.textContent = 'Saisis la Réf. dossier pour reprendre automatiquement le client, le projet et le coordinateur déjà connus.';
+    return;
+  }
+
+  if(status) status.textContent = 'Recherche des informations du dossier…';
+  try{
+    const res = await fetch('/api/dossiers/lookup?dossier=' + encodeURIComponent(dossier), {cache:'no-store'});
+    const data = await res.json();
+    if(seq !== avisDossierLookupSeq) return;
+    if(!res.ok) throw new Error(data.error || 'Recherche du dossier impossible');
+
+    if(data.found){
+      if(String(data.client || '').trim()) clientInput.value = data.client;
+      if(String(data.projet || '').trim()) projetInput.value = data.projet;
+      if(String(data.charge_projet || '').trim()) coordinateurInput.value = data.charge_projet;
+
+      const filled = [
+        data.client ? 'client' : '',
+        data.projet ? 'projet' : '',
+        data.charge_projet ? 'coordinateur' : ''
+      ].filter(Boolean);
+
+      if(status){
+        status.textContent = filled.length
+          ? 'Dossier reconnu : ' + filled.join(', ') + ' rempli(s) automatiquement.'
+          : 'Dossier reconnu, mais aucune information complémentaire n’est encore renseignée.';
+      }
+    }else if(status){
+      status.textContent = 'Dossier non trouvé dans les données existantes. Tu peux renseigner les champs manuellement.';
+    }
+  }catch(e){
+    if(seq !== avisDossierLookupSeq) return;
+    if(status) status.textContent = 'Impossible de rechercher ce dossier pour le moment. Les champs restent modifiables manuellement.';
+    console.error('Recherche dossier RECEPTION impossible', e);
+  }
+}
+
+function scheduleAvisDossierLookup(){
+  clearTimeout(avisDossierLookupTimer);
+  avisDossierLookupTimer = setTimeout(lookupAvisDossier, 450);
 }
 
 function renderEnlevementArticleMatches(analysis){
@@ -1949,7 +2007,10 @@ document.getElementById('doneSearch').addEventListener('input', e=>{state.doneSe
 document.getElementById('avis-dossier').addEventListener('input', ()=>{
   state.avisDossierArticles = [];
   state.avisSelectedArticleIds = new Set();
+  scheduleAvisDossierLookup();
 });
+document.getElementById('avis-dossier').addEventListener('change', lookupAvisDossier);
+document.getElementById('avis-dossier').addEventListener('blur', lookupAvisDossier);
 setupDrop('dropCaisse','dropInnerCaisse',els.fileInputCaisse,state.filesCaisse);
 setupDrop('dropDevis','dropInnerDevis',els.fileInputDevis,state.filesDevis);
 setupDrop('dropAllerVoir','dropInnerAllerVoir',els.fileInputAllerVoir,state.filesAllerVoir);
