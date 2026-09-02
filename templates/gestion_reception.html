@@ -84,7 +84,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
     <button class="btn primary" id="todayBtn" type="button">Aujourd'hui</button>
     <button class="btn success" id="articlesBtn" type="button" onclick="window.location.href='/articles'">BASE ARTICLES</button>
     <input class="search" id="searchInput" type="search" placeholder="Client, bon, référence item..." />
-    <button class="btn" id="refreshBtn" type="button">Rafraîchir</button>
+    <button class="btn" id="refreshBtn" type="button">Planning caisserie</button>
   </div>
 </div>
 
@@ -1057,7 +1057,7 @@ async function loadTickets(){
 document.getElementById('prevMonth').addEventListener('click',()=>{currentDate=new Date(currentDate.getFullYear(),currentDate.getMonth()-1,1);renderCalendar();});
 document.getElementById('nextMonth').addEventListener('click',()=>{currentDate=new Date(currentDate.getFullYear(),currentDate.getMonth()+1,1);renderCalendar();});
 document.getElementById('todayBtn').addEventListener('click',()=>{currentDate=new Date();renderCalendar();});
-document.getElementById('refreshBtn').addEventListener('click',loadTickets);
+document.getElementById('refreshBtn').addEventListener('click',()=>{window.location.href='/reception';});
 document.getElementById('searchInput').addEventListener('input',e=>{searchTerm=e.target.value.trim();renderCalendar();});
 document.getElementById('ticketCancelBtn').addEventListener('click',async()=>{
   if(!openedTicket) return;

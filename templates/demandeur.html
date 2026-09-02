@@ -143,7 +143,7 @@
           </div>
           <div class="actions" style="justify-content:flex-end">
             <button class="btn secondary" id="openManager" type="button">Ouvrir le portail gestionnaire</button>
-  <button class="btn secondary" id="planningCaisserie" type="button">Planning caisserie</button>
+  <button class="btn secondary" id="planningCaisserie" type="button">Gestion réception</button>
           </div>
         </div>
 
@@ -2000,7 +2000,7 @@ document.getElementById('avisArticleClearAll').addEventListener('click', ()=>{ s
 document.getElementById('addSelectedAvisArticles').addEventListener('click', addSelectedArticlesToAvis);
 document.getElementById('openManager').addEventListener('click', ()=>window.open('/login','_blank'));
 document.getElementById('planningCaisserie').addEventListener('click', () => {
-  window.open('/reception', '_blank');
+  window.open('/gestion-reception', '_blank');
 });
 document.getElementById('refreshDone').addEventListener('click', renderDoneTickets);
 document.getElementById('doneSearch').addEventListener('input', e=>{state.doneSearch=e.target.value;renderDoneTickets();});
