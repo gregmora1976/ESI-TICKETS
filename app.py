@@ -5653,7 +5653,7 @@ def _next_blr_reference():
 
 
 def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
-    """Bon de reception A4 inspire de la trame ESI Avis d'arrivee fournie."""
+    """Bon de réception A4 : une ligne par article physique / N° ESI, avec pagination automatique."""
     import io
     import textwrap as _tw
 
@@ -5675,35 +5675,6 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
     def rgb(c, stroke=False):
         return f"{c[0]:.3f} {c[1]:.3f} {c[2]:.3f} {'RG' if stroke else 'rg'}"
 
-    ops = []
-    def rect(x, y, w, h, fill=None, stroke=None, lw=0.6):
-        if fill is not None:
-            ops.append(rgb(fill))
-        if stroke is not None:
-            ops.append(rgb(stroke, True))
-        ops.append(f"{lw:.2f} w")
-        mode = 'B' if fill is not None and stroke is not None else ('f' if fill is not None else 'S')
-        ops.append(f"{x:.1f} {y:.1f} {w:.1f} {h:.1f} re {mode}")
-
-    def line(x1, y1, x2, y2, color=LINE, lw=0.6):
-        ops.append(rgb(color, True)); ops.append(f"{lw:.2f} w")
-        ops.append(f"{x1:.1f} {y1:.1f} m {x2:.1f} {y2:.1f} l S")
-
-    def txt(x, y, value, size=8, bold=False, color=TEXT):
-        value = esc(value)
-        ops.append(rgb(color))
-        ops.append('BT')
-        ops.append(f"/{'F2' if bold else 'F1'} {size:.1f} Tf")
-        ops.append(f"{x:.1f} {y:.1f} Td")
-        ops.append(f"({value}) Tj")
-        ops.append('ET')
-
-    def fit_txt(x, y, value, width, size=8, bold=False, max_lines=2, leading=10, color=TEXT):
-        approx = max(8, int(width / max(size * 0.62, 1)))
-        wrapped = _tw.wrap(clean(value, ''), width=approx) or ['']
-        for n, part in enumerate(wrapped[:max_lines]):
-            txt(x, y - n * leading, part, size=size, bold=bold, color=color)
-
     avis = ticket.get('avisArrivee') or ticket.get('avis_arrivee') or {}
     enl = ticket.get('enlevement') or {}
     if source_type == 'avis':
@@ -5723,6 +5694,53 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
         left_block = [clean(enl.get('adresse_depart')), '-', '-']
         right_block = [clean(enl.get('adresse_destination')), '-', '-', clean(enl.get('numero_bon') or ticket.get('ref'))]
 
+    # Une ligne du bon = un article physique = un N° ESI.
+    # Les références ayant une quantité > 1 sont donc éclatées en plusieurs lignes.
+    source_rows = bon.get('items') or []
+    unit_rows = []
+    for source_row in source_rows:
+        row = dict(source_row or {})
+        esi_ids = [str(v).strip() for v in (row.get('esi_ids') or []) if str(v).strip()]
+        colis_par_esi = row.get('colis_par_esi') if isinstance(row.get('colis_par_esi'), dict) else {}
+
+        if esi_ids:
+            for esi_id in esi_ids:
+                unit_rows.append({
+                    'esi_id': esi_id,
+                    'reference': row.get('reference'),
+                    'designation': row.get('designation') or row.get('description'),
+                    'colis': _as_text(colis_par_esi.get(esi_id)).strip(),
+                    'dimensions': row.get('dimensions'),
+                    'quantite': '1',
+                    'lieu_stockage': row.get('lieu_stockage') or bon.get('lieu_stockage'),
+                })
+            continue
+
+        # Compatibilité avec d'anciens bons qui n'auraient pas encore de N° ESI.
+        try:
+            qty = max(1, int(float(str(row.get('quantite') or 1).replace(',', '.'))))
+        except Exception:
+            qty = 1
+        legacy_colis = row.get('colis') or []
+        if not isinstance(legacy_colis, list):
+            legacy_colis = [legacy_colis] if legacy_colis else []
+        for unit_index in range(qty):
+            unit_rows.append({
+                'esi_id': '',
+                'reference': row.get('reference'),
+                'designation': row.get('designation') or row.get('description'),
+                'colis': legacy_colis[unit_index] if unit_index < len(legacy_colis) else '',
+                'dimensions': row.get('dimensions'),
+                'quantite': '1',
+                'lieu_stockage': row.get('lieu_stockage') or bon.get('lieu_stockage'),
+            })
+
+    # Huit articles maximum par page pour conserver la présentation actuelle.
+    max_rows = 8
+    pages_rows = [unit_rows[i:i + max_rows] for i in range(0, len(unit_rows), max_rows)] or [[]]
+    page_count = len(pages_rows)
+    total_received = len(unit_rows)
+
     # Header avec le vrai logo ESI depuis static/logo.png.
     logo_path = APP_DIR / 'static' / 'logo.png'
     logo_image_bytes = None
@@ -5741,152 +5759,193 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
             print(f'[PDF] Logo ESI non charge: {e}')
 
     bon_reference = clean(bon.get('reference'))
-    txt(168, 786, f'BON DE RECEPTION - N° {bon_reference}', 18, True, TEXT)
-    txt(168, 767, 'Controle et enregistrement de la marchandise', 10, False, (0.35,0.40,0.45))
-    line(30, 744, 565, 744, CYAN, 1.6)
+    page_streams = []
 
-    txt(30, 726, 'INFORMATIONS DOSSIER', 10, True, CYAN)
-    rect(30, 695, 535, 24, fill=NAVY)
-    txt(40, 704, 'DOSSIER', 9, True, WHITE)
+    for page_index, page_rows in enumerate(pages_rows, start=1):
+        ops = []
 
-    # Informations dossier : référence, client, projet, chargé de projet et date de réception.
-    cols = [
-        (30,100,'Ref. dossier',dossier),
-        (130,110,'Nom du client',client),
-        (240,110,'Projet ou expo',projet),
-        (350,110,'Chargé de projet',coordinateur),
-        (460,105,'Date de reception',bon.get('date_reception')),
-    ]
-    for x,w,label,value in cols:
-        rect(x, 652, w, 43, fill=PALE, stroke=LINE)
-        txt(x+5, 680, label, 6.5, True, (0.25,0.32,0.38))
-        fit_txt(x+5, 663, value, w-10, size=8, bold=True, max_lines=2, leading=9)
+        def rect(x, y, w, h, fill=None, stroke=None, lw=0.6):
+            if fill is not None:
+                ops.append(rgb(fill))
+            if stroke is not None:
+                ops.append(rgb(stroke, True))
+            ops.append(f"{lw:.2f} w")
+            mode = 'B' if fill is not None and stroke is not None else ('f' if fill is not None else 'S')
+            ops.append(f"{x:.1f} {y:.1f} {w:.1f} {h:.1f} re {mode}")
 
-    # Side blocks, visually matching the source template.
-    rect(30, 623, 260, 22, fill=NAVY); txt(38, 631, 'EXPEDITEUR / DEPART', 8, True, WHITE)
-    rect(305, 623, 260, 22, fill=NAVY); txt(313, 631, 'TRANSPORTEUR / DESTINATION', 8, True, WHITE)
-    left_labels = ['Nom / adresse','Adresse','Contact']
-    right_labels = ['Nom / adresse','Adresse','Contact','Reference']
-    y = 603
-    for i, label in enumerate(left_labels):
-        rect(30, y-20*i, 62, 20, fill=PALE, stroke=LINE); txt(35, y+7-20*i, label, 6.2, True)
-        rect(92, y-20*i, 198, 20, stroke=LINE); fit_txt(97, y+7-20*i, left_block[i], 188, 6.5, False, 1, 8)
-    for i, label in enumerate(right_labels):
-        rect(305, y-20*i, 62, 20, fill=PALE, stroke=LINE); txt(310, y+7-20*i, label, 6.2, True)
-        rect(367, y-20*i, 198, 20, stroke=LINE); fit_txt(372, y+7-20*i, right_block[i], 188, 6.5, False, 1, 8)
+        def line(x1, y1, x2, y2, color=LINE, lw=0.6):
+            ops.append(rgb(color, True)); ops.append(f"{lw:.2f} w")
+            ops.append(f"{x1:.1f} {y1:.1f} m {x2:.1f} {y2:.1f} l S")
 
-    # Goods table.
-    table_top = 517
-    widths = [58, 68, 145, 82, 64, 48, 70]
-    headers = ['N° ESI','Ref. item','Description de la marchandise','N° COLIS','Dimensions','Qte recue','Stockage']
-    x = 30
-    for w, h in zip(widths, headers):
-        rect(x, table_top-38, w, 38, fill=NAVY, stroke=WHITE, lw=0.4)
-        fit_txt(x+4, table_top-17, h, w-8, 6.4, True, 2, 8, WHITE)
-        x += w
+        def txt(x, y, value, size=8, bold=False, color=TEXT):
+            value = esc(value)
+            ops.append(rgb(color))
+            ops.append('BT')
+            ops.append(f"/{'F2' if bold else 'F1'} {size:.1f} Tf")
+            ops.append(f"{x:.1f} {y:.1f} Td")
+            ops.append(f"({value}) Tj")
+            ops.append('ET')
 
-    rows = bon.get('items') or []
-    row_h = 29
-    max_rows = 8
-    for ridx in range(max_rows):
-        y0 = table_top - 38 - (ridx+1)*row_h
+        def fit_txt(x, y, value, width, size=8, bold=False, max_lines=2, leading=10, color=TEXT):
+            approx = max(8, int(width / max(size * 0.62, 1)))
+            wrapped = _tw.wrap(clean(value, ''), width=approx) or ['']
+            for n, part in enumerate(wrapped[:max_lines]):
+                txt(x, y - n * leading, part, size=size, bold=bold, color=color)
+
+        # En-tête répété sur chaque page.
+        txt(168, 786, f'BON DE RECEPTION - N° {bon_reference}', 18, True, TEXT)
+        subtitle = 'Controle et enregistrement de la marchandise'
+        if page_count > 1:
+            subtitle += f' - Page {page_index}/{page_count}'
+        txt(168, 767, subtitle, 10, False, (0.35,0.40,0.45))
+        line(30, 744, 565, 744, CYAN, 1.6)
+
+        txt(30, 726, 'INFORMATIONS DOSSIER', 10, True, CYAN)
+        rect(30, 695, 535, 24, fill=NAVY)
+        txt(40, 704, 'DOSSIER', 9, True, WHITE)
+
+        cols = [
+            (30,100,'Ref. dossier',dossier),
+            (130,110,'Nom du client',client),
+            (240,110,'Projet ou expo',projet),
+            (350,110,'Chargé de projet',coordinateur),
+            (460,105,'Date de reception',bon.get('date_reception')),
+        ]
+        for x,w,label,value in cols:
+            rect(x, 652, w, 43, fill=PALE, stroke=LINE)
+            txt(x+5, 680, label, 6.5, True, (0.25,0.32,0.38))
+            fit_txt(x+5, 663, value, w-10, size=8, bold=True, max_lines=2, leading=9)
+
+        rect(30, 623, 260, 22, fill=NAVY); txt(38, 631, 'EXPEDITEUR / DEPART', 8, True, WHITE)
+        rect(305, 623, 260, 22, fill=NAVY); txt(313, 631, 'TRANSPORTEUR / DESTINATION', 8, True, WHITE)
+        left_labels = ['Nom / adresse','Adresse','Contact']
+        right_labels = ['Nom / adresse','Adresse','Contact','Reference']
+        y = 603
+        for i, label in enumerate(left_labels):
+            rect(30, y-20*i, 62, 20, fill=PALE, stroke=LINE); txt(35, y+7-20*i, label, 6.2, True)
+            rect(92, y-20*i, 198, 20, stroke=LINE); fit_txt(97, y+7-20*i, left_block[i], 188, 6.5, False, 1, 8)
+        for i, label in enumerate(right_labels):
+            rect(305, y-20*i, 62, 20, fill=PALE, stroke=LINE); txt(310, y+7-20*i, label, 6.2, True)
+            rect(367, y-20*i, 198, 20, stroke=LINE); fit_txt(372, y+7-20*i, right_block[i], 188, 6.5, False, 1, 8)
+
+        # Tableau marchandises : une ligne = un N° ESI.
+        table_top = 517
+        widths = [58, 68, 145, 82, 64, 48, 70]
+        headers = ['N° ESI','Ref. item','Description de la marchandise','N° COLIS','Dimensions','Qte recue','Stockage']
         x = 30
-        fill = (0.99, 0.985, 0.955)
-        row = rows[ridx] if ridx < len(rows) else {}
-        received = row.get('quantite') or ''
-        esi_ids = [str(v).strip() for v in (row.get('esi_ids') or []) if str(v).strip()]
-        colis_par_esi = row.get('colis_par_esi') if isinstance(row.get('colis_par_esi'), dict) else {}
-        numeros_colis = [
-            _as_text(colis_par_esi.get(esi_id)).strip()
-            for esi_id in esi_ids
-            if _as_text(colis_par_esi.get(esi_id)).strip()
-        ]
-        vals = [
-            ', '.join(esi_ids),
-            row.get('reference'),
-            row.get('designation') or row.get('description'),
-            ', '.join(numeros_colis),
-            row.get('dimensions'),
-            received,
-            bon.get('lieu_stockage') if row else ''
-        ]
-        for w, value in zip(widths, vals):
-            rect(x, y0, w, row_h, fill=fill, stroke=LINE)
-            fit_txt(x+4, y0+18, value, w-8, 6.3, False, 2, 8)
+        for w, header in zip(widths, headers):
+            rect(x, table_top-38, w, 38, fill=NAVY, stroke=WHITE, lw=0.4)
+            fit_txt(x+4, table_top-17, header, w-8, 6.4, True, 2, 8, WHITE)
             x += w
 
-    table_bottom = table_top - 38 - max_rows*row_h
-    rect(30, table_bottom-22, 535, 22, fill=PALE, stroke=LINE)
-    txt(350, table_bottom-14, 'TOTAL ARTICLES RECEPTIONNES', 7, True)
-    total_received = sum(int(float(str(i.get('quantite') or 0).replace(',','.'))) for i in rows if str(i.get('quantite') or '').strip())
-    txt(515, table_bottom-14, str(total_received), 8, True)
+        row_h = 29
+        for ridx in range(max_rows):
+            y0 = table_top - 38 - (ridx+1)*row_h
+            x = 30
+            fill = (0.99, 0.985, 0.955)
+            row = page_rows[ridx] if ridx < len(page_rows) else {}
+            vals = [
+                row.get('esi_id'),
+                row.get('reference'),
+                row.get('designation'),
+                row.get('colis'),
+                row.get('dimensions'),
+                row.get('quantite') if row else '',
+                row.get('lieu_stockage') if row else '',
+            ]
+            for w, value in zip(widths, vals):
+                rect(x, y0, w, row_h, fill=fill, stroke=LINE)
+                fit_txt(x+4, y0+18, value, w-8, 6.3, False, 2, 8)
+                x += w
 
-    # Comment and reception details.
-    comment_y = table_bottom - 74
-    rect(30, comment_y, 535, 46, stroke=LINE)
-    rect(30, comment_y+30, 535, 16, fill=PALE, stroke=LINE)
-    txt(38, comment_y+35, 'Commentaire :', 7.2, True)
-    fit_txt(38, comment_y+19, bon.get('commentaire') or '-', 515, 7, False, 2, 9)
+        table_bottom = table_top - 38 - max_rows*row_h
+        rect(30, table_bottom-22, 535, 22, fill=PALE, stroke=LINE)
+        txt(338, table_bottom-14, 'TOTAL ARTICLES RECEPTIONNES', 7, True)
+        txt(515, table_bottom-14, str(total_received), 8, True)
 
-    sig_y = 72
-    txt(305, sig_y+78, "Reception / controle a l'arrivee :", 9, True)
-    txt(305, sig_y+57, 'Date :', 8); txt(350, sig_y+57, clean(bon.get('date_reception')), 8)
-    txt(305, sig_y+36, 'Nom :', 8); txt(350, sig_y+36, clean(bon.get('receptionne_par')), 8)
-    txt(305, sig_y+15, 'Signature : __________________________', 8)
+        # Commentaire et signature sont répétés afin que chaque page reste identifiable.
+        comment_y = table_bottom - 74
+        rect(30, comment_y, 535, 46, stroke=LINE)
+        rect(30, comment_y+30, 535, 16, fill=PALE, stroke=LINE)
+        txt(38, comment_y+35, 'Commentaire :', 7.2, True)
+        fit_txt(38, comment_y+19, bon.get('commentaire') or '-', 515, 7, False, 2, 9)
 
-    txt(30, 35, f"Reference : {clean(bon.get('reference'))}  |  Colis : {clean(', '.join(bon.get('colis') or []))}", 7, False, (0.35,0.40,0.45))
-    txt(430, 35, 'Groupe ESI - Bon de reception', 7, False, (0.35,0.40,0.45))
+        sig_y = 72
+        txt(305, sig_y+78, "Reception / controle a l'arrivee :", 9, True)
+        txt(305, sig_y+57, 'Date :', 8); txt(350, sig_y+57, clean(bon.get('date_reception')), 8)
+        txt(305, sig_y+36, 'Nom :', 8); txt(350, sig_y+36, clean(bon.get('receptionne_par')), 8)
+        txt(305, sig_y+15, 'Signature : __________________________', 8)
 
-    if logo_image_bytes and logo_w and logo_h:
-        box_x, box_y, box_w, box_h = 30, 752, 118, 62
-        scale = min(box_w / float(logo_w), box_h / float(logo_h))
-        draw_w = logo_w * scale
-        draw_h = logo_h * scale
-        draw_x = box_x + (box_w - draw_w) / 2
-        draw_y = box_y + (box_h - draw_h) / 2
-        ops.extend([
-            'q',
-            f'{draw_w:.2f} 0 0 {draw_h:.2f} {draw_x:.2f} {draw_y:.2f} cm',
-            '/Im1 Do',
-            'Q',
-        ])
-    else:
-        rect(30, 752, 118, 62, fill=NAVY)
-        txt(50, 779, 'ESI', 24, True, WHITE)
+        nombre_colis_footer = len(bon.get('colis') or [])
+        txt(30, 35, f"Reference : {clean(bon.get('reference'))}  |  Nombre de colis : {nombre_colis_footer}", 7, False, (0.35,0.40,0.45))
+        txt(430, 35, f'Groupe ESI - Bon de reception - {page_index}/{page_count}', 7, False, (0.35,0.40,0.45))
 
-    stream = '\n'.join(ops).encode('latin-1', errors='replace')
-    if logo_image_bytes and logo_w and logo_h:
+        if logo_image_bytes and logo_w and logo_h:
+            box_x, box_y, box_w, box_h = 30, 752, 118, 62
+            scale = min(box_w / float(logo_w), box_h / float(logo_h))
+            draw_w = logo_w * scale
+            draw_h = logo_h * scale
+            draw_x = box_x + (box_w - draw_w) / 2
+            draw_y = box_y + (box_h - draw_h) / 2
+            ops.extend([
+                'q',
+                f'{draw_w:.2f} 0 0 {draw_h:.2f} {draw_x:.2f} {draw_y:.2f} cm',
+                '/Im1 Do',
+                'Q',
+            ])
+        else:
+            rect(30, 752, 118, 62, fill=NAVY)
+            txt(50, 779, 'ESI', 24, True, WHITE)
+
+        page_streams.append('\n'.join(ops).encode('latin-1', errors='replace'))
+
+    # Assemblage PDF multi-pages sans nouvelle dépendance.
+    # 1=Catalog, 2=Pages, 3/4=Fonts, puis chaque paire Page/Contents.
+    page_object_ids = [5 + 2 * i for i in range(page_count)]
+    content_object_ids = [6 + 2 * i for i in range(page_count)]
+    image_object_id = 5 + 2 * page_count if logo_image_bytes and logo_w and logo_h else None
+
+    kids = ' '.join(f'{obj_id} 0 R' for obj_id in page_object_ids)
+    objects = [
+        b'<< /Type /Catalog /Pages 2 0 R >>',
+        f'<< /Type /Pages /Kids [{kids}] /Count {page_count} >>'.encode('latin-1'),
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
+    ]
+
+    for page_obj_id, content_obj_id, stream in zip(page_object_ids, content_object_ids, page_streams):
+        resources = '/Resources << /Font << /F1 3 0 R /F2 4 0 R >>'
+        if image_object_id is not None:
+            resources += f' /XObject << /Im1 {image_object_id} 0 R >>'
+        resources += ' >>'
+        page_obj = (
+            f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PAGE_W} {PAGE_H}] '
+            f'{resources} /Contents {content_obj_id} 0 R >>'
+        ).encode('latin-1')
+        content_obj = f'<< /Length {len(stream)} >>\nstream\n'.encode('latin-1') + stream + b'\nendstream'
+        objects.extend([page_obj, content_obj])
+
+    if image_object_id is not None:
         image_obj = (
             f'<< /Type /XObject /Subtype /Image /Width {logo_w} /Height {logo_h} '
             f'/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {len(logo_image_bytes)} >>\nstream\n'
         ).encode('latin-1') + logo_image_bytes + b'\nendstream'
-        objects = [
-            b'<< /Type /Catalog /Pages 2 0 R >>',
-            b'<< /Type /Pages /Kids [5 0 R] /Count 1 >>',
-            b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-            b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
-            f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PAGE_W} {PAGE_H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> /XObject << /Im1 7 0 R >> >> /Contents 6 0 R >>'.encode('latin-1'),
-            f'<< /Length {len(stream)} >>\nstream\n'.encode('latin-1') + stream + b'\nendstream',
-            image_obj,
-        ]
-    else:
-        objects = [
-            b'<< /Type /Catalog /Pages 2 0 R >>',
-            b'<< /Type /Pages /Kids [5 0 R] /Count 1 >>',
-            b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-            b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
-            f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PAGE_W} {PAGE_H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 6 0 R >>'.encode('latin-1'),
-            f'<< /Length {len(stream)} >>\nstream\n'.encode('latin-1') + stream + b'\nendstream',
-        ]
+        objects.append(image_obj)
+
     out = io.BytesIO(); out.write(b'%PDF-1.4\n')
-    offsets=[]
-    for i,obj in enumerate(objects,1):
-        offsets.append(out.tell()); out.write(f'{i} 0 obj\n'.encode('latin-1')); out.write(obj); out.write(b'\nendobj\n')
-    xref=out.tell(); out.write(f'xref\n0 {len(objects)+1}\n'.encode('latin-1')); out.write(b'0000000000 65535 f \n')
-    for off in offsets: out.write(f'{off:010d} 00000 n \n'.encode('latin-1'))
+    offsets = []
+    for i, obj in enumerate(objects, 1):
+        offsets.append(out.tell())
+        out.write(f'{i} 0 obj\n'.encode('latin-1'))
+        out.write(obj)
+        out.write(b'\nendobj\n')
+    xref = out.tell()
+    out.write(f'xref\n0 {len(objects)+1}\n'.encode('latin-1'))
+    out.write(b'0000000000 65535 f \n')
+    for off in offsets:
+        out.write(f'{off:010d} 00000 n \n'.encode('latin-1'))
     out.write(f'trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF'.encode('latin-1'))
     return out.getvalue()
-
 
 def _build_blr_pdf_bytes(ticket, bon):
     return _build_reception_form_pdf_bytes(ticket, bon, source_type='enlevement')
