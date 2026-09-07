@@ -6598,18 +6598,25 @@ def api_update_status(ticket_id):
     if not ticket:
         return jsonify({'error': 'Ticket introuvable'}), 404
 
-    ancien_statut = ticket.get('status')
+    ancien_statut = _as_text(ticket.get('status')).strip()
 
     data = request.get_json(silent=True) or {}
-    nouveau_statut = data.get('status', ancien_statut)
+    nouveau_statut = _as_text(data.get('status', ancien_statut)).strip()
+    now_iso = datetime.now().isoformat()
+
+    # Enregistre la date réelle du passage au statut Terminé dans raw_json.
+    # Aucune nouvelle colonne Supabase n'est nécessaire : save_ticket() conserve
+    # automatiquement ce champ dans le ticket complet.
+    if nouveau_statut == 'Terminé' and ancien_statut != 'Terminé':
+        ticket['termineAt'] = now_iso
 
     ticket['status'] = nouveau_statut
-    ticket['updatedAt'] = datetime.now().isoformat()
+    ticket['updatedAt'] = now_iso
     save_ticket(ticket)
 
     # L'envoi automatique SMTP est volontairement désactivé.
     # La notification se prépare maintenant via Outlook Web avec le bouton "Envoyer Notif".
-    return jsonify({'ok': True})
+    return jsonify({'ok': True, 'termineAt': ticket.get('termineAt', '')})
 
 
 @app.route('/api/tickets/<ticket_id>/annuler-enlevement', methods=['PATCH'])
@@ -7357,8 +7364,8 @@ def api_export_excel():
     ws.title = "Tickets"
 
     ws.append([
-        "ID","Module","Statut","Date création","Dossier / Client",
-        "Réf / N° caisse","Chargé de projet","Projet / Expo",
+        "ID","Module","Statut","Date création","Date terminée","Délai traitement (jours)",
+        "Dossier / Client","Réf / N° caisse","Chargé de projet","Projet / Expo",
         "Type de caisse","Dimensions","Prix devis",
         "Prix d'achat","Prix cession","Commentaire","Choix du caissier",
         "Date RDV","Heure RDV","Lieu RDV"
@@ -7380,13 +7387,41 @@ def api_export_excel():
         except Exception:
             return None
 
+    def parse_date_only(value):
+        """Convertit une date ISO en date Excel, sans conserver l'heure."""
+        txt = _as_text(value).strip()
+        if not txt or txt == '-':
+            return None
+        try:
+            # Supporte les ISO classiques et les dates finissant par Z.
+            return datetime.fromisoformat(txt.replace('Z', '+00:00')).date()
+        except Exception:
+            try:
+                return datetime.strptime(txt[:10], '%Y-%m-%d').date()
+            except Exception:
+                return None
+
     for t in tickets:
         fiche = t.get('fiche', {}) or {}
+        date_creation = parse_date_only(t.get('createdAt'))
+
+        # La date de fin n'est exploitable que pour un ticket actuellement Terminé.
+        # Les anciens tickets, créés avant l'enregistrement de termineAt, restent vides
+        # plutôt que d'utiliser updatedAt qui peut correspondre à une modification ultérieure.
+        est_termine = _as_text(t.get('status')).strip() == 'Terminé'
+        date_terminee = parse_date_only(t.get('termineAt')) if est_termine else None
+
+        delai_jours = None
+        if date_creation is not None and date_terminee is not None:
+            delai_jours = max(0, (date_terminee - date_creation).days)
+
         ws.append([
             t.get('id',''),
             t.get('module',''),
             t.get('status',''),
-            t.get('createdAt',''),
+            date_creation,
+            date_terminee,
+            delai_jours,
             t.get('dossier',''),
             t.get('ref',''),
             t.get('chargeProjet',''),
@@ -7403,8 +7438,12 @@ def api_export_excel():
             t.get('lieuRdv','')
         ])
 
+    # Colonnes D et E : dates sans heure.
     for row in range(2, ws.max_row + 1):
-        for col in [11, 12, 13]:
+        ws.cell(row=row, column=4).number_format = 'dd/mm/yyyy'
+        ws.cell(row=row, column=5).number_format = 'dd/mm/yyyy'
+        ws.cell(row=row, column=6).number_format = '0'
+        for col in [13, 14, 15]:
             ws.cell(row=row, column=col).number_format = '#,##0.00 €'
 
     output = io.BytesIO()
