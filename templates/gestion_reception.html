@@ -555,11 +555,19 @@ function buildColisRepartition(prefix, checkClass, qtyClass, packageInputId){
     const index=Number(cb.dataset.index), qty=Math.max(0,Math.floor(Number(document.querySelector('.'+qtyClass+'[data-index="'+index+'"]')?.value||0)));
     const source=prefix==='arrival'?((avisData(openedTicket).items||[])[index]||{}):(items(openedTicket)[index]||{});
     const ids=Array.isArray(source.esi_ids)?source.esi_ids:[]; const already=receivedQty(source);
-    for(let u=0;u<qty;u++) units.push({index,unit_offset:u,esi:ids[already+u]||`${source.reference||source.ref||'Article'} #${already+u+1}`});
+    const reference=source.reference||source.ref||'-';
+    const designation=source.designation||source.description||'-';
+    for(let u=0;u<qty;u++) units.push({
+      index,
+      unit_offset:u,
+      reference,
+      designation,
+      esi:ids[already+u]||`${reference} #${already+u+1}`
+    });
   });
   if(!units.length){box.innerHTML='<div class="muted">Sélectionne les articles à réceptionner.</div>';return;}
   const opts=Array.from({length:count},(_,i)=>`<option value="${i}">Colis ${i+1}</option>`).join('');
-  box.innerHTML=`<div class="colis-repartition-title">Répartition des articles dans les colis</div>`+units.map((u,i)=>`<div class="colis-unit"><div><strong>${esc(u.esi)}</strong></div><select class="${prefix}-colis-select" data-index="${u.index}" data-unit-offset="${u.unit_offset}">${opts}</select></div>`).join('');
+  box.innerHTML=`<div class="colis-repartition-title">Répartition des articles dans les colis</div>`+units.map((u,i)=>`<div class="colis-unit"><div><strong>${esc(u.reference)} — ${esc(u.designation)} — ${esc(u.esi)}</strong></div><select class="${prefix}-colis-select" data-index="${u.index}" data-unit-offset="${u.unit_offset}">${opts}</select></div>`).join('');
   box.querySelectorAll('select').forEach((sel,i)=>sel.value=String(i%count));
 }
 function readColisRepartition(prefix){return [...document.querySelectorAll('.'+prefix+'-colis-select')].map(x=>({index:Number(x.dataset.index),unit_offset:Number(x.dataset.unitOffset),colis_index:Number(x.value)}));}
