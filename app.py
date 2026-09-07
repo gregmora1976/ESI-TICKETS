@@ -6604,11 +6604,11 @@ def api_update_status(ticket_id):
     nouveau_statut = _as_text(data.get('status', ancien_statut)).strip()
     now_iso = datetime.now().isoformat()
 
-    # Enregistre la date réelle du passage au statut Terminé dans raw_json.
-    # Aucune nouvelle colonne Supabase n'est nécessaire : save_ticket() conserve
-    # automatiquement ce champ dans le ticket complet.
+    # A partir de cette version, on conserve la vraie date du PREMIER passage
+    # au statut Terminé. Le champ reste dans raw_json : aucune colonne Supabase
+    # supplémentaire n'est nécessaire.
     if nouveau_statut == 'Terminé' and ancien_statut != 'Terminé':
-        ticket['termineAt'] = now_iso
+        ticket.setdefault('termineAt', now_iso)
 
     ticket['status'] = nouveau_statut
     ticket['updatedAt'] = now_iso
@@ -7387,29 +7387,127 @@ def api_export_excel():
         except Exception:
             return None
 
-    def parse_date_only(value):
-        """Convertit une date ISO en date Excel, sans conserver l'heure."""
+    def parse_datetime(value):
+        """Accepte les formats ISO historiques utilisés dans ESI TICKETS."""
         txt = _as_text(value).strip()
         if not txt or txt == '-':
             return None
         try:
-            # Supporte les ISO classiques et les dates finissant par Z.
-            return datetime.fromisoformat(txt.replace('Z', '+00:00')).date()
+            return datetime.fromisoformat(txt.replace('Z', '+00:00'))
         except Exception:
+            pass
+        for fmt in ('%Y-%m-%d', '%d/%m/%Y %H:%M', '%d/%m/%Y'):
             try:
-                return datetime.strptime(txt[:10], '%Y-%m-%d').date()
+                return datetime.strptime(txt, fmt)
             except Exception:
-                return None
+                pass
+        return None
+
+    def parse_date_only(value):
+        dt = parse_datetime(value)
+        return dt.date() if dt is not None else None
+
+    def storage_path_datetime(path):
+        """Récupère le timestamp YYYYMMDDHHMMSS présent dans les chemins d'upload historiques."""
+        txt = _as_text(path).strip()
+        if not txt:
+            return None
+        matches = re.findall(r'(?:^|/)(\d{14})_', txt)
+        if not matches:
+            return None
+        try:
+            return datetime.strptime(matches[-1], '%Y%m%d%H%M%S')
+        except Exception:
+            return None
+
+    def historical_termine_datetime(ticket):
+        """Retrouve la meilleure date de fin historique disponible sans utiliser updatedAt seul."""
+        if _as_text(ticket.get('status')).strip() != 'Terminé':
+            return None
+
+        # 1) Date explicite : exacte si elle existe.
+        for key in (
+            'termineAt', 'termine_at', 'terminatedAt', 'completedAt',
+            'finishedAt', 'closedAt', 'termine_le', 'dateTerminee'
+        ):
+            dt = parse_datetime(ticket.get(key))
+            if dt is not None:
+                return dt
+
+        created_dt = parse_datetime(ticket.get('createdAt'))
+        updated_dt = parse_datetime(ticket.get('updatedAt'))
+
+        # 2) Document gestionnaire : son chemin Supabase contient son vrai timestamp d'upload.
+        manager_dates = []
+        manager_items = list(ticket.get('managerSheets') or [])
+        legacy = ticket.get('managerSheet')
+        if isinstance(legacy, dict):
+            manager_items.append(legacy)
+        for item in manager_items:
+            if not isinstance(item, dict):
+                continue
+            dt = storage_path_datetime(item.get('path'))
+            if dt is None:
+                continue
+            if created_dt is not None and dt.date() < created_dt.date():
+                continue
+            if updated_dt is not None and dt.date() > updated_dt.date():
+                continue
+            manager_dates.append(dt)
+        if manager_dates:
+            return max(manager_dates)
+
+        # 3) Avis d'arrivée / enlèvement : dernière réception active comme indice de clôture.
+        # Ce cas n'est jamais utilisé pour une Fiche de caisse, car sa réception est postérieure
+        # à la fabrication et ne correspond pas au délai de traitement du ticket.
+        module = _as_text(ticket.get('module')).replace('’', "'").strip()
+        reception_dates = []
+        if module == "Avis d'arrivée":
+            receptions = ticket.get('receptionsAvisArrivee') or []
+            for reception in receptions:
+                if not isinstance(reception, dict) or reception.get('annulee'):
+                    continue
+                dt = parse_datetime(
+                    reception.get('receptionnee_le')
+                    or reception.get('created_at')
+                    or reception.get('date_reception')
+                )
+                if dt is not None:
+                    reception_dates.append(dt)
+        elif module in ("Demande d'enlèvement", "Demande d'enlevement"):
+            receptions = (ticket.get('enlevement') or {}).get('bons_livraison') or []
+            for reception in receptions:
+                if not isinstance(reception, dict) or reception.get('annulee'):
+                    continue
+                dt = parse_datetime(
+                    reception.get('receptionnee_le')
+                    or reception.get('created_at')
+                    or reception.get('date_reception')
+                )
+                if dt is not None:
+                    reception_dates.append(dt)
+        if reception_dates:
+            candidate = max(reception_dates)
+            if created_dt is None or candidate.date() >= created_dt.date():
+                if updated_dt is None or candidate.date() <= updated_dt.date():
+                    return candidate
+
+        # 4) Aller voir : updatedAt n'est retenu que lorsqu'il correspond au jour du RDV
+        # ou au lendemain. Sinon la date reste vide car elle serait trop incertaine.
+        if module == 'Demande Aller voir' and updated_dt is not None:
+            rdv_date = parse_date_only(ticket.get('dateRdv'))
+            if rdv_date is not None:
+                delta = (updated_dt.date() - rdv_date).days
+                if 0 <= delta <= 1:
+                    return updated_dt
+
+        return None
 
     for t in tickets:
         fiche = t.get('fiche', {}) or {}
         date_creation = parse_date_only(t.get('createdAt'))
-
-        # La date de fin n'est exploitable que pour un ticket actuellement Terminé.
-        # Les anciens tickets, créés avant l'enregistrement de termineAt, restent vides
-        # plutôt que d'utiliser updatedAt qui peut correspondre à une modification ultérieure.
-        est_termine = _as_text(t.get('status')).strip() == 'Terminé'
-        date_terminee = parse_date_only(t.get('termineAt')) if est_termine else None
+        termine_dt = historical_termine_datetime(t)
+        date_terminee = termine_dt.date() if termine_dt is not None else None
 
         delai_jours = None
         if date_creation is not None and date_terminee is not None:
@@ -7438,7 +7536,7 @@ def api_export_excel():
             t.get('lieuRdv','')
         ])
 
-    # Colonnes D et E : dates sans heure.
+    # Dates au format français SANS heure et délai en nombre entier de jours.
     for row in range(2, ws.max_row + 1):
         ws.cell(row=row, column=4).number_format = 'dd/mm/yyyy'
         ws.cell(row=row, column=5).number_format = 'dd/mm/yyyy'
@@ -7456,7 +7554,6 @@ def api_export_excel():
         download_name="tickets_esi.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
 
 
 @app.route('/api/tickets/<ticket_id>/export-pdf')
