@@ -373,10 +373,10 @@
           <div class="card">
             <div class="row">
               <div>
-                <div class="section-title" style="margin-bottom:6px">Tickets terminés</div>
-                <div class="small">Les tickets passés en terminé par le gestionnaire apparaissent ici avec leur feuille de caisse téléchargeable.</div>
+                <div class="section-title" style="margin-bottom:6px">Suivi des tickets</div>
+                <div class="small">Recherche un ticket par N° de ticket, N° dossier, caisse, client, projet ou chargé de projet pour connaître son statut.</div>
               </div>
-              <input class="search" id="doneSearch" placeholder="Rechercher..." style="max-width:220px;margin-right:8px"><button class="btn secondary" id="refreshDone" type="button">Rafraîchir</button>
+              <input class="search" id="doneSearch" placeholder="Rechercher un ticket..." style="max-width:220px;margin-right:8px"><button class="btn secondary" id="refreshDone" type="button">Rafraîchir</button>
             </div>
             <div style="height:16px"></div>
             <div class="ticket-list" id="doneList"></div>
@@ -418,7 +418,7 @@
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="doneModalTitle">
       <div class="modal-head">
         <div>
-          <div class="section-title" style="margin-bottom:6px">Détail du ticket terminé</div>
+          <div class="section-title" style="margin-bottom:6px">Détail du ticket</div>
           <div class="modal-title" id="doneModalTitle">Ticket</div>
         </div>
         <button class="modal-close" id="closeDoneModal" type="button">Fermer ×</button>
@@ -1477,6 +1477,37 @@ function fileButtons(ticket, files, route){
     return `<button class="file-btn" type="button" onclick="window.open('${url}','_blank')">${escapeHtml(f.name)}</button>`;
   }).join('')}</div>`;
 }
+
+function normalizeTicketStatus(status){
+  return String(status || '').trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function ticketStatusMeta(status){
+  const raw = String(status || '').trim() || 'Demande créée';
+  const normalized = normalizeTicketStatus(raw);
+  if(normalized.includes('annul')) return {label: raw, css: 'status-cancel'};
+  if(normalized.includes('termine')) return {label: raw, css: 'status-done'};
+  if(normalized.includes('cours')) return {label: raw, css: 'status-progress'};
+  return {label: raw, css: 'status-created'};
+}
+function ticketStatusBadge(status){
+  const meta = ticketStatusMeta(status);
+  return `<span class="badge ${meta.css}">${escapeHtml(meta.label)}</span>`;
+}
+function ticketSearchText(ticket){
+  const avis = ticket.avisArrivee || ticket.avis_arrivee || {};
+  const enl = ticket.enlevement || {};
+  const dossier = String(ticket.dossier || avis.dossier_ref || enl.numero_dossier || '').trim();
+  const ref = String(ticket.ref || enl.numero_bon || '').trim();
+  return [
+    ticket.id, ticket.module, ticket.status, dossier, ref,
+    dossier && ref && ref !== '-' ? `${dossier}-${ref}` : '',
+    ticket.preteur, ticket.expo, ticket.objet, ticket.chargeProjet,
+    ticket.lieuRdv, ticket.contactRdv,
+    avis.client, avis.projet, avis.coordinateur,
+    enl.client, enl.exhibition, enl.coordinateur, enl.numero_bon
+  ].filter(Boolean).join(' ').toLowerCase();
+}
 function openDoneTicketDetails(ticket){
   const modal = document.getElementById('doneModal');
   const title = document.getElementById('doneModalTitle');
@@ -1496,7 +1527,16 @@ function openDoneTicketDetails(ticket){
     title.textContent = `${displayValue(ticket.dossier)} - ${displayValue(ticket.expo || ticket.objet || module)}`;
   }
 
-  let html = '';
+  let html = `
+    <div class="modal-section">
+      <h3>Suivi</h3>
+      <div class="info-grid">
+        ${infoBox('N° ticket', ticket.id)}
+        ${infoBox('Type de demande', ticket.module)}
+        <div class="info-box"><div class="info-label">Statut</div><div class="info-value">${ticketStatusBadge(ticket.status)}</div></div>
+      </div>
+    </div>
+  `;
 
   if(module === 'Fiche de caisse'){
     html += `
@@ -1653,35 +1693,33 @@ async function renderDoneTickets(){
       }
     }
 
-    const expectedModuleByKey = {
-      'caisse': 'Fiche de caisse',
-      'devis': 'Demande de devis',
-      'aller-voir': 'Demande Aller voir',
-      'enlevement': 'Demande d’enlèvement',
-      'avis-arrivee': "Avis d'arrivée"
-    };
-    const expectedModule = expectedModuleByKey[state.currentModule] || 'Fiche de caisse';
-
-    let done = (allTickets || []).filter(t => (t.status || '') === 'Terminé' && t.module === expectedModule);
-
-    const search = (state.doneSearch || '').toLowerCase();
+    // Le suivi concerne tous les types de tickets, quel que soit l'onglet de création actif.
+    let tickets = [...(allTickets || [])];
+    const search = (state.doneSearch || '').trim().toLowerCase();
     if(search){
-      done = done.filter(t => (`${t.id || ''} ${t.dossier || ''} ${t.ref || ''} ${t.expo || ''} ${t.objet || ''} ${t.chargeProjet || ''}`).toLowerCase().includes(search));
+      tickets = tickets.filter(t => ticketSearchText(t).includes(search));
     }
 
-    done.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    tickets.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+
+    if(!search && !state.directTicketId){
+      // Sans recherche, on garde une vue rapide des demandes les plus récentes.
+      tickets = tickets.slice(0, 40);
+    }
 
     const ticketToOpen = (state.directTicketId && !state.directTicketOpened)
-      ? done.find(t => String(t.id || '') === String(state.directTicketId))
+      ? tickets.find(t => String(t.id || '') === String(state.directTicketId))
       : null;
 
     els.doneList.innerHTML = '';
-    if(!done.length){
-      els.doneList.innerHTML = `<div class="empty">Aucun ticket terminé pour ce type de demande pour le moment.</div>`;
+    if(!tickets.length){
+      els.doneList.innerHTML = search
+        ? `<div class="empty">Aucun ticket trouvé pour « ${escapeHtml(state.doneSearch || '')} ».</div>`
+        : '<div class="empty">Aucun ticket disponible pour le moment.</div>';
       return;
     }
 
-    for(const ticket of done){
+    for(const ticket of tickets){
       const item = document.createElement('div');
       item.className = 'ticket-item clickable';
 
@@ -1697,6 +1735,8 @@ async function renderDoneTickets(){
 
       const dimensions = `${fiche.longueur || '-'} x ${fiche.largeur || '-'} x ${fiche.hauteur || '-'}`;
       const nomCaissier = fiche.choixCaissier || '-';
+      const avis = ticket.avisArrivee || ticket.avis_arrivee || {};
+      const enl = ticket.enlevement || {};
 
       const doneTitle =
         ticket.module === 'Fiche de caisse'
@@ -1706,20 +1746,30 @@ async function renderDoneTickets(){
             : ticket.module === 'Demande Aller voir'
               ? `${ticket.dossier || '-'} - ${ticket.lieuRdv || '-'}`
               : (ticket.module === "Avis d'arrivée" || ticket.module === 'Avis d’arrivée')
-                ? `${ticket.dossier || '-'} - ${ticket.expo || ticket.objet || '-'}`
-                : `${ticket.dossier || '-'} - ${ticket.expo || ticket.objet || ticket.ref || '-'}`;
+                ? `${avis.dossier_ref || ticket.dossier || '-'} - ${avis.projet || ticket.expo || ticket.objet || '-'}`
+                : (ticket.module === "Demande d'enlèvement" || ticket.module === 'Demande d’enlèvement' || ticket.module === "Demande d'enlevement")
+                  ? `${enl.numero_dossier || ticket.dossier || '-'} - ${enl.client || ticket.dossier || '-'}`
+                  : `${ticket.dossier || '-'} - ${ticket.expo || ticket.objet || ticket.ref || '-'}`;
 
       item.innerHTML = `
-        <div class="done-title">${escapeHtml(doneTitle)}</div>
-        <div class="done-line">Chargé : <strong>${escapeHtml(ticket.chargeProjet || '-')}</strong></div>
+        <div class="row" style="align-items:flex-start">
+          <div style="min-width:0;flex:1">
+            <div class="done-title">${escapeHtml(doneTitle)}</div>
+            <div class="done-line">Ticket : <strong>${escapeHtml(ticket.id || '-')}</strong></div>
+            <div class="done-line">Type : <strong>${escapeHtml(ticket.module || '-')}</strong></div>
+          </div>
+          <div>${ticketStatusBadge(ticket.status)}</div>
+        </div>
+        <div class="done-line">Chargé : <strong>${escapeHtml(ticket.chargeProjet || avis.coordinateur || enl.coordinateur || '-')}</strong></div>
         ${ticket.module === 'Demande Aller voir'
           ? `<div class="done-line">Lieu : <strong>${escapeHtml(ticket.lieuRdv || '-')}</strong></div><div class="done-line">RDV : <strong>${escapeHtml((ticket.dateRdv || '-') + ' ' + (ticket.heureRdv || '-'))}</strong></div>`
           : ticket.module === 'Demande de devis'
-            ? `<div class="done-line">Titre : <strong>${escapeHtml(ticket.expo || ticket.objet || '-')}</strong></div>
-               <div class="done-line">Chargé : <strong>${escapeHtml(ticket.chargeProjet || '-')}</strong></div>`
+            ? `<div class="done-line">Projet : <strong>${escapeHtml(ticket.expo || ticket.objet || '-')}</strong></div>`
             : (ticket.module === "Avis d'arrivée" || ticket.module === 'Avis d’arrivée')
-              ? `<div class="done-line">Client : <strong>${escapeHtml((ticket.avisArrivee || {}).client || '-')}</strong></div><div class="done-line">Réception prévue : <strong>${escapeHtml((ticket.avisArrivee || {}).date_reception_prevue || ticket.dateEmballage || '-')}</strong></div>`
-              : `<div class="done-line">Dims : <strong>${escapeHtml(dimensions)}</strong></div><div class="done-line">Prix cession : <strong>${escapeHtml(prixCession)}</strong></div><div class="done-line">Caissier : <strong>${escapeHtml(nomCaissier)}</strong></div>`}
+              ? `<div class="done-line">Client : <strong>${escapeHtml(avis.client || '-')}</strong></div><div class="done-line">Réception prévue : <strong>${escapeHtml(avis.date_reception_prevue || ticket.dateEmballage || '-')}</strong></div>`
+              : (ticket.module === "Demande d'enlèvement" || ticket.module === 'Demande d’enlèvement' || ticket.module === "Demande d'enlevement")
+                ? `<div class="done-line">Client : <strong>${escapeHtml(enl.client || '-')}</strong></div><div class="done-line">Projet : <strong>${escapeHtml(enl.exhibition || ticket.expo || ticket.objet || '-')}</strong></div>`
+                : `<div class="done-line">Dims : <strong>${escapeHtml(dimensions)}</strong></div><div class="done-line">Prix cession : <strong>${escapeHtml(prixCession)}</strong></div>${normalizeTicketStatus(ticket.status).includes('termine') ? `<div class="done-line">Caissier : <strong>${escapeHtml(nomCaissier)}</strong></div>` : ''}`}
       `;
 
       item.addEventListener('click', () => openDoneTicketDetails(ticket));
@@ -1745,9 +1795,9 @@ async function renderDoneTickets(){
       if(!actionRow.children.length){
         const span = document.createElement('div');
         span.className = 'small';
-        span.textContent = expectedModule === 'Fiche de caisse'
-          ? 'Aucune feuille de caisse déposée.'
-          : 'Aucun fichier gestionnaire déposé.';
+        span.textContent = normalizeTicketStatus(ticket.status).includes('termine')
+          ? 'Aucun fichier gestionnaire déposé.'
+          : 'Clique sur le ticket pour voir le détail de la demande.';
         actionRow.appendChild(span);
       }
 
@@ -1760,8 +1810,8 @@ async function renderDoneTickets(){
       setTimeout(() => openDoneTicketDetails(ticketToOpen), 150);
     }
   }catch(e){
-    console.error('Erreur lecture tickets terminés', e);
-    els.doneList.innerHTML = '<div class="empty">Impossible de lire les tickets terminés. Clique sur Rafraîchir ou relance l’application.</div>';
+    console.error('Erreur lecture suivi tickets', e);
+    els.doneList.innerHTML = '<div class="empty">Impossible de lire le suivi des tickets. Clique sur Rafraîchir ou relance l’application.</div>';
   }
 }
 
