@@ -3,6 +3,7 @@ from pathlib import Path
 import json, webbrowser, os, urllib.request, urllib.parse
 import csv, re, time
 import hashlib, threading
+import uuid
 from io import StringIO, BytesIO
 import smtplib
 from email.mime.text import MIMEText
@@ -3953,6 +3954,78 @@ def _referentiel_config(kind):
     return cfg
 
 
+_REFERENTIEL_LOCK = threading.Lock()
+
+
+def _next_referentiel_id(cfg):
+    """
+    Genere un identifiant pour les tables de referentiels lorsque la colonne
+    Supabase `id` est NOT NULL mais ne possede pas de valeur par defaut.
+
+    La fonction conserve le type deja utilise par la table :
+      - id numerique -> prochain entier disponible ;
+      - id texte numerique -> prochain nombre sous forme de texte ;
+      - id UUID / texte -> nouvel UUID.
+    """
+    rows = supabase_rest_request(
+        "GET", cfg["table"], "select=id&order=id.desc&limit=5000"
+    ) or []
+    ids = [row.get("id") for row in rows if row.get("id") not in (None, "")]
+
+    # Les tables ESI historiques utilisent des ids numeriques. Si la table est
+    # vide, on demarre donc a 1. Un secours UUID est gere lors de l'insertion.
+    if not ids:
+        return 1
+
+    sample = ids[0]
+    if isinstance(sample, (int, float)) and not isinstance(sample, bool):
+        numeric = []
+        for value in ids:
+            try:
+                numeric.append(int(value))
+            except (TypeError, ValueError):
+                pass
+        return (max(numeric) + 1) if numeric else 1
+
+    text_ids = [str(value).strip() for value in ids if str(value).strip()]
+    if text_ids and all(re.fullmatch(r"\d+", value) for value in text_ids):
+        return str(max(int(value) for value in text_ids) + 1)
+
+    return str(uuid.uuid4())
+
+
+def _insert_referentiel_with_id(cfg, payload):
+    """Insere un referentiel en compensant l'absence de DEFAULT sur `id`."""
+    try:
+        return supabase_rest_request(
+            "POST", cfg["table"], "", [payload], prefer="return=representation"
+        ) or []
+    except Exception as first_error:
+        message = str(first_error).lower()
+        if not ("null value in column \"id\"" in message or "violates not-null constraint" in message):
+            raise
+
+    # La base ne genere pas l'id : on le fournit explicitement.
+    generated = _next_referentiel_id(cfg)
+    with_id = dict(payload)
+    with_id["id"] = generated
+
+    try:
+        return supabase_rest_request(
+            "POST", cfg["table"], "", [with_id], prefer="return=representation"
+        ) or []
+    except Exception as second_error:
+        # Cas particulier d'une table vide dont l'id serait de type UUID :
+        # l'essai numerique ci-dessus permet de detecter le type sans toucher au schema.
+        text = str(second_error).lower()
+        if generated == 1 and "uuid" in text:
+            with_id["id"] = str(uuid.uuid4())
+            return supabase_rest_request(
+                "POST", cfg["table"], "", [with_id], prefer="return=representation"
+            ) or []
+        raise
+
+
 def _clean_referentiel_payload(kind, data, partial=False):
     cfg = _referentiel_config(kind)
     data = data or {}
@@ -4009,7 +4082,11 @@ def api_create_referentiel(kind):
         return jsonify({'ok': False, 'error': str(e)}), 400
 
     try:
-        rows = supabase_rest_request("POST", cfg["table"], "", [payload], prefer="return=representation") or []
+        # Certaines tables Supabase du referentiel ont une colonne `id` NOT NULL
+        # sans generation automatique. Le helper tente d'abord l'insertion normale,
+        # puis fournit un id compatible uniquement si Supabase le demande.
+        with _REFERENTIEL_LOCK:
+            rows = _insert_referentiel_with_id(cfg, payload)
         return jsonify({'ok': True, 'item': rows[0] if rows else payload})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
