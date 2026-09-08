@@ -7364,7 +7364,7 @@ def api_export_excel():
     ws.title = "Tickets"
 
     ws.append([
-        "ID","Module","Statut","Date création","Date terminée","Délai traitement (jours)",
+        "ID","Module","Statut","Date création","Date rendu","Délai RDV → rendu (jours)",
         "Dossier / Client","Réf / N° caisse","Chargé de projet","Projet / Expo",
         "Type de caisse","Dimensions","Prix devis",
         "Prix d'achat","Prix cession","Commentaire","Choix du caissier",
@@ -7509,9 +7509,15 @@ def api_export_excel():
         termine_dt = historical_termine_datetime(t)
         date_terminee = termine_dt.date() if termine_dt is not None else None
 
+        # Le délai métier correspond au temps entre la date de RDV et le rendu du ticket.
+        # Si l'une des deux dates manque, ou si la date de rendu est antérieure au RDV,
+        # le délai reste vide afin de ne pas afficher une valeur trompeuse.
+        date_rdv = parse_date_only(t.get('dateRdv'))
         delai_jours = None
-        if date_creation is not None and date_terminee is not None:
-            delai_jours = max(0, (date_terminee - date_creation).days)
+        if date_rdv is not None and date_terminee is not None:
+            delta = (date_terminee - date_rdv).days
+            if delta >= 0:
+                delai_jours = delta
 
         ws.append([
             t.get('id',''),
