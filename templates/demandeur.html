@@ -1694,7 +1694,8 @@ async function renderDoneTickets(){
     }
 
     // Le suivi concerne tous les types de tickets, quel que soit l'onglet de création actif.
-    let tickets = [...(allTickets || [])];
+    // Les tickets annulés sont volontairement exclus du suivi demandeur.
+    let tickets = [...(allTickets || [])].filter(t => !normalizeTicketStatus(t.status).includes('annul'));
     const search = (state.doneSearch || '').trim().toLowerCase();
     if(search){
       tickets = tickets.filter(t => ticketSearchText(t).includes(search));
