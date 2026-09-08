@@ -374,7 +374,7 @@
             <div class="row">
               <div>
                 <div class="section-title" style="margin-bottom:6px">Suivi des tickets</div>
-                <div class="small">Recherche un ticket par N° de ticket, N° dossier, caisse, client, projet ou chargé de projet pour connaître son statut.</div>
+                <div class="small">Suivi des fiches de caisse, demandes de devis et demandes Aller voir. Recherche par N° de ticket, N° dossier, caisse, client, projet ou chargé de projet.</div>
               </div>
               <input class="search" id="doneSearch" placeholder="Rechercher un ticket..." style="max-width:220px;margin-right:8px"><button class="btn secondary" id="refreshDone" type="button">Rafraîchir</button>
             </div>
@@ -1693,9 +1693,20 @@ async function renderDoneTickets(){
       }
     }
 
-    // Le suivi concerne tous les types de tickets, quel que soit l'onglet de création actif.
-    // Les tickets annulés sont volontairement exclus du suivi demandeur.
-    let tickets = [...(allTickets || [])].filter(t => !normalizeTicketStatus(t.status).includes('annul'));
+    // Le suivi demandeur affiche uniquement :
+    // - Fiche de caisse
+    // - Demande de devis
+    // - Demande Aller voir
+    // Les tickets annulés restent exclus.
+    const allowedModules = new Set([
+      'Fiche de caisse',
+      'Demande de devis',
+      'Demande Aller voir'
+    ]);
+    let tickets = [...(allTickets || [])].filter(t =>
+      allowedModules.has(String(t.module || '').trim()) &&
+      !normalizeTicketStatus(t.status).includes('annul')
+    );
     const search = (state.doneSearch || '').trim().toLowerCase();
     if(search){
       tickets = tickets.filter(t => ticketSearchText(t).includes(search));
