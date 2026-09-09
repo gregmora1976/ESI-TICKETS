@@ -4503,6 +4503,348 @@ def cleaner_page():
     return response
 
 
+# -----------------------------------------------------------------------------
+# CLEANER V3 - apprentissage par profils et règles, sans IA
+# -----------------------------------------------------------------------------
+def _cleaner_q(value):
+    return urllib.parse.quote(_as_text(value).strip(), safe='-_:')
+
+
+def _cleaner_db_state():
+    """Vérifie si la migration Supabase CLEANER V3 a été appliquée."""
+    try:
+        supabase_rest_request('GET', 'cleaner_profiles', 'select=id&limit=1')
+        supabase_rest_request('GET', 'cleaner_fields', 'select=id&limit=1')
+        supabase_rest_request('GET', 'cleaner_rules', 'select=id&limit=1')
+        return True, ''
+    except Exception as e:
+        return False, str(e)
+
+
+def _cleaner_get_profiles(mode):
+    safe_mode = _cleaner_q(mode)
+    return supabase_rest_request(
+        'GET', 'cleaner_profiles',
+        f'select=*&mode=eq.{safe_mode}&active=eq.true&order=updated_at.desc&limit=500'
+    ) or []
+
+
+def _cleaner_get_fields(mode):
+    safe_mode = _cleaner_q(mode)
+    return supabase_rest_request(
+        'GET', 'cleaner_fields',
+        f'select=*&mode=eq.{safe_mode}&active=eq.true&order=position.asc,created_at.asc&limit=500'
+    ) or []
+
+
+def _cleaner_get_rules(mode):
+    safe_mode = _cleaner_q(mode)
+    return supabase_rest_request(
+        'GET', 'cleaner_rules',
+        f'select=*&mode=eq.{safe_mode}&active=eq.true&order=validated_count.desc,updated_at.desc&limit=2000'
+    ) or []
+
+
+def _cleaner_public_field(row):
+    aliases = row.get('aliases')
+    if not isinstance(aliases, list):
+        aliases = []
+    return {
+        'id': _as_text(row.get('field_id')).strip(),
+        'label': _as_text(row.get('label')).strip(),
+        'sourceKey': _as_text(row.get('source_key')).strip(),
+        'aliases': [_as_text(x).strip() for x in aliases if _as_text(x).strip()],
+        'custom': bool(row.get('is_custom', True)),
+        'position': row.get('position') or 100,
+        'persisted': True,
+    }
+
+
+def _cleaner_apply_persistent_fields(rows, fields):
+    """Copie les données techniques connues vers les champs personnalisés persistants."""
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        for field in fields or []:
+            field_id = _as_text(field.get('field_id')).strip()
+            source_key = _as_text(field.get('source_key')).strip()
+            if not field_id or not source_key:
+                continue
+            if _as_text(row.get(field_id)).strip():
+                continue
+            value = row.get(source_key)
+            if value is not None and _as_text(value).strip():
+                row[field_id] = value
+    return rows
+
+
+def _cleaner_profile_key(mode, name):
+    raw = re.sub(r'[^a-z0-9]+', '-', _as_text(name).casefold()).strip('-') or 'profil'
+    return f'{_as_text(mode).strip().lower()}:{raw}'
+
+
+def _cleaner_rule_upsert(mode, profile_key, target_field, source_alias='', source_key='', rule_type='header_alias'):
+    target_field = _as_text(target_field).strip()
+    source_alias = _as_text(source_alias).strip()
+    source_key = _as_text(source_key).strip()
+    profile_key = _as_text(profile_key).strip()
+    if not target_field or (not source_alias and not source_key):
+        return
+
+    safe_mode = _cleaner_q(mode)
+    safe_profile = _cleaner_q(profile_key)
+    safe_target = _cleaner_q(target_field)
+    safe_alias = _cleaner_q(source_alias)
+    safe_source_key = _cleaner_q(source_key)
+    query = (
+        f'select=*&mode=eq.{safe_mode}&profile_key=eq.{safe_profile}'
+        f'&target_field=eq.{safe_target}&source_alias=eq.{safe_alias}'
+        f'&source_key=eq.{safe_source_key}&limit=1'
+    )
+    existing = supabase_rest_request('GET', 'cleaner_rules', query) or []
+    now = datetime.now().isoformat()
+    if existing:
+        current = existing[0]
+        patch = {
+            'validated_count': int(current.get('validated_count') or 0) + 1,
+            'active': True,
+            'updated_at': now,
+        }
+        supabase_rest_request(
+            'PATCH', 'cleaner_rules',
+            'id=eq.' + _cleaner_q(current.get('id')), patch, prefer='return=minimal'
+        )
+        return
+
+    payload = {
+        'mode': _as_text(mode).strip().lower(),
+        'profile_key': profile_key,
+        'target_field': target_field,
+        'source_alias': source_alias,
+        'source_key': source_key,
+        'rule_type': rule_type,
+        'validated_count': 1,
+        'active': True,
+        'created_at': now,
+        'updated_at': now,
+    }
+    supabase_rest_request('POST', 'cleaner_rules', '', [payload], prefer='return=minimal')
+
+
+@app.route('/api/cleaner/config')
+def api_cleaner_config():
+    if request.args.get('pwd') != '1234':
+        return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
+    mode = _as_text(request.args.get('mode') or 'douanes').strip().lower()
+    ready, error = _cleaner_db_state()
+    if not ready:
+        return jsonify({
+            'ok': True,
+            'schema_ready': False,
+            'schema_error': error,
+            'fields': [], 'profiles': [], 'rules': [],
+        })
+    try:
+        fields = [_cleaner_public_field(x) for x in _cleaner_get_fields(mode)]
+        profiles = _cleaner_get_profiles(mode)
+        rules = _cleaner_get_rules(mode)
+        return jsonify({
+            'ok': True,
+            'schema_ready': True,
+            'fields': fields,
+            'profiles': [{
+                'profile_key': x.get('profile_key'),
+                'name': x.get('name'),
+                'validated_count': x.get('validated_count') or 0,
+                'updated_at': x.get('updated_at'),
+            } for x in profiles],
+            'rules': [{
+                'profile_key': x.get('profile_key'),
+                'target_field': x.get('target_field'),
+                'source_alias': x.get('source_alias'),
+                'source_key': x.get('source_key'),
+                'validated_count': x.get('validated_count') or 0,
+            } for x in rules],
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/cleaner/fields/<mode>/<field_id>', methods=['DELETE'])
+def api_cleaner_delete_field(mode, field_id):
+    if request.args.get('pwd') != '1234':
+        return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
+    ready, error = _cleaner_db_state()
+    if not ready:
+        return jsonify({'ok': False, 'error': 'Migration Supabase CLEANER V3 non installée', 'detail': error}), 503
+    try:
+        query = f'mode=eq.{_cleaner_q(mode)}&field_id=eq.{_cleaner_q(field_id)}'
+        supabase_rest_request(
+            'PATCH', 'cleaner_fields', query,
+            {'active': False, 'updated_at': datetime.now().isoformat()}, prefer='return=minimal'
+        )
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/cleaner/learn', methods=['POST'])
+def api_cleaner_learn():
+    """Valide une extraction et mémorise uniquement des règles de structure, jamais des valeurs métier."""
+    if request.args.get('pwd') != '1234':
+        return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
+
+    ready, error = _cleaner_db_state()
+    if not ready:
+        return jsonify({
+            'ok': False,
+            'error': 'La migration Supabase CLEANER V3 doit être appliquée avant le premier apprentissage.',
+            'detail': error,
+        }), 503
+
+    data = request.get_json(silent=True) or {}
+    mode = _as_text(data.get('mode') or 'douanes').strip().lower()
+    fields = data.get('fields') or []
+    documents = data.get('documents') or []
+    rows = data.get('rows') or []
+    if not rows:
+        return jsonify({'ok': False, 'error': 'Aucune extraction à valider'}), 400
+
+    now = datetime.now().isoformat()
+    saved_fields = 0
+    saved_profiles = 0
+    learned_rules = 0
+
+    try:
+        # 1) Champs personnalisés de la trame.
+        for position, field in enumerate(fields, 1):
+            if not isinstance(field, dict) or not field.get('custom'):
+                continue
+            field_id = _as_text(field.get('id')).strip()
+            label = _as_text(field.get('label')).strip()
+            if not field_id or not label:
+                continue
+            aliases = field.get('aliases') if isinstance(field.get('aliases'), list) else []
+            aliases = list(dict.fromkeys(_as_text(x).strip() for x in aliases if _as_text(x).strip()))
+            payload = {
+                'mode': mode,
+                'field_id': field_id,
+                'label': label,
+                'source_key': _as_text(field.get('sourceKey') or field.get('source_key')).strip(),
+                'aliases': aliases,
+                'position': position,
+                'is_custom': True,
+                'active': True,
+                'updated_at': now,
+            }
+            supabase_rest_request(
+                'POST', 'cleaner_fields', 'on_conflict=mode,field_id', [payload],
+                prefer='resolution=merge-duplicates,return=minimal'
+            )
+            saved_fields += 1
+
+        # 2) Profils documentaires validés.
+        profile_keys = []
+        for doc in documents:
+            if not isinstance(doc, dict):
+                continue
+            name = _as_text(doc.get('profile')).strip() or 'Profil CLEANER'
+            profile_key = _as_text(doc.get('profile_key')).strip() or _cleaner_profile_key(mode, name)
+            signature = doc.get('signature') if isinstance(doc.get('signature'), list) else []
+            existing = supabase_rest_request(
+                'GET', 'cleaner_profiles', f'select=*&profile_key=eq.{_cleaner_q(profile_key)}&limit=1'
+            ) or []
+            count = int(existing[0].get('validated_count') or 0) + 1 if existing else 1
+            if existing:
+                previous_signature = existing[0].get('signature')
+                if isinstance(previous_signature, list):
+                    signature = list(dict.fromkeys(
+                        _as_text(x).strip() for x in (previous_signature + signature) if _as_text(x).strip()
+                    ))[:160]
+            payload = {
+                'profile_key': profile_key,
+                'mode': mode,
+                'name': name,
+                'signature': signature,
+                'source_filename': _as_text(doc.get('filename')).strip(),
+                'validated_count': count,
+                'active': True,
+                'updated_at': now,
+            }
+            supabase_rest_request(
+                'POST', 'cleaner_profiles', 'on_conflict=profile_key', [payload],
+                prefer='resolution=merge-duplicates,return=minimal'
+            )
+            profile_keys.append(profile_key)
+            saved_profiles += 1
+
+        # 3) Règles observées dans le document : en-tête source -> champ cible.
+        #    source_headers vient du moteur d'extraction et ne contient pas les valeurs des œuvres.
+        default_profile = profile_keys[0] if len(set(profile_keys)) == 1 and profile_keys else ''
+        seen_rules = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            source_headers = row.get('source_headers') if isinstance(row.get('source_headers'), dict) else {}
+            row_profile_key = _as_text(row.get('_profile_key')).strip() or default_profile
+            for target_field, source_alias in source_headers.items():
+                key = (row_profile_key, _as_text(target_field).strip(), _as_text(source_alias).strip(), '')
+                if not key[1] or not key[2] or key in seen_rules:
+                    continue
+                seen_rules.add(key)
+                _cleaner_rule_upsert(mode, *key, rule_type='header_alias')
+                learned_rules += 1
+
+        # 4) Règles déclarées par les champs personnalisés.
+        for field in fields:
+            if not isinstance(field, dict) or not field.get('custom'):
+                continue
+            target = _as_text(field.get('id')).strip()
+            source_key = _as_text(field.get('sourceKey') or field.get('source_key')).strip()
+            aliases = field.get('aliases') if isinstance(field.get('aliases'), list) else []
+            for profile_key in (profile_keys or ['']):
+                if source_key:
+                    key = (profile_key, target, '', source_key)
+                    if key not in seen_rules:
+                        seen_rules.add(key)
+                        _cleaner_rule_upsert(mode, profile_key, target, source_key=source_key, rule_type='source_key')
+                        learned_rules += 1
+                for alias in aliases:
+                    alias = _as_text(alias).strip()
+                    key = (profile_key, target, alias, '')
+                    if alias and key not in seen_rules:
+                        seen_rules.add(key)
+                        _cleaner_rule_upsert(mode, profile_key, target, source_alias=alias, rule_type='header_alias')
+                        learned_rules += 1
+
+        # 5) Historique léger : uniquement noms de fichiers, profils et nombre de lignes.
+        #    Les valeurs Owner/Title/Value/etc. ne sont pas archivées par l'apprentissage.
+        try:
+            supabase_rest_request(
+                'POST', 'cleaner_validations', '', [{
+                    'mode': mode,
+                    'profile_keys': list(dict.fromkeys(profile_keys)),
+                    'source_files': [
+                        _as_text(d.get('filename')).strip() for d in documents
+                        if isinstance(d, dict) and _as_text(d.get('filename')).strip()
+                    ],
+                    'row_count': len(rows),
+                    'created_at': now,
+                }], prefer='return=minimal'
+            )
+        except Exception as history_error:
+            print(f'[CLEANER HISTORY] {history_error}')
+
+        return jsonify({
+            'ok': True,
+            'saved_fields': saved_fields,
+            'saved_profiles': saved_profiles,
+            'learned_rules': learned_rules,
+            'message': 'Format validé. CLEANER a mémorisé la structure et les correspondances de champs.',
+        })
+    except Exception as e:
+        print(f'[CLEANER LEARN] {e}')
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 @app.route('/api/cleaner/analyse', methods=['POST'])
@@ -4518,6 +4860,19 @@ def api_cleaner_analyse():
 
     results = []
     errors = []
+    persistent_fields = []
+    learned_profiles = []
+    learned_rules = []
+    ready, schema_error = _cleaner_db_state()
+    if ready:
+        try:
+            persistent_fields = _cleaner_get_fields(mode)
+            learned_profiles = _cleaner_get_profiles(mode)
+            learned_rules = _cleaner_get_rules(mode)
+        except Exception as e:
+            print(f'[CLEANER CONFIG] {e}')
+    else:
+        print(f'[CLEANER CONFIG] tables apprentissage indisponibles: {schema_error}')
 
     if mode == 'douanes':
         try:
@@ -4532,24 +4887,35 @@ def api_cleaner_analyse():
                 errors.append({'filename': filename, 'error': 'Fichier vide'})
                 continue
             try:
-                result = extract_customs_document(filename, content)
+                result = extract_customs_document(
+                    filename, content,
+                    learned_profiles=learned_profiles,
+                    learned_rules=learned_rules,
+                )
+                profile_key = _as_text(result.get('profile_key')).strip()
+                for row in result.get('rows') or []:
+                    if isinstance(row, dict):
+                        row['_profile_key'] = profile_key
+                _cleaner_apply_persistent_fields(result.get('rows') or [], persistent_fields)
                 results.append(result)
             except Exception as e:
                 print(f'[CLEANER DOUANES] {filename}: {e}')
                 errors.append({'filename': filename, 'error': str(e)})
 
-        rows = []
-        for result in results:
-            rows.extend(result.get('rows') or [])
-
+        rows = [row for result in results for row in (result.get('rows') or [])]
         return jsonify({
             'ok': bool(rows) and not errors,
             'mode': mode,
             'row_count': len(rows),
             'rows': rows,
+            'schema_ready': ready,
             'documents': [{
                 'filename': x.get('filename'),
                 'profile': x.get('profile'),
+                'profile_key': x.get('profile_key'),
+                'profile_confidence': x.get('profile_confidence', 0),
+                'profile_source': x.get('profile_source'),
+                'signature': x.get('signature') or [],
                 'owner': x.get('owner'),
                 'row_count': x.get('row_count', 0),
             } for x in results],
@@ -4557,7 +4923,6 @@ def api_cleaner_analyse():
         }), (200 if rows else 422)
 
     if mode == 'articles':
-        # Première passerelle utile : lit le format Excel normalisé ESI TICKETS sans créer d'article.
         for fs in files:
             filename = _as_text(fs.filename).strip() or 'document'
             if not filename.lower().endswith('.xlsx'):
@@ -4587,27 +4952,26 @@ def api_cleaner_analyse():
                     if not any([reference, designation, longueur, largeur, hauteur, poids]):
                         continue
                     rows.append({
-                        'reference': reference,
-                        'designation': designation,
-                        'quantite': qty,
-                        'longueur_cm': longueur,
-                        'largeur_cm': largeur,
-                        'hauteur_cm': hauteur,
-                        'poids_kg': poids,
-                        'source_file': filename,
-                        'source_page': row_num,
+                        'reference': reference, 'designation': designation, 'quantite': qty,
+                        'longueur_cm': longueur, 'largeur_cm': largeur, 'hauteur_cm': hauteur,
+                        'poids_kg': poids, 'source_file': filename, 'source_page': row_num,
+                        'source_headers': {}, '_profile_key': 'articles:excel-esi-tickets',
                     })
                 wb.close()
-                results.append({'filename': filename, 'profile': 'Excel ESI TICKETS', 'row_count': len(rows), 'rows': rows})
+                _cleaner_apply_persistent_fields(rows, persistent_fields)
+                results.append({
+                    'filename': filename, 'profile': 'Excel ESI TICKETS',
+                    'profile_key': 'articles:excel-esi-tickets', 'profile_confidence': 1,
+                    'profile_source': 'built-in', 'signature': list(headers.keys()),
+                    'row_count': len(rows), 'rows': rows,
+                })
             except Exception as e:
                 errors.append({'filename': filename, 'error': str(e)})
         all_rows = [row for result in results for row in (result.get('rows') or [])]
         return jsonify({
-            'ok': bool(all_rows) and not errors,
-            'mode': mode,
-            'row_count': len(all_rows),
-            'rows': all_rows,
-            'documents': [{'filename': x.get('filename'), 'profile': x.get('profile'), 'row_count': x.get('row_count', 0)} for x in results],
+            'ok': bool(all_rows) and not errors, 'mode': mode, 'row_count': len(all_rows),
+            'rows': all_rows, 'schema_ready': ready,
+            'documents': [{k: x.get(k) for k in ('filename','profile','profile_key','profile_confidence','profile_source','signature','row_count')} for x in results],
             'errors': errors,
         }), (200 if all_rows else 422)
 
@@ -4625,25 +4989,27 @@ def api_cleaner_analyse():
                 parsed = _extract_enlevement_pdf_preview_low_memory(content)
                 row = {
                     'numero_dossier': parsed.get('numero_dossier') or '',
-                    'client': parsed.get('client') or '',
-                    'date': parsed.get('date_enlevement') or '',
+                    'client': parsed.get('client') or '', 'date': parsed.get('date_enlevement') or '',
                     'adresse_depart': parsed.get('adresse_depart') or '',
                     'adresse_destination': parsed.get('adresse_destination') or '',
                     'references': ', '.join(parsed.get('references') or []),
                     'instructions': parsed.get('instructions') or '',
-                    'source_file': filename,
-                    'source_page': '',
+                    'source_file': filename, 'source_page': '', 'source_headers': {},
+                    '_profile_key': 'enlevement:bon-enlevement',
                 }
-                results.append({'filename': filename, 'profile': "Bon d'enlèvement", 'row_count': 1, 'rows': [row]})
+                _cleaner_apply_persistent_fields([row], persistent_fields)
+                results.append({
+                    'filename': filename, 'profile': "Bon d'enlèvement",
+                    'profile_key': 'enlevement:bon-enlevement', 'profile_confidence': 1,
+                    'profile_source': 'built-in', 'signature': [], 'row_count': 1, 'rows': [row],
+                })
             except Exception as e:
                 errors.append({'filename': filename, 'error': str(e)})
         all_rows = [row for result in results for row in (result.get('rows') or [])]
         return jsonify({
-            'ok': bool(all_rows) and not errors,
-            'mode': mode,
-            'row_count': len(all_rows),
-            'rows': all_rows,
-            'documents': [{'filename': x.get('filename'), 'profile': x.get('profile'), 'row_count': x.get('row_count', 0)} for x in results],
+            'ok': bool(all_rows) and not errors, 'mode': mode, 'row_count': len(all_rows),
+            'rows': all_rows, 'schema_ready': ready,
+            'documents': [{k: x.get(k) for k in ('filename','profile','profile_key','profile_confidence','profile_source','signature','row_count')} for x in results],
             'errors': errors,
         }), (200 if all_rows else 422)
 
@@ -4662,33 +5028,29 @@ def api_cleaner_analyse():
                 rows = []
                 for ref in parsed.get('references') or []:
                     rows.append({
-                        'numero_dossier': ref.get('dossier') or '',
-                        'bl_br': parsed.get('bl_numero') or '',
-                        'expediteur': '',
-                        'date': parsed.get('bl_date') or '',
+                        'numero_dossier': ref.get('dossier') or '', 'bl_br': parsed.get('bl_numero') or '',
+                        'expediteur': '', 'date': parsed.get('bl_date') or '',
                         'reference': ref.get('numero_pdf') or ref.get('numero') or '',
-                        'quantite': '1',
-                        'colis': '',
-                        'source_file': filename,
-                        'source_page': '',
+                        'quantite': '1', 'colis': '', 'source_file': filename, 'source_page': '',
+                        'source_headers': {}, '_profile_key': 'reception:bordereau',
                     })
-                results.append({'filename': filename, 'profile': 'Réception / bordereau', 'row_count': len(rows), 'rows': rows})
+                _cleaner_apply_persistent_fields(rows, persistent_fields)
+                results.append({
+                    'filename': filename, 'profile': 'Réception / bordereau',
+                    'profile_key': 'reception:bordereau', 'profile_confidence': 1,
+                    'profile_source': 'built-in', 'signature': [], 'row_count': len(rows), 'rows': rows,
+                })
             except Exception as e:
                 errors.append({'filename': filename, 'error': str(e)})
         all_rows = [row for result in results for row in (result.get('rows') or [])]
         return jsonify({
-            'ok': bool(all_rows) and not errors,
-            'mode': mode,
-            'row_count': len(all_rows),
-            'rows': all_rows,
-            'documents': [{'filename': x.get('filename'), 'profile': x.get('profile'), 'row_count': x.get('row_count', 0)} for x in results],
+            'ok': bool(all_rows) and not errors, 'mode': mode, 'row_count': len(all_rows),
+            'rows': all_rows, 'schema_ready': ready,
+            'documents': [{k: x.get(k) for k in ('filename','profile','profile_key','profile_confidence','profile_source','signature','row_count')} for x in results],
             'errors': errors,
         }), (200 if all_rows else 422)
 
-    return jsonify({
-        'ok': False,
-        'error': 'Ce type d\'extraction est prêt dans l\'interface mais son moteur n\'est pas encore défini.'
-    }), 501
+    return jsonify({'ok': False, 'error': "Ce type d'extraction est prêt dans l'interface mais son moteur n'est pas encore défini."}), 501
 
 
 @app.route('/api/cleaner/export-excel', methods=['POST'])
@@ -4742,9 +5104,7 @@ def api_cleaner_export_excel():
         output.seek(0)
         stamp = datetime.now().strftime('%Y%m%d_%H%M')
         return send_file(
-            output,
-            as_attachment=True,
-            download_name=f'CLEANER_{mode}_{stamp}.xlsx',
+            output, as_attachment=True, download_name=f'CLEANER_{mode}_{stamp}.xlsx',
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
     except Exception as e:
