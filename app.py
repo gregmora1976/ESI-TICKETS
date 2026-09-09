@@ -4490,6 +4490,19 @@ def gestionnaire():
     response.headers['Pragma'] = 'no-cache'
     return response
 
+
+@app.route('/cleaner')
+def cleaner_page():
+    """Portail CLEANER - moteur documentaire transversal d'ESI TICKETS."""
+    if request.args.get('pwd') != '1234':
+        return redirect(url_for('login'))
+
+    response = app.make_response(render_template('cleaner.html'))
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    return response
+
+
 @app.route('/login', methods=['GET','POST'])
 def login():
     from flask import request, redirect, render_template_string
