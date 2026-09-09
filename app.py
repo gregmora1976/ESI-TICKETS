@@ -4503,6 +4503,255 @@ def cleaner_page():
     return response
 
 
+
+
+@app.route('/api/cleaner/analyse', methods=['POST'])
+def api_cleaner_analyse():
+    """Analyse des documents depuis CLEANER, sans IA ni écriture métier automatique."""
+    if request.args.get('pwd') != '1234':
+        return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
+
+    mode = _as_text(request.form.get('mode')).strip().lower()
+    files = request.files.getlist('files')
+    if not files:
+        return jsonify({'ok': False, 'error': 'Aucun document reçu'}), 400
+
+    results = []
+    errors = []
+
+    if mode == 'douanes':
+        try:
+            from cleaner_engine import extract_customs_document
+        except Exception as e:
+            return jsonify({'ok': False, 'error': f'Moteur CLEANER indisponible : {e}'}), 500
+
+        for fs in files:
+            filename = _as_text(fs.filename).strip() or 'document'
+            content = fs.read()
+            if not content:
+                errors.append({'filename': filename, 'error': 'Fichier vide'})
+                continue
+            try:
+                result = extract_customs_document(filename, content)
+                results.append(result)
+            except Exception as e:
+                print(f'[CLEANER DOUANES] {filename}: {e}')
+                errors.append({'filename': filename, 'error': str(e)})
+
+        rows = []
+        for result in results:
+            rows.extend(result.get('rows') or [])
+
+        return jsonify({
+            'ok': bool(rows) and not errors,
+            'mode': mode,
+            'row_count': len(rows),
+            'rows': rows,
+            'documents': [{
+                'filename': x.get('filename'),
+                'profile': x.get('profile'),
+                'owner': x.get('owner'),
+                'row_count': x.get('row_count', 0),
+            } for x in results],
+            'errors': errors,
+        }), (200 if rows else 422)
+
+    if mode == 'articles':
+        # Première passerelle utile : lit le format Excel normalisé ESI TICKETS sans créer d'article.
+        for fs in files:
+            filename = _as_text(fs.filename).strip() or 'document'
+            if not filename.lower().endswith('.xlsx'):
+                errors.append({'filename': filename, 'error': 'Le mode ARTICLES lit les .xlsx dans cette première version.'})
+                continue
+            content = fs.read()
+            if not content:
+                errors.append({'filename': filename, 'error': 'Fichier vide'})
+                continue
+            try:
+                from openpyxl import load_workbook
+                wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+                ws = wb.active
+                headers = _article_import_headers(ws)
+                rows = []
+                for row_num in range(2, ws.max_row + 1):
+                    def cell(field):
+                        col = headers.get(field)
+                        return ws.cell(row=row_num, column=col).value if col else None
+                    reference = _article_import_text(cell('reference'))
+                    designation = _article_import_text(cell('description'))
+                    qty = _article_import_text(cell('quantite')) or '1'
+                    longueur = _article_import_text(cell('longueur_cm'))
+                    largeur = _article_import_text(cell('largeur_cm'))
+                    hauteur = _article_import_text(cell('hauteur_cm'))
+                    poids = _article_import_text(cell('poids_kg'))
+                    if not any([reference, designation, longueur, largeur, hauteur, poids]):
+                        continue
+                    rows.append({
+                        'reference': reference,
+                        'designation': designation,
+                        'quantite': qty,
+                        'longueur_cm': longueur,
+                        'largeur_cm': largeur,
+                        'hauteur_cm': hauteur,
+                        'poids_kg': poids,
+                        'source_file': filename,
+                        'source_page': row_num,
+                    })
+                wb.close()
+                results.append({'filename': filename, 'profile': 'Excel ESI TICKETS', 'row_count': len(rows), 'rows': rows})
+            except Exception as e:
+                errors.append({'filename': filename, 'error': str(e)})
+        all_rows = [row for result in results for row in (result.get('rows') or [])]
+        return jsonify({
+            'ok': bool(all_rows) and not errors,
+            'mode': mode,
+            'row_count': len(all_rows),
+            'rows': all_rows,
+            'documents': [{'filename': x.get('filename'), 'profile': x.get('profile'), 'row_count': x.get('row_count', 0)} for x in results],
+            'errors': errors,
+        }), (200 if all_rows else 422)
+
+    if mode == 'enlevement':
+        for fs in files:
+            filename = _as_text(fs.filename).strip() or 'document'
+            content = fs.read()
+            if not content:
+                errors.append({'filename': filename, 'error': 'Fichier vide'})
+                continue
+            if not filename.lower().endswith('.pdf'):
+                errors.append({'filename': filename, 'error': "Le bon d'enlèvement doit être un PDF."})
+                continue
+            try:
+                parsed = _extract_enlevement_pdf_preview_low_memory(content)
+                row = {
+                    'numero_dossier': parsed.get('numero_dossier') or '',
+                    'client': parsed.get('client') or '',
+                    'date': parsed.get('date_enlevement') or '',
+                    'adresse_depart': parsed.get('adresse_depart') or '',
+                    'adresse_destination': parsed.get('adresse_destination') or '',
+                    'references': ', '.join(parsed.get('references') or []),
+                    'instructions': parsed.get('instructions') or '',
+                    'source_file': filename,
+                    'source_page': '',
+                }
+                results.append({'filename': filename, 'profile': "Bon d'enlèvement", 'row_count': 1, 'rows': [row]})
+            except Exception as e:
+                errors.append({'filename': filename, 'error': str(e)})
+        all_rows = [row for result in results for row in (result.get('rows') or [])]
+        return jsonify({
+            'ok': bool(all_rows) and not errors,
+            'mode': mode,
+            'row_count': len(all_rows),
+            'rows': all_rows,
+            'documents': [{'filename': x.get('filename'), 'profile': x.get('profile'), 'row_count': x.get('row_count', 0)} for x in results],
+            'errors': errors,
+        }), (200 if all_rows else 422)
+
+    if mode == 'reception':
+        for fs in files:
+            filename = _as_text(fs.filename).strip() or 'document'
+            content = fs.read()
+            if not content:
+                errors.append({'filename': filename, 'error': 'Fichier vide'})
+                continue
+            if not filename.lower().endswith('.pdf'):
+                errors.append({'filename': filename, 'error': 'Le document de réception doit être un PDF.'})
+                continue
+            try:
+                parsed = _extract_reception_pdf(content)
+                rows = []
+                for ref in parsed.get('references') or []:
+                    rows.append({
+                        'numero_dossier': ref.get('dossier') or '',
+                        'bl_br': parsed.get('bl_numero') or '',
+                        'expediteur': '',
+                        'date': parsed.get('bl_date') or '',
+                        'reference': ref.get('numero_pdf') or ref.get('numero') or '',
+                        'quantite': '1',
+                        'colis': '',
+                        'source_file': filename,
+                        'source_page': '',
+                    })
+                results.append({'filename': filename, 'profile': 'Réception / bordereau', 'row_count': len(rows), 'rows': rows})
+            except Exception as e:
+                errors.append({'filename': filename, 'error': str(e)})
+        all_rows = [row for result in results for row in (result.get('rows') or [])]
+        return jsonify({
+            'ok': bool(all_rows) and not errors,
+            'mode': mode,
+            'row_count': len(all_rows),
+            'rows': all_rows,
+            'documents': [{'filename': x.get('filename'), 'profile': x.get('profile'), 'row_count': x.get('row_count', 0)} for x in results],
+            'errors': errors,
+        }), (200 if all_rows else 422)
+
+    return jsonify({
+        'ok': False,
+        'error': 'Ce type d\'extraction est prêt dans l\'interface mais son moteur n\'est pas encore défini.'
+    }), 501
+
+
+@app.route('/api/cleaner/export-excel', methods=['POST'])
+def api_cleaner_export_excel():
+    """Exporte exactement le tableau contrôlé/modifié dans CLEANER."""
+    if request.args.get('pwd') != '1234':
+        return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
+
+    data = request.get_json(silent=True) or {}
+    fields = data.get('fields') or []
+    rows = data.get('rows') or []
+    mode = _as_text(data.get('mode') or 'cleaner').strip().upper()
+
+    if not isinstance(fields, list) or not fields:
+        return jsonify({'ok': False, 'error': 'Aucun champ à exporter'}), 400
+    if not isinstance(rows, list) or not rows:
+        return jsonify({'ok': False, 'error': 'Aucune ligne à exporter'}), 400
+
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'CLEANER'
+        ws.freeze_panes = 'A2'
+        ws.sheet_view.showGridLines = False
+
+        labels = [_as_text(f.get('label')).strip() or _as_text(f.get('id')).strip() for f in fields]
+        for col, label in enumerate(labels, 1):
+            cell = ws.cell(1, col, label)
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill('solid', fgColor='075985')
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+
+        for r_idx, row in enumerate(rows, 2):
+            for c_idx, field in enumerate(fields, 1):
+                key = _as_text(field.get('id')).strip()
+                value = row.get(key, '') if isinstance(row, dict) else ''
+                ws.cell(r_idx, c_idx, value)
+
+        for c_idx, label in enumerate(labels, 1):
+            max_len = len(label)
+            for r_idx in range(2, min(ws.max_row, 250) + 1):
+                max_len = max(max_len, len(_as_text(ws.cell(r_idx, c_idx).value)))
+            ws.column_dimensions[get_column_letter(c_idx)].width = min(max(max_len + 2, 12), 45)
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        stamp = datetime.now().strftime('%Y%m%d_%H%M')
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name=f'CLEANER_{mode}_{stamp}.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except Exception as e:
+        print(f'[CLEANER EXPORT] {e}')
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/login', methods=['GET','POST'])
 def login():
     from flask import request, redirect, render_template_string
