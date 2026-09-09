@@ -4923,55 +4923,55 @@ def api_cleaner_analyse():
         }), (200 if rows else 422)
 
     if mode == 'articles':
+        try:
+            from cleaner_engine import extract_articles_document
+        except Exception as e:
+            return jsonify({'ok': False, 'error': f'Moteur CLEANER ARTICLES indisponible : {e}'}), 500
+
         for fs in files:
             filename = _as_text(fs.filename).strip() or 'document'
-            if not filename.lower().endswith('.xlsx'):
-                errors.append({'filename': filename, 'error': 'Le mode ARTICLES lit les .xlsx dans cette première version.'})
-                continue
             content = fs.read()
             if not content:
                 errors.append({'filename': filename, 'error': 'Fichier vide'})
                 continue
             try:
-                from openpyxl import load_workbook
-                wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
-                ws = wb.active
-                headers = _article_import_headers(ws)
-                rows = []
-                for row_num in range(2, ws.max_row + 1):
-                    def cell(field):
-                        col = headers.get(field)
-                        return ws.cell(row=row_num, column=col).value if col else None
-                    reference = _article_import_text(cell('reference'))
-                    designation = _article_import_text(cell('description'))
-                    qty = _article_import_text(cell('quantite')) or '1'
-                    longueur = _article_import_text(cell('longueur_cm'))
-                    largeur = _article_import_text(cell('largeur_cm'))
-                    hauteur = _article_import_text(cell('hauteur_cm'))
-                    poids = _article_import_text(cell('poids_kg'))
-                    if not any([reference, designation, longueur, largeur, hauteur, poids]):
-                        continue
-                    rows.append({
-                        'reference': reference, 'designation': designation, 'quantite': qty,
-                        'longueur_cm': longueur, 'largeur_cm': largeur, 'hauteur_cm': hauteur,
-                        'poids_kg': poids, 'source_file': filename, 'source_page': row_num,
-                        'source_headers': {}, '_profile_key': 'articles:excel-esi-tickets',
-                    })
-                wb.close()
-                _cleaner_apply_persistent_fields(rows, persistent_fields)
-                results.append({
-                    'filename': filename, 'profile': 'Excel ESI TICKETS',
-                    'profile_key': 'articles:excel-esi-tickets', 'profile_confidence': 1,
-                    'profile_source': 'built-in', 'signature': list(headers.keys()),
-                    'row_count': len(rows), 'rows': rows,
-                })
+                result = extract_articles_document(
+                    filename, content,
+                    learned_profiles=learned_profiles,
+                    learned_rules=learned_rules,
+                )
+                profile_key = _as_text(result.get('profile_key')).strip()
+                for row in result.get('rows') or []:
+                    if isinstance(row, dict):
+                        row['_profile_key'] = profile_key
+                _cleaner_apply_persistent_fields(result.get('rows') or [], persistent_fields)
+                results.append(result)
             except Exception as e:
+                print(f'[CLEANER ARTICLES] {filename}: {e}')
                 errors.append({'filename': filename, 'error': str(e)})
+
         all_rows = [row for result in results for row in (result.get('rows') or [])]
+        if not all_rows and results and not errors:
+            errors.append({
+                'filename': results[0].get('filename') or 'document',
+                'error': "Aucune liste d'articles reconnue. CLEANER cherche les en-têtes dans les premières lignes de chaque onglet."
+            })
         return jsonify({
-            'ok': bool(all_rows) and not errors, 'mode': mode, 'row_count': len(all_rows),
-            'rows': all_rows, 'schema_ready': ready,
-            'documents': [{k: x.get(k) for k in ('filename','profile','profile_key','profile_confidence','profile_source','signature','row_count')} for x in results],
+            'ok': bool(all_rows) and not errors,
+            'mode': mode,
+            'row_count': len(all_rows),
+            'rows': all_rows,
+            'schema_ready': ready,
+            'documents': [{
+                'filename': x.get('filename'),
+                'profile': x.get('profile'),
+                'profile_key': x.get('profile_key'),
+                'profile_confidence': x.get('profile_confidence', 0),
+                'profile_source': x.get('profile_source'),
+                'signature': x.get('signature') or [],
+                'row_count': x.get('row_count', 0),
+                'sheets': x.get('sheets') or [],
+            } for x in results],
             'errors': errors,
         }), (200 if all_rows else 422)
 

@@ -673,3 +673,411 @@ def extract_customs_document(filename: str, content: bytes, learned_profiles: Li
     if lower.endswith(".xlsx"):
         return extract_customs_xlsx(filename, content, learned_profiles, learned_rules)
     raise ValueError("Format non encore pris en charge par le moteur DOUANES (PDF et XLSX disponibles dans cette version).")
+
+# -----------------------------------------------------------------------------
+# CLEANER ARTICLES - extraction Excel generique et profils appris
+# -----------------------------------------------------------------------------
+_ARTICLE_HEADER_ALIASES = {
+    "reference": [
+        "ref esi", "reference esi", "reference", "ref", "ref article",
+        "inventory number", "inventory no", "object id", "item id", "accession number",
+        "numero inventaire", "n inventaire",
+    ],
+    "quantite": ["quantite", "qte", "qty", "quantity", "nombre", "nb"],
+    "longueur_cm": [
+        "longueur cm", "longueur", "length cm", "lenght cm", "length", "lenght",
+    ],
+    "largeur_cm": ["largeur cm", "largeur", "width cm", "width"],
+    "hauteur_cm": ["hauteur cm", "hauteur", "height cm", "height"],
+    "poids_kg": [
+        "poids brut kg", "poids kg", "poids", "gross weight kg", "gross weight",
+        "weight kg", "weight", "kg",
+    ],
+}
+
+_ARTICLE_DESIGNATION_TITLE_ALIASES = [
+    "title", "artwork title", "object title", "object name", "designation", "product title",
+]
+_ARTICLE_DESIGNATION_DESCRIPTION_ALIASES = [
+    "description", "product description", "description du produit", "object description",
+]
+_ARTICLE_TECH_ALIASES = {
+    "artist": ["artist", "artiste", "maker", "creator"],
+    "packing": ["packing", "emballage", "conditionnement"],
+    "numero_caisse": ["numero de caisse", "numero caisse", "n caisse", "crate number", "crate no", "case number", "case no"],
+    "medium_explicit": ["medium", "materials", "material", "technique"],
+    "circa": ["circa", "date", "year", "annee"],
+    "value_usd_source": ["value usd", "usd value", "value usd ", "customs value usd"],
+    "value_eur_source": ["value eur", "value euro", "value €", "valeur eur", "valeur euro", "valeur €"],
+}
+
+
+def _article_aliases_from_rules(learned_rules: List[Dict] | None, profile_key: str = "") -> Dict[str, List[str]]:
+    aliases = {k: list(v) for k, v in _ARTICLE_HEADER_ALIASES.items()}
+    # Les regles apprises peuvent enrichir les champs de base ARTICLES.
+    for rule in learned_rules or []:
+        if not isinstance(rule, dict) or rule.get("active") is False:
+            continue
+        rule_profile = _text(rule.get("profile_key"))
+        if rule_profile and profile_key and rule_profile != profile_key:
+            continue
+        if rule_profile and not profile_key:
+            continue
+        target = _text(rule.get("target_field"))
+        alias = _text(rule.get("source_alias"))
+        if target and alias:
+            aliases.setdefault(target, [])
+            if _norm(alias) not in {_norm(x) for x in aliases[target]}:
+                aliases[target].append(alias)
+    return aliases
+
+
+def _article_header_match(value, aliases_map: Dict[str, List[str]]):
+    """Retourne (champ, score) pour choisir le meilleur en-tete quand plusieurs sont possibles."""
+    n = _norm(value)
+    if not n:
+        return "", 0
+    best_field = ""
+    best_score = 0
+    for field, aliases in aliases_map.items():
+        for pos, alias in enumerate(aliases):
+            a = _norm(alias)
+            if not a:
+                continue
+            if n == a:
+                score = 100 - min(pos, 30)
+            elif len(a) >= 5 and a in n:
+                score = 60 - min(pos, 30)
+            else:
+                continue
+            if score > best_score:
+                best_field, best_score = field, score
+    return best_field, best_score
+
+
+def _article_aux_header_match(value):
+    n = _norm(value)
+    if not n:
+        return "", 0
+
+    # Title est prioritaire sur Description pour la designation quand les deux existent.
+    for pos, alias in enumerate(_ARTICLE_DESIGNATION_TITLE_ALIASES):
+        a = _norm(alias)
+        if n == a or (len(a) >= 5 and a in n):
+            return "title_source", 120 - min(pos, 20)
+    for pos, alias in enumerate(_ARTICLE_DESIGNATION_DESCRIPTION_ALIASES):
+        a = _norm(alias)
+        if n == a or (len(a) >= 5 and a in n):
+            return "description_source", 100 - min(pos, 20)
+
+    for field, aliases in _ARTICLE_TECH_ALIASES.items():
+        for pos, alias in enumerate(aliases):
+            a = _norm(alias)
+            if n == a or (len(a) >= 5 and a in n):
+                return field, 90 - min(pos, 20)
+    return "", 0
+
+
+def _merged_value_lookup(ws):
+    """Construit un petit index des cellules fusionnees -> valeur de la cellule maitre."""
+    lookup = {}
+    try:
+        ranges = list(ws.merged_cells.ranges)
+    except Exception:
+        ranges = []
+    for merged in ranges:
+        value = ws.cell(merged.min_row, merged.min_col).value
+        for row_no in range(merged.min_row, merged.max_row + 1):
+            for col_no in range(merged.min_col, merged.max_col + 1):
+                lookup[(row_no, col_no)] = value
+    return lookup
+
+
+def _ws_value(ws, row_no: int, col_no: int, merged_lookup: Dict):
+    value = ws.cell(row_no, col_no).value
+    if value is None and (row_no, col_no) in merged_lookup:
+        return merged_lookup[(row_no, col_no)]
+    return value
+
+
+def _article_signature_xlsx(wb) -> List[str]:
+    """Signature stable : noms d'onglets + libelles/metadata, jamais la liste complete des oeuvres."""
+    terms = []
+    keywords = (
+        "packing list", "customer", "client", "file", "dossier", "ref", "reference",
+        "title", "description", "designation", "qty", "quantity", "quantite",
+        "length", "lenght", "longueur", "width", "largeur", "height", "hauteur",
+        "weight", "poids", "kg", "artist", "packing", "caisse", "crate", "value",
+    )
+    for ws in wb.worksheets[:8]:
+        if _norm(ws.title):
+            terms.append("sheet " + _norm(ws.title))
+        max_row = min(ws.max_row, 20)
+        max_col = min(ws.max_column, 50)
+        for row_no in range(1, max_row + 1):
+            for col_no in range(1, max_col + 1):
+                n = _norm(ws.cell(row_no, col_no).value)
+                if not n or len(n) > 100:
+                    continue
+                if any(k in n for k in keywords):
+                    terms.append(n)
+    return sorted(set(terms))[:160]
+
+
+def _article_builtin_profile(signature: List[str]) -> str:
+    joined = " | ".join(signature)
+    if "packing list" in joined and "pozzi" in joined and (
+        "lenght cm" in joined or "ref esi" in joined or "customer pozzi" in joined
+    ):
+        return "Packing List Pozzi"
+    return ""
+
+
+def _detect_article_header_row(ws, aliases_map: Dict[str, List[str]], merged_lookup: Dict):
+    """Cherche la meilleure ligne d'en-tetes dans les 40 premieres lignes de l'onglet."""
+    best = None
+    for row_no in range(1, min(ws.max_row, 40) + 1):
+        mapping = {}
+        mapping_scores = {}
+        header_values = {}
+        aux_mapping = {}
+        aux_scores = {}
+        aux_headers = {}
+
+        for col_no in range(1, min(ws.max_column, 80) + 1):
+            raw = _ws_value(ws, row_no, col_no, merged_lookup)
+            txt = _text(raw)
+            if not txt:
+                continue
+
+            field, score = _article_header_match(txt, aliases_map)
+            if field and score > mapping_scores.get(field, -1):
+                mapping[field] = col_no
+                mapping_scores[field] = score
+                header_values[field] = txt
+
+            aux_field, aux_score = _article_aux_header_match(txt)
+            if aux_field and aux_score > aux_scores.get(aux_field, -1):
+                aux_mapping[aux_field] = col_no
+                aux_scores[aux_field] = aux_score
+                aux_headers[aux_field] = txt
+
+        # Designation = Title en priorite, sinon Description.
+        if "title_source" in aux_mapping:
+            mapping["designation"] = aux_mapping["title_source"]
+            mapping_scores["designation"] = aux_scores["title_source"]
+            header_values["designation"] = aux_headers["title_source"]
+        elif "description_source" in aux_mapping:
+            mapping["designation"] = aux_mapping["description_source"]
+            mapping_scores["designation"] = aux_scores["description_source"]
+            header_values["designation"] = aux_headers["description_source"]
+
+        # Une ligne d'en-tetes credible doit avoir au moins 3 champs et une ancre article.
+        anchors = int("reference" in mapping) + int("designation" in mapping)
+        if anchors == 0 or len(mapping) < 3:
+            continue
+        score = len(mapping) * 10 + anchors * 8 + sum(mapping_scores.values()) / 1000.0
+        if best is None or score > best[0]:
+            best = (score, row_no, mapping, header_values, aux_mapping, aux_headers)
+
+    if not best:
+        return None
+    _, row_no, mapping, header_values, aux_mapping, aux_headers = best
+    return {
+        "row": row_no,
+        "mapping": mapping,
+        "header_values": header_values,
+        "aux_mapping": aux_mapping,
+        "aux_headers": aux_headers,
+    }
+
+
+def _article_number_text(value, default="") -> str:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if value.is_integer():
+            return str(int(value))
+        return (f"{value:.10f}").rstrip("0").rstrip(".")
+    return _text(value)
+
+
+def extract_articles_xlsx(
+    filename: str,
+    content: bytes,
+    learned_profiles: List[Dict] | None = None,
+    learned_rules: List[Dict] | None = None,
+) -> Dict:
+    """Extrait une liste d'articles d'un classeur Excel heterogene, sans imposer la ligne 1."""
+    from openpyxl import load_workbook
+
+    wb = load_workbook(BytesIO(content), read_only=False, data_only=True)
+    rows_out = []
+    sheets_used = []
+    detected_headers = []
+    signature = _article_signature_xlsx(wb)
+
+    builtin_profile = _article_builtin_profile(signature)
+    matched_profile = None
+    learned_score = 0.0
+    if not builtin_profile:
+        matched_profile, learned_score = _best_learned_profile(signature, learned_profiles)
+
+    if builtin_profile:
+        profile = builtin_profile
+        profile_key = _profile_key("articles", profile)
+        profile_confidence = 1.0
+        profile_source = "built-in"
+    elif matched_profile:
+        profile = _text(matched_profile.get("name")) or "Excel - profil ARTICLES appris"
+        profile_key = _text(matched_profile.get("profile_key")) or _profile_key("articles", profile)
+        profile_confidence = learned_score
+        profile_source = "learned"
+    else:
+        profile = "Excel ARTICLES - structure reconnue"
+        profile_key = f"articles:excel:{_signature_hash(signature)}"
+        profile_confidence = learned_score
+        profile_source = "generic"
+
+    aliases_map = _article_aliases_from_rules(learned_rules, profile_key)
+
+    try:
+        for ws in wb.worksheets:
+            merged_lookup = _merged_value_lookup(ws)
+            detected = _detect_article_header_row(ws, aliases_map, merged_lookup)
+            if not detected:
+                continue
+
+            header_row = detected["row"]
+            mapping = detected["mapping"]
+            header_values = detected["header_values"]
+            aux_mapping = detected["aux_mapping"]
+            aux_headers = detected["aux_headers"]
+            detected_headers.append({
+                "sheet": ws.title,
+                "row": header_row,
+                "headers": dict(header_values),
+            })
+
+            sheet_count_before = len(rows_out)
+            empty_streak = 0
+            for row_no in range(header_row + 1, ws.max_row + 1):
+                def cell(field):
+                    col = mapping.get(field)
+                    return _ws_value(ws, row_no, col, merged_lookup) if col else None
+
+                def aux_cell(field):
+                    col = aux_mapping.get(field)
+                    return _ws_value(ws, row_no, col, merged_lookup) if col else None
+
+                reference = _article_number_text(cell("reference"))
+                designation = _text(cell("designation"))
+
+                # Ignore les lignes TOTAL / sous-totaux et les zones hors liste.
+                if _norm(reference) in {"total", "totaux"} or _norm(designation) in {"total", "totaux"}:
+                    continue
+                if not reference and not designation:
+                    empty_streak += 1
+                    # On continue pour tolerer des espaces dans les feuilles, sans parcourir 1000 lignes vides.
+                    if empty_streak >= 20:
+                        break
+                    continue
+                empty_streak = 0
+
+                qty = _article_number_text(cell("quantite"), "1") or "1"
+                longueur = _article_number_text(cell("longueur_cm"))
+                largeur = _article_number_text(cell("largeur_cm"))
+                hauteur = _article_number_text(cell("hauteur_cm"))
+                poids = _article_number_text(cell("poids_kg"))
+
+                # Donnees techniques utiles pour de futurs champs personnalises.
+                title_source = _text(aux_cell("title_source"))
+                description_source = _text(aux_cell("description_source"))
+                explicit_medium = _text(aux_cell("medium_explicit"))
+                medium = explicit_medium or (description_source if title_source else "")
+                artist = _text(aux_cell("artist"))
+                packing = _text(aux_cell("packing"))
+                numero_caisse = _text(aux_cell("numero_caisse"))
+                circa = _text(aux_cell("circa"))
+
+                value_usd_raw = aux_cell("value_usd_source")
+                value_eur_raw = aux_cell("value_eur_source")
+                source_value = ""
+                source_value_number = None
+                source_currency = ""
+                if value_usd_raw not in (None, ""):
+                    source_value, source_value_number = _money(value_usd_raw)
+                    source_currency = "USD"
+                elif value_eur_raw not in (None, ""):
+                    source_value, source_value_number = _money(value_eur_raw)
+                    source_currency = "EUR"
+
+                row = {
+                    "reference": reference,
+                    "designation": designation,
+                    "quantite": qty,
+                    "longueur_cm": longueur,
+                    "largeur_cm": largeur,
+                    "hauteur_cm": hauteur,
+                    "poids_kg": poids,
+                    "artist": artist,
+                    "medium": medium,
+                    "packing": packing,
+                    "numero_caisse": numero_caisse,
+                    "circa": circa,
+                    "source_value": source_value,
+                    "source_value_number": source_value_number,
+                    "source_currency": source_currency,
+                    "source_file": filename,
+                    "source_sheet": ws.title,
+                    "source_page": row_no,
+                    "source_headers": dict(header_values),
+                    "_profile_key": profile_key,
+                }
+
+                # La designation peut venir de Title ou Description selon l'onglet.
+                if "designation" in header_values:
+                    row["source_headers"]["designation"] = header_values["designation"]
+                rows_out.append(row)
+
+            if len(rows_out) > sheet_count_before:
+                sheets_used.append({
+                    "name": ws.title,
+                    "header_row": header_row,
+                    "row_count": len(rows_out) - sheet_count_before,
+                })
+    finally:
+        wb.close()
+
+    if not rows_out and not matched_profile and not builtin_profile:
+        profile = "Excel ARTICLES - aucun tableau reconnu"
+
+    return {
+        "filename": filename,
+        "profile": profile,
+        "profile_key": profile_key,
+        "profile_confidence": profile_confidence,
+        "profile_source": profile_source,
+        "signature": signature,
+        "owner": "",
+        "row_count": len(rows_out),
+        "rows": rows_out,
+        "sheets": sheets_used,
+        "detected_headers": detected_headers,
+    }
+
+
+def extract_articles_document(
+    filename: str,
+    content: bytes,
+    learned_profiles: List[Dict] | None = None,
+    learned_rules: List[Dict] | None = None,
+) -> Dict:
+    lower = filename.lower()
+    if lower.endswith(".xlsx"):
+        return extract_articles_xlsx(filename, content, learned_profiles, learned_rules)
+    raise ValueError("Format non encore pris en charge par le moteur ARTICLES (XLSX disponible dans cette version).")
