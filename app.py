@@ -4,6 +4,7 @@ import json, webbrowser, os, urllib.request, urllib.parse
 import csv, re, time
 import hashlib, threading
 import uuid
+import shutil
 from io import StringIO, BytesIO
 import smtplib
 from email.mime.text import MIMEText
@@ -255,6 +256,38 @@ def supabase_download_bytes(storage_path):
 
     with urllib.request.urlopen(req, timeout=60) as resp:
         return resp.read()
+
+
+def supabase_delete_object(storage_path):
+    """Supprime un objet de Supabase Storage. Un fichier déjà absent n'empêche pas la suppression du ticket."""
+    if not storage_path:
+        return False
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise RuntimeError("Variables SUPABASE_URL ou SUPABASE_SERVICE_KEY manquantes")
+
+    safe_path = urllib.parse.quote(storage_path, safe="/")
+    url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{safe_path}"
+    req = urllib.request.Request(
+        url,
+        method="DELETE",
+        headers={
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "apikey": SUPABASE_KEY,
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            resp.read()
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return False
+        try:
+            body = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        print(f"[SUPABASE STORAGE DELETE ERROR] HTTP {e.code} - {e.reason} - {body}")
+        raise RuntimeError(f"Erreur suppression fichier Supabase HTTP {e.code}: {body or e.reason}")
 
 
 def supabase_signed_download_url(storage_path, expires_in=300):
@@ -2746,6 +2779,108 @@ def load_ticket(ticket_id):
     if not rows:
         return None
     return _attach_children(_ticket_from_db_row(rows[0]))
+
+
+def _unlink_articles_from_deleted_caisse(ticket):
+    """Retire la référence de caisse des articles liés avant suppression d'une fiche de caisse."""
+    if _as_text(ticket.get('module')).strip() != 'Fiche de caisse':
+        return
+
+    dossier = _as_text(ticket.get('dossier')).strip()
+    numero_brut = _as_text(ticket.get('ref')).strip()
+    if not dossier or not numero_brut:
+        return
+
+    try:
+        numero_norm = _normalise_numero_caisse(numero_brut)
+    except Exception:
+        numero_norm = numero_brut
+    numero_caisse = numero_norm.zfill(2) if _as_text(numero_norm).isdigit() else numero_brut
+    equivalent_refs = {f"{dossier}-{numero_caisse}", f"{dossier}-{numero_norm}"}
+
+    ids = []
+    for item in ticket.get('articles_lies') or []:
+        esi_id = _as_text(item.get('esi_id') if isinstance(item, dict) else item).strip()
+        if esi_id and esi_id not in ids:
+            ids.append(esi_id)
+
+    for esi_id in ids:
+        safe_esi = urllib.parse.quote(esi_id, safe='-')
+        rows = supabase_rest_request('GET', 'articles', f'select=*&esi_id=eq.{safe_esi}&limit=1') or []
+        if not rows:
+            continue
+        current = dict(rows[0])
+        patch = {}
+        if _as_text(current.get('ref_caisse')).strip() in equivalent_refs:
+            patch['ref_caisse'] = ''
+        if _as_text(current.get('dernier_colis')).strip() in equivalent_refs:
+            patch['dernier_colis'] = ''
+        if not patch:
+            continue
+        patch['updated_at'] = datetime.now().isoformat()
+        merged = dict(current)
+        merged.update(patch)
+        patch['search_text'] = _article_search_text(merged)
+        supabase_rest_request('PATCH', 'articles', f'esi_id=eq.{safe_esi}', patch, prefer='return=minimal')
+
+
+def delete_ticket_permanently(ticket_id):
+    """Supprime définitivement un ticket et ses enfants techniques sans casser l'historique Articles."""
+    ticket = load_ticket(ticket_id)
+    if not ticket:
+        return False, []
+
+    safe_tid = urllib.parse.quote(ticket_id, safe='')
+
+    # Les tickets de réception/enlèvement peuvent être à l'origine d'articles physiques.
+    # On protège cet historique : ces tickets ne sont pas supprimés tant que des articles
+    # portent leur ticket_id. Les tickets classiques restent supprimables normalement.
+    linked_articles = supabase_rest_request(
+        'GET', 'articles', f'select=esi_id&ticket_id=eq.{safe_tid}&limit=5'
+    ) or []
+    if linked_articles:
+        ids = ', '.join(_as_text(x.get('esi_id')).strip() for x in linked_articles if x.get('esi_id'))
+        detail = f" ({ids})" if ids else ''
+        raise ValueError(
+            "Ce ticket est lié à des articles ESI et ne peut pas être supprimé directement" + detail + ". "
+            "Utilise l'annulation pour conserver l'historique logistique."
+        )
+
+    _unlink_articles_from_deleted_caisse(ticket)
+
+    warnings = []
+    file_rows = supabase_rest_request(
+        'GET', 'ticket_files', f'select=storage_path&ticket_id=eq.{safe_tid}'
+    ) or []
+
+    # Supprime d'abord les lignes enfants afin d'éviter une contrainte de clé étrangère.
+    supabase_rest_request('DELETE', 'fiches', f'ticket_id=eq.{safe_tid}', prefer='return=minimal')
+    supabase_rest_request('DELETE', 'ticket_files', f'ticket_id=eq.{safe_tid}', prefer='return=minimal')
+    supabase_rest_request('DELETE', 'tickets', f'id=eq.{safe_tid}', prefer='return=minimal')
+
+    # Nettoyage des fichiers après disparition du ticket. Une erreur de stockage n'annule
+    # pas la suppression métier ; elle est simplement signalée dans les warnings.
+    for row in file_rows:
+        storage_path = _as_text(row.get('storage_path')).strip()
+        if not storage_path:
+            continue
+        try:
+            supabase_delete_object(storage_path)
+        except Exception as e:
+            warnings.append(f"Fichier non supprimé du stockage : {storage_path} ({e})")
+
+    local_folder = files_dir() / ticket_id
+    if local_folder.exists():
+        try:
+            shutil.rmtree(local_folder)
+        except Exception as e:
+            warnings.append(f"Dossier local non supprimé : {e}")
+
+    remaining = supabase_rest_request('GET', 'tickets', f'select=id&id=eq.{safe_tid}&limit=1') or []
+    if remaining:
+        raise RuntimeError('Le ticket est encore présent dans Supabase après la suppression')
+
+    return True, warnings
 
 
 # -----------------------------------------------------------------------------
@@ -6250,6 +6385,7 @@ def api_create_ticket():
         'prixDevis': form.get('prixDevis','-') or '-',
         'dateRdv': form.get('dateRdv','-') or '-',
         'heureRdv': form.get('heureRdv','-') or '-',
+        'typeVisite': form.get('typeVisite','-') or '-',
         'lieuRdv': form.get('lieuRdv','-') or '-',
         'contactRdv': form.get('contactRdv','-') or '-',
         'commentaire': form.get('commentaire',''),
@@ -6609,11 +6745,23 @@ def _cancel_specific_reception(ticket, reference):
     return checked
 
 
-@app.route('/api/tickets/<ticket_id>', methods=['PUT'])
+@app.route('/api/tickets/<ticket_id>', methods=['PUT', 'DELETE'])
 def api_update_ticket(ticket_id):
     ticket = load_ticket(ticket_id)
     if not ticket:
         return jsonify({'error': 'Ticket introuvable'}), 404
+
+    if request.method == 'DELETE':
+        try:
+            deleted, warnings = delete_ticket_permanently(ticket_id)
+            if not deleted:
+                return jsonify({'ok': False, 'error': 'Ticket introuvable'}), 404
+            return jsonify({'ok': True, 'deleted': ticket_id, 'warnings': warnings})
+        except ValueError as e:
+            return jsonify({'ok': False, 'error': str(e)}), 409
+        except Exception as e:
+            print(f'[TICKET DELETE] Suppression impossible {ticket_id}: {e}')
+            return jsonify({'ok': False, 'error': str(e)}), 500
 
     data = request.get_json(silent=True) or {}
 
@@ -6653,6 +6801,7 @@ def api_update_ticket(ticket_id):
         'prixDevis',
         'dateRdv',
         'heureRdv',
+        'typeVisite',
         'lieuRdv',
         'contactRdv',
         'commentaire'
