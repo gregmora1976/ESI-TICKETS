@@ -36,10 +36,10 @@
       <div class="section-title">1. Choisir la destination</div><div class="section-sub">Cette sélection détermine la trame de champs recherchée par CLEANER.</div>
       <div class="mode-grid" id="modeGrid">
         <button class="mode active" data-mode="douanes" type="button"><div class="name">DOUANES</div><div class="desc">Owner, Title, Medium, HS Code, License, Dimensions, Value USD.</div><span class="tag">Moteur actif</span></button>
-        <button class="mode" data-mode="articles" type="button"><div class="name">ARTICLES</div><div class="desc">Référence, désignation, quantité, dimensions et poids vers la base Articles.</div><span class="tag">Excel actif</span></button>
+        <button class="mode" data-mode="articles" type="button"><div class="name">ARTICLES</div><div class="desc">Référence, désignation, quantité, dimensions et poids vers la base Articles.</div><span class="tag">PDF / Excel actif</span></button>
         <button class="mode" data-mode="enlevement" type="button"><div class="name">BON D'ENLÈVEMENT</div><div class="desc">Dossier, client, adresses, date, références, quantités et instructions.</div><span class="tag">PDF actif</span></button>
         <button class="mode" data-mode="reception" type="button"><div class="name">RÉCEPTION</div><div class="desc">Dossier, BL/BR, expéditeur, articles, quantités, colis, poids et date.</div><span class="tag">PDF actif</span></button>
-        <button class="mode" data-mode="packing" type="button"><div class="name">PACKING LIST</div><div class="desc">Articles, colis, dimensions, poids et références logistiques.</div><span class="tag">À définir</span></button>
+        <button class="mode" data-mode="packing" type="button"><div class="name">PACKING LIST</div><div class="desc">Articles, colis, dimensions, poids et références logistiques.</div><span class="tag">PDF / Excel actif</span></button>
         <button class="mode" data-mode="autre" type="button"><div class="name">AUTRE</div><div class="desc">Point d'entrée pour ajouter une nouvelle trame d'extraction.</div><span class="tag">Évolutif</span></button>
       </div>
     </section>
@@ -66,8 +66,15 @@
       <div class="actions"><button class="btn" id="learnBtn" type="button" disabled>VALIDER ET APPRENDRE CE FORMAT</button><button class="btn primary" id="exportBtn" type="button" disabled>EXPORTER EXCEL</button></div>
     </section>
 
+    <section class="section" id="destinationSection">
+      <div class="section-title">4. Envoyer vers ESI TICKETS</div>
+      <div class="section-sub" id="destinationHint">Analyse et contrôle d'abord les données. L'écriture dans ESI TICKETS nécessite toujours une confirmation.</div>
+      <div class="actions" id="destinationActions" style="justify-content:flex-start"></div>
+      <div class="notice hidden" id="destinationStatus"></div>
+    </section>
+
     <section class="section" id="learningSection">
-      <div class="section-title">4. Apprentissage CLEANER</div>
+      <div class="section-title">5. Apprentissage CLEANER</div>
       <div class="section-sub">CLEANER mémorise la structure des documents et les correspondances de champs validées. Il ne mémorise pas les valeurs particulières d'une œuvre.</div>
       <div class="learning-grid">
         <div class="learning-card">
@@ -105,7 +112,7 @@
       autre:[]
     };
 
-    const grid=document.getElementById('modeGrid'),drop=document.getElementById('dropZone'),input=document.getElementById('fileInput'),list=document.getElementById('fileList'),analyze=document.getElementById('analyzeBtn'),clear=document.getElementById('clearBtn'),currentModeText=document.getElementById('currentModeText'),notice=document.getElementById('integrationNotice'),resultShell=document.getElementById('resultShell'),fieldChips=document.getElementById('fieldChips'),addFieldBtn=document.getElementById('addFieldBtn'),resetFieldsBtn=document.getElementById('resetFieldsBtn'),exportBtn=document.getElementById('exportBtn'),learnBtn=document.getElementById('learnBtn'),analysisStatus=document.getElementById('analysisStatus'),docSummary=document.getElementById('docSummary'),conversionBox=document.getElementById('conversionBox'),cadRate=document.getElementById('cadRate'),learningStatus=document.getElementById('learningStatus'),libraryStats=document.getElementById('libraryStats'),libraryList=document.getElementById('libraryList'),refreshLibraryBtn=document.getElementById('refreshLibraryBtn');
+    const grid=document.getElementById('modeGrid'),drop=document.getElementById('dropZone'),input=document.getElementById('fileInput'),list=document.getElementById('fileList'),analyze=document.getElementById('analyzeBtn'),clear=document.getElementById('clearBtn'),currentModeText=document.getElementById('currentModeText'),notice=document.getElementById('integrationNotice'),resultShell=document.getElementById('resultShell'),fieldChips=document.getElementById('fieldChips'),addFieldBtn=document.getElementById('addFieldBtn'),resetFieldsBtn=document.getElementById('resetFieldsBtn'),exportBtn=document.getElementById('exportBtn'),learnBtn=document.getElementById('learnBtn'),analysisStatus=document.getElementById('analysisStatus'),docSummary=document.getElementById('docSummary'),conversionBox=document.getElementById('conversionBox'),cadRate=document.getElementById('cadRate'),learningStatus=document.getElementById('learningStatus'),libraryStats=document.getElementById('libraryStats'),libraryList=document.getElementById('libraryList'),refreshLibraryBtn=document.getElementById('refreshLibraryBtn'),destinationActions=document.getElementById('destinationActions'),destinationStatus=document.getElementById('destinationStatus'),destinationHint=document.getElementById('destinationHint');
 
     function escapeHtml(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
     function sizeLabel(bytes){if(bytes<1024)return bytes+' o';if(bytes<1024*1024)return (bytes/1024).toFixed(1)+' Ko';return (bytes/(1024*1024)).toFixed(1)+' Mo'}
@@ -115,14 +122,14 @@
     function semanticAliases(label){const src=semanticSource(label);if(src==='country_origin')return ['Country of Origin','Place of Origin','Origin','Pays d\'origine'];if(src==='reference')return ['Reference','Ref','Ref ESI','Inventory Number','Object ID'];if(src==='source_value')return ['Declared Value','Customs Value','Value','Value USD','Value €'];if(src==='source_currency')return ['Currency','Devise'];if(src==='artist')return ['Artist','Artiste','Creator','Maker'];if(src==='medium')return ['Medium','Materials','Material','Technique','Description'];if(src==='packing')return ['Packing','Emballage','Conditionnement'];if(src==='numero_caisse')return ['Numero de caisse','N° caisse','Crate Number','Crate No'];if(src==='circa')return ['CIRCA','Year','Année'];return []}
     function currentFields(){const seen=new Set();return [...(baseFields[mode]||[]),...persistedFields,...pendingFields].filter(f=>{if(!f||!f.id||seen.has(f.id))return false;seen.add(f.id);return true})}
 
-    function updateModeNotice(){const messages={douanes:'DOUANES : PDF et XLSX actifs. Les valeurs CAD restent séparées de Value USD tant qu’un taux n’est pas appliqué.',articles:'ARTICLES : CLEANER inspecte tous les onglets Excel, cherche les en-têtes dans les premières lignes et gère les cellules fusionnées. Les données restent modifiables avant validation.',enlevement:'BON D\'ENLÈVEMENT : moteur PDF actif.',reception:'RÉCEPTION : moteur PDF actif.',packing:'PACKING LIST : moteur dédié à définir. Une packing list contenant des articles peut déjà être testée via le mode ARTICLES.',autre:'AUTRE : trame évolutive à définir.'};notice.className='notice';notice.textContent=messages[mode]||''}
+    function updateModeNotice(){const messages={douanes:'DOUANES : PDF et XLSX actifs. Les valeurs CAD restent séparées de Value USD tant qu’un taux n’est pas appliqué.',articles:'ARTICLES : PDF et Excel actifs. CLEANER cherche les tableaux, les en-têtes et gère les formats connus ou appris.',enlevement:'BON D\'ENLÈVEMENT : moteur PDF actif.',reception:'RÉCEPTION : bordereaux PDF actifs avec rapprochement des caisses ESI TICKETS.',packing:'PACKING LIST : PDF et Excel actifs. Après contrôle, la liste peut être importée dans Articles ou préparer une RECEPTION.',autre:'AUTRE : trame évolutive à définir.'};notice.className='notice';notice.textContent=messages[mode]||''}
 
     function renderFiles(){list.innerHTML='';selectedFiles.forEach((f,i)=>{const row=document.createElement('div');row.className='file-row';row.innerHTML=`<div><div class="file-name">${escapeHtml(f.name)}</div><div class="file-meta">${sizeLabel(f.size)} · ${escapeHtml(f.type||'type inconnu')}</div></div><button class="remove" type="button" data-index="${i}">Retirer</button>`;list.appendChild(row)});analyze.disabled=!selectedFiles.length;clear.disabled=!selectedFiles.length}
     function addFiles(files){const existing=new Set(selectedFiles.map(f=>f.name+'|'+f.size+'|'+f.lastModified));Array.from(files||[]).forEach(f=>{const k=f.name+'|'+f.size+'|'+f.lastModified;if(!existing.has(k)){selectedFiles.push(f);existing.add(k)}});renderFiles()}
 
     function prepareCustomValues(){currentFields().filter(f=>f.custom).forEach(f=>{extractionRows.forEach(row=>{if(row[f.id]===undefined||row[f.id]===null||row[f.id]===''){const src=f.sourceKey||semanticSource(f.label);if(src&&row[src]!==undefined&&row[src]!==null)row[f.id]=String(row[src]??'');else if(row[f.id]===undefined)row[f.id]=''}})})}
     function renderFieldChips(){fieldChips.innerHTML='';currentFields().forEach(f=>{const chip=document.createElement('span');chip.className='field-chip'+(f.custom?' custom':'');chip.innerHTML=`<span>${escapeHtml(f.label)}</span>${f.custom?`<button type="button" title="Supprimer ce champ" data-remove-field="${escapeHtml(f.id)}" data-persisted="${f.persisted?'1':'0'}">×</button>`:''}`;fieldChips.appendChild(chip)})}
-    function renderResults(){prepareCustomValues();renderFieldChips();const fields=currentFields();if(!extractionRows.length){resultShell.innerHTML='<div class="empty" id="resultEmpty">Aucune analyse lancée.</div>';exportBtn.disabled=true;learnBtn.disabled=true;conversionBox.classList.remove('show');return}const table=document.createElement('table');table.className='result-table';const thead=document.createElement('thead');thead.innerHTML='<tr>'+fields.map(f=>`<th>${escapeHtml(f.label)}</th>`).join('')+'<th>Source</th></tr>';table.appendChild(thead);const tbody=document.createElement('tbody');extractionRows.forEach((row,ri)=>{const tr=document.createElement('tr');fields.forEach(f=>{const td=document.createElement('td');const val=row[f.id]??'';const multiline=String(val).length>70||/adresse|instructions/i.test(f.id);td.innerHTML=multiline?`<textarea data-row="${ri}" data-field="${escapeHtml(f.id)}">${escapeHtml(val)}</textarea>`:`<input data-row="${ri}" data-field="${escapeHtml(f.id)}" value="${escapeHtml(val)}">`;tr.appendChild(td)});const src=document.createElement('td');src.className='source-col';const bits=[row.source_file,row.source_sheet?('onglet '+row.source_sheet):'',row.source_page?('ligne '+row.source_page):'',row.reference?('Réf. '+row.reference):'',row.source_value?(row.source_value+' '+(row.source_currency||'')):''].filter(Boolean);src.textContent=bits.join(' · ');tr.appendChild(src);tbody.appendChild(tr)});table.appendChild(tbody);resultShell.innerHTML='';resultShell.appendChild(table);exportBtn.disabled=false;learnBtn.disabled=false;const hasCad=mode==='douanes'&&extractionRows.some(r=>String(r.source_currency||'').toUpperCase()==='CAD'&&r.source_value_number!==null&&r.source_value_number!==undefined);conversionBox.classList.toggle('show',hasCad)}
+    function renderResults(){prepareCustomValues();renderFieldChips();const fields=currentFields();if(!extractionRows.length){resultShell.innerHTML='<div class="empty" id="resultEmpty">Aucune analyse lancée.</div>';exportBtn.disabled=true;learnBtn.disabled=true;conversionBox.classList.remove('show');renderDestinationActions();return}const table=document.createElement('table');table.className='result-table';const thead=document.createElement('thead');thead.innerHTML='<tr>'+fields.map(f=>`<th>${escapeHtml(f.label)}</th>`).join('')+'<th>Source</th></tr>';table.appendChild(thead);const tbody=document.createElement('tbody');extractionRows.forEach((row,ri)=>{const tr=document.createElement('tr');fields.forEach(f=>{const td=document.createElement('td');const val=row[f.id]??'';const multiline=String(val).length>70||/adresse|instructions/i.test(f.id);td.innerHTML=multiline?`<textarea data-row="${ri}" data-field="${escapeHtml(f.id)}">${escapeHtml(val)}</textarea>`:`<input data-row="${ri}" data-field="${escapeHtml(f.id)}" value="${escapeHtml(val)}">`;tr.appendChild(td)});const src=document.createElement('td');src.className='source-col';const bits=[row.source_file,row.source_sheet?('onglet '+row.source_sheet):'',row.source_page?('ligne '+row.source_page):'',row.reference?('Réf. '+row.reference):'',row.source_value?(row.source_value+' '+(row.source_currency||'')):''].filter(Boolean);src.textContent=bits.join(' · ');tr.appendChild(src);tbody.appendChild(tr)});table.appendChild(tbody);resultShell.innerHTML='';resultShell.appendChild(table);exportBtn.disabled=false;learnBtn.disabled=false;const hasCad=mode==='douanes'&&extractionRows.some(r=>String(r.source_currency||'').toUpperCase()==='CAD'&&r.source_value_number!==null&&r.source_value_number!==undefined);conversionBox.classList.toggle('show',hasCad);renderDestinationActions()}
 
     function renderDocSummary(errors=[]){docSummary.innerHTML='';documentSummaries.forEach(d=>{const row=document.createElement('div');row.className='doc-summary-row';const pct=d.profile_confidence!==undefined?Math.round(Number(d.profile_confidence||0)*100):null;const source=d.profile_source==='learned'?'profil appris':(d.profile_source==='built-in'?'règle intégrée':'nouveau format');row.innerHTML=`<div><strong>${escapeHtml(d.filename||'document')}</strong><div class="file-meta">Profil : ${escapeHtml(d.profile||'-')} · ${escapeHtml(source)}${pct!==null?' · '+pct+' %':''}${d.owner?' · Owner : '+escapeHtml(d.owner):''}</div></div><div><strong>${Number(d.row_count||0)} ligne(s)</strong></div>`;docSummary.appendChild(row)});errors.forEach(e=>{const row=document.createElement('div');row.className='doc-summary-row';row.style.borderColor='#fecaca';row.style.background='#fef2f2';row.innerHTML=`<div><strong>${escapeHtml(e.filename||'document')}</strong><div class="file-meta" style="color:#991b1b">${escapeHtml(e.error||'Erreur')}</div></div>`;docSummary.appendChild(row)})}
 
@@ -135,6 +142,113 @@
     async function runAnalysis(){if(!selectedFiles.length)return;analyze.disabled=true;analyze.innerHTML='<span class="spinner"></span>Analyse…';analysisStatus.innerHTML='<span class="spinner"></span>Lecture des documents en cours…';notice.className='notice';notice.textContent='CLEANER analyse les fichiers côté serveur avec des règles Python, sans IA.';cadRate.value='';const fd=new FormData();fd.append('mode',mode);selectedFiles.forEach(f=>fd.append('files',f,f.name));try{const r=await fetch('/api/cleaner/analyse?pwd=1234',{method:'POST',body:fd});const text=await r.text();let data={};try{data=text?JSON.parse(text):{}}catch(e){}if(!r.ok&&!(data.rows||[]).length)throw new Error(data.error||(data.errors&&data.errors[0]&&data.errors[0].error)||'Analyse impossible');extractionRows=(data.rows||[]).map(x=>({...x}));documentSummaries=data.documents||[];renderDocSummary(data.errors||[]);renderResults();analysisStatus.textContent=`${extractionRows.length} ligne(s) extraite(s). Les cellules peuvent maintenant être corrigées ou complétées.`;notice.className='notice '+((data.errors||[]).length?'':'ok');notice.textContent=(data.errors||[]).length?'Extraction terminée avec certains fichiers à contrôler.':'Extraction terminée. Corrige les données si besoin, puis utilise « Valider et apprendre ce format ».';document.getElementById('controlSection').scrollIntoView({behavior:'smooth',block:'start'})}catch(e){analysisStatus.textContent='';notice.className='notice error';notice.textContent=e.message||'Erreur pendant l’analyse';extractionRows=[];documentSummaries=[];renderDocSummary();renderResults()}finally{analyze.disabled=!selectedFiles.length;analyze.textContent='ANALYSER'}}
 
     async function validateAndLearn(){if(!extractionRows.length)return;if(!schemaReady){alert('La migration Supabase CLEANER V3 doit être appliquée avant de pouvoir mémoriser les règles. Le fichier SQL est fourni avec la V3.');return}for(const d of documentSummaries){if(d.profile_source==='generic'||String(d.profile||'').toLowerCase()==='générique'){const base=String(d.filename||'Nouveau profil').replace(/\.[^.]+$/,'');const name=prompt('Nouveau format détecté. Donne un nom à ce profil pour le reconnaître plus tard :',base);if(name&&name.trim())d.profile=name.trim()}}learnBtn.disabled=true;const old=learnBtn.textContent;learnBtn.textContent='APPRENTISSAGE…';try{const r=await fetch('/api/cleaner/learn?pwd=1234',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode,fields:currentFields(),rows:extractionRows,documents:documentSummaries})});const d=await r.json().catch(()=>({}));if(!r.ok||d.ok===false)throw new Error(d.error||'Apprentissage impossible');pendingFields=[];try{localStorage.removeItem(legacyStorageKey())}catch(e){}notice.className='notice ok';notice.textContent=`Format validé : ${Number(d.saved_profiles||0)} profil(s), ${Number(d.saved_fields||0)} champ(s) personnalisé(s), ${Number(d.learned_rules||0)} règle(s) mémorisée(s).`;await loadConfig();document.getElementById('learningSection').scrollIntoView({behavior:'smooth',block:'start'})}catch(e){notice.className='notice error';notice.textContent=e.message||'Apprentissage impossible'}finally{learnBtn.disabled=!extractionRows.length;learnBtn.textContent=old}}
+
+
+    function showDestinationStatus(message,kind=''){
+      destinationStatus.textContent=message||'';
+      destinationStatus.className='notice'+(kind?' '+kind:'')+(message?'':' hidden');
+    }
+    function addDestinationButton(label,handler,primary=true){
+      const b=document.createElement('button');b.type='button';b.className='btn'+(primary?' primary':'');b.textContent=label;b.disabled=!extractionRows.length;b.addEventListener('click',handler);destinationActions.appendChild(b);return b;
+    }
+    function renderDestinationActions(){
+      if(!destinationActions)return;destinationActions.innerHTML='';showDestinationStatus('');
+      const hints={douanes:'Enregistre les lignes contrôlées dans le suivi douanes ESI.',articles:'Crée les articles physiques et leurs N° ESI après contrôle des doublons.',enlevement:'Crée un ticket d’enlèvement avec le PDF source et les données analysées.',reception:'Rapproche les références dossier/caisse et valide la réception logistique.',packing:'Une packing list peut alimenter la base Articles ou créer une RECEPTION.',autre:'Aucune destination métier n’est encore définie pour AUTRE.'};
+      destinationHint.textContent=hints[mode]||'';
+      if(mode==='douanes')addDestinationButton('AJOUTER AU SUIVI DOUANES',saveDouanes);
+      else if(mode==='articles')addDestinationButton('IMPORTER DANS ARTICLES',()=>importIntoArticles('articles'));
+      else if(mode==='enlevement')addDestinationButton("CRÉER LE TICKET D'ENLÈVEMENT",createEnlevement);
+      else if(mode==='reception')addDestinationButton('VALIDER LA RÉCEPTION DES CAISSES',validateCaisseReception);
+      else if(mode==='packing'){
+        addDestinationButton('IMPORTER DANS ARTICLES',()=>importIntoArticles('packing'));
+        addDestinationButton('CRÉER RECEPTION',createReceptionFromPacking,false);
+      }
+    }
+    async function dossierLookup(dossier){
+      if(!dossier)return{};
+      try{const r=await fetch('/api/dossiers/lookup?dossier='+encodeURIComponent(dossier),{cache:'no-store'});const d=await r.json();return r.ok?d:{}}catch(e){return{}}
+    }
+    async function askIdentity(defaultDossier='',defaults={}){
+      const dossier=prompt('N° dossier :',defaultDossier||'');if(!dossier||!dossier.trim())return null;
+      const lookup=await dossierLookup(dossier.trim());
+      const client=prompt('Client :',String(lookup.client||defaults.client||''));if(client===null)return null;
+      const projet=prompt('Projet / exposition :',String(lookup.projet||defaults.projet||''));if(projet===null)return null;
+      const coordinateur=defaults.needCoordinateur?prompt('Chargé de projet / coordinateur :',String(lookup.charge_projet||defaults.coordinateur||'')):'';
+      if(defaults.needCoordinateur&&coordinateur===null)return null;
+      return{dossier:dossier.trim(),client:String(client||'').trim(),projet:String(projet||'').trim(),coordinateur:String(coordinateur||'').trim()};
+    }
+    async function importIntoArticles(sourceMode){
+      if(!extractionRows.length)return;
+      const identity=await askIdentity(String(extractionRows[0]?.numero_dossier||''),{});if(!identity)return;
+      showDestinationStatus('Contrôle des doublons en cours…');
+      try{
+        const payload={rows:extractionRows,dossier:identity.dossier,client:identity.client,projet:identity.projet,source_mode:sourceMode,confirm:false};
+        let r=await fetch('/api/cleaner/articles/import?pwd=1234',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        let d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Préparation de l’import impossible');
+        const msg=`${d.articles_demandes||0} article(s) demandé(s)\n${d.articles_a_creer||0} à créer\n${d.doublons_existants||0} déjà présent(s) ignoré(s)\n${d.lignes_invalides||0} ligne(s) invalide(s).\n\nConfirmer l'import dans le dossier ${identity.dossier} ?`;
+        if(!confirm(msg)){showDestinationStatus('Import annulé.');return}
+        payload.confirm=true;
+        r=await fetch('/api/cleaner/articles/import?pwd=1234',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        d=await r.json().catch(()=>({}));if(!r.ok&&r.status!==207)throw new Error(d.error||'Import impossible');
+        showDestinationStatus(`Import terminé : ${d.articles_crees||0} article(s) créé(s), ${d.doublons_ignores||0} doublon(s) ignoré(s).`,'ok');
+        if(confirm('Import terminé. Ouvrir la base Articles ?'))window.open('/articles','_blank','noopener');
+      }catch(e){showDestinationStatus(e.message||'Import impossible','error')}
+    }
+    async function saveDouanes(){
+      if(!extractionRows.length)return;
+      const dossier=prompt('N° dossier pour le suivi douanes :',String(extractionRows[0]?.numero_dossier||''));if(!dossier||!dossier.trim())return;
+      if(!confirm(`Enregistrer ${extractionRows.length} ligne(s) dans le suivi douanes du dossier ${dossier.trim()} ?`))return;
+      showDestinationStatus('Enregistrement douanes en cours…');
+      try{
+        const r=await fetch('/api/cleaner/douanes/save?pwd=1234',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dossier:dossier.trim(),rows:extractionRows})});
+        const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Enregistrement impossible');
+        showDestinationStatus(`Suivi douanes mis à jour : ${d.lignes_enregistrees||0} ligne(s) ajoutée(s), ${d.doublons_ignores||0} doublon(s) ignoré(s).`,'ok');
+      }catch(e){showDestinationStatus(e.message||'Enregistrement impossible','error')}
+    }
+    async function createEnlevement(){
+      if(!extractionRows.length)return;
+      if(documentSummaries.length!==1){showDestinationStatus("Pour créer un ticket d'enlèvement, analyse un seul bon PDF à la fois.",'error');return}
+      const row=extractionRows[0]||{};const analysis=row._analysis||{};
+      if(!analysis||!Object.keys(analysis).length){showDestinationStatus("Le détail technique de l'analyse n'est pas disponible. Relance ANALYSER avec cette version de CLEANER.",'error');return}
+      const identity=await askIdentity(row.numero_dossier||analysis.numero_dossier||'',{client:row.client||analysis.client||'',projet:analysis.exhibition||'',coordinateur:analysis.coordinateur||'',needCoordinateur:true});if(!identity)return;
+      if(!confirm(`Créer le ticket d'enlèvement pour le dossier ${identity.dossier} ?\n${(analysis.items||[]).length} ligne(s) article détectée(s).`))return;
+      showDestinationStatus("Création du ticket d'enlèvement…");
+      try{
+        const fd=new FormData();fd.append('dossier',identity.dossier);fd.append('client',identity.client);fd.append('projet',identity.projet);fd.append('coordinateur',identity.coordinateur);fd.append('analysis',JSON.stringify(analysis));selectedFiles.forEach(f=>fd.append('files',f,f.name));
+        const r=await fetch('/api/cleaner/enlevement/create?pwd=1234',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Création impossible');
+        showDestinationStatus(`Ticket ${d.id} créé : ${d.articles_reutilises||0} article(s) existant(s) rattaché(s), ${d.articles_crees||0} créé(s).`,'ok');
+      }catch(e){showDestinationStatus(e.message||'Création impossible','error')}
+    }
+    async function validateCaisseReception(){
+      if(!extractionRows.length)return;
+      const localisation=prompt('Localisation de réception des caisses :','');if(!localisation||!localisation.trim())return;
+      showDestinationStatus('Rapprochement avec les fiches de caisse…');
+      try{
+        const preview=new FormData();preview.append('localisation',localisation.trim());preview.append('confirm','false');preview.append('rows',JSON.stringify(extractionRows));
+        let r=await fetch('/api/cleaner/reception/validate?pwd=1234',{method:'POST',body:preview});let d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Rapprochement impossible');
+        if(!confirm(`${d.found_count||0} caisse(s) trouvée(s) dans ESI TICKETS.\n${d.missing_count||0} non trouvée(s).\n\nValider la réception à « ${localisation.trim()} » ?`)){showDestinationStatus('Réception annulée.');return}
+        const fd=new FormData();fd.append('localisation',localisation.trim());fd.append('confirm','true');fd.append('rows',JSON.stringify(extractionRows));selectedFiles.forEach(f=>fd.append('files',f,f.name));
+        r=await fetch('/api/cleaner/reception/validate?pwd=1234',{method:'POST',body:fd});d=await r.json().catch(()=>({}));if(!r.ok&&r.status!==207)throw new Error(d.error||'Validation impossible');
+        showDestinationStatus(`Réception validée : ${d.updated_count||0} caisse(s) mise(s) à jour, ${d.missing_count||0} non trouvée(s).`,'ok');
+      }catch(e){showDestinationStatus(e.message||'Validation impossible','error')}
+    }
+    function localToday(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+    async function createReceptionFromPacking(){
+      if(!extractionRows.length)return;
+      const identity=await askIdentity('',{needCoordinateur:true});if(!identity)return;
+      if(!identity.client||!identity.projet||!identity.coordinateur){showDestinationStatus('Client, projet et coordinateur sont obligatoires pour créer une RECEPTION.','error');return}
+      const dateReception=prompt('Date de réception prévue (AAAA-MM-JJ) :',localToday());if(!dateReception)return;
+      const expediteur=prompt('Expéditeur (facultatif) :','')||'';
+      const transporteur=prompt('Transporteur (facultatif) :','')||'';
+      const transporteurRef=prompt('Référence transporteur / BL (facultatif) :','')||'';
+      if(!confirm(`Créer une RECEPTION pour le dossier ${identity.dossier} avec ${extractionRows.length} ligne(s) ?`))return;
+      showDestinationStatus('Création de la RECEPTION…');
+      try{
+        const fd=new FormData();fd.append('dossier',identity.dossier);fd.append('client',identity.client);fd.append('projet',identity.projet);fd.append('coordinateur',identity.coordinateur);fd.append('date_reception',dateReception);fd.append('expediteur_nom',expediteur);fd.append('transporteur_nom',transporteur);fd.append('transporteur_ref',transporteurRef);fd.append('rows',JSON.stringify(extractionRows));selectedFiles.forEach(f=>fd.append('files',f,f.name));
+        const r=await fetch('/api/cleaner/reception/create?pwd=1234',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Création impossible');
+        showDestinationStatus(`RECEPTION ${d.id} créée : ${d.articles_reutilises||0} article(s) existant(s) réutilisé(s), ${d.articles_crees||0} article(s) créé(s).`,'ok');
+      }catch(e){showDestinationStatus(e.message||'Création impossible','error')}
+    }
 
     grid.addEventListener('click',async e=>{const btn=e.target.closest('.mode');if(!btn)return;mode=btn.dataset.mode;document.querySelectorAll('.mode').forEach(x=>x.classList.toggle('active',x===btn));currentModeText.textContent='Mode sélectionné : '+modeLabels[mode];extractionRows=[];documentSummaries=[];pendingFields=[];analysisStatus.textContent='';docSummary.innerHTML='';cadRate.value='';updateModeNotice();await loadConfig()});
     drop.addEventListener('click',()=>input.click());input.addEventListener('change',e=>{addFiles(e.target.files);input.value=''});['dragenter','dragover'].forEach(evt=>drop.addEventListener(evt,e=>{e.preventDefault();drop.classList.add('drag')}));['dragleave','dragend'].forEach(evt=>drop.addEventListener(evt,e=>{e.preventDefault();drop.classList.remove('drag')}));drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('drag');addFiles(e.dataTransfer.files)});list.addEventListener('click',e=>{const b=e.target.closest('.remove');if(!b)return;selectedFiles.splice(Number(b.dataset.index),1);renderFiles()});clear.addEventListener('click',()=>{selectedFiles=[];extractionRows=[];documentSummaries=[];renderFiles();renderDocSummary();renderResults();analysisStatus.textContent='';cadRate.value=''});analyze.addEventListener('click',runAnalysis);
@@ -153,7 +267,7 @@
 
     exportBtn.addEventListener('click',async()=>{if(!extractionRows.length)return;const fields=currentFields();const exportRows=extractionRows.map(row=>{const out={};fields.forEach(f=>out[f.id]=row[f.id]??'');return out});exportBtn.disabled=true;const old=exportBtn.textContent;exportBtn.textContent='Préparation…';try{const r=await fetch('/api/cleaner/export-excel?pwd=1234',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode,fields,rows:exportRows})});if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||'Export impossible')}const blob=await r.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CLEANER_${mode.toUpperCase()}.xlsx`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1200)}catch(e){alert(e.message||'Export impossible')}finally{exportBtn.disabled=false;exportBtn.textContent=old}});
 
-    renderFiles();updateModeNotice();loadConfig();
+    renderFiles();updateModeNotice();renderDestinationActions();loadConfig();
   </script>
 </body>
 </html>
