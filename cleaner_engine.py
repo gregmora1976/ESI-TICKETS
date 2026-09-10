@@ -1071,6 +1071,260 @@ def extract_articles_xlsx(
     }
 
 
+def _split_dimensions_cm(value) -> Tuple[str, str, str]:
+    """Extrait L x l x H depuis une dimension libre, sans inventer de valeur."""
+    raw = _text(value)
+    if not raw:
+        return "", "", ""
+    nums = re.findall(r"[-+]?\d+(?:[.,]\d+)?", raw)
+    if len(nums) < 3:
+        return "", "", ""
+    vals = [x.replace(",", ".") for x in nums[:3]]
+    return vals[0], vals[1], vals[2]
+
+
+def _article_pdf_signature(pdf, full_text: str) -> List[str]:
+    terms = []
+    for raw in (full_text or "").replace("\r", "").splitlines()[:180]:
+        n = _norm(raw)
+        if not n or len(n) > 120:
+            continue
+        if any(k in n for k in (
+            "packing list", "liste de colisage", "colis", "reference", "description",
+            "quantite", "dimensions", "poids net", "poids brut", "gross weight",
+            "net weight", "jouffre", "incoterm", "mode de transport",
+        )):
+            terms.append(n)
+    for page in list(pdf.pages)[:4]:
+        try:
+            tables = page.extract_tables() or []
+        except Exception:
+            tables = []
+        for table in tables[:3]:
+            for row in (table or [])[:12]:
+                for cell in row or []:
+                    n = _norm(cell)
+                    if n and 2 <= len(n) <= 100 and any(k in n for k in (
+                        "colis", "reference", "description", "quantite", "dimensions", "poids", "weight"
+                    )):
+                        terms.append(n)
+    return sorted(set(terms))[:160]
+
+
+def _extract_jouffre_articles_pdf(pdf, filename: str, profile_key: str) -> List[Dict]:
+    """Profil robuste pour les listes de colisage Jouffre type VCO."""
+    rows_out = []
+    current_colis = ""
+    current_zone = ""
+
+    for page_no, page in enumerate(pdf.pages, 1):
+        try:
+            tables = page.extract_tables() or []
+        except Exception:
+            tables = []
+        for table in tables:
+            for raw in table or []:
+                raw = list(raw or []) + [None] * 10
+                first = _text(raw[0])
+                first_norm = _norm(first)
+                if not first and not any(_text(x) for x in raw[1:9]):
+                    continue
+                if "totaux" in first_norm or "nombre total de colis" in first_norm:
+                    continue
+                if first_norm in {"colis n", "colis no", "colis"}:
+                    continue
+
+                if re.fullmatch(r"\d+", first):
+                    current_colis = first
+                elif first and not re.fullmatch(r"\d+", first):
+                    # En-tetes et blocs administratifs de la premiere page.
+                    continue
+
+                zone = _text(raw[1])
+                if zone:
+                    current_zone = zone
+                description = _text(raw[2])
+                reference = _text(raw[3])
+                qty_main = _article_number_text(raw[4])
+                qty_cushions = _article_number_text(raw[5])
+                dims_raw = _text(raw[6])
+                net_weight = _article_number_text(raw[7])
+                gross_weight = _article_number_text(raw[8])
+
+                # Une ligne article doit au minimum contenir une description ou une reference.
+                if not description and not reference:
+                    continue
+                if not current_colis:
+                    continue
+
+                longueur, largeur, hauteur = _split_dimensions_cm(dims_raw)
+                qty = qty_main or "1"
+                row = {
+                    "reference": reference,
+                    "designation": description,
+                    "quantite": qty,
+                    "longueur_cm": longueur,
+                    "largeur_cm": largeur,
+                    "hauteur_cm": hauteur,
+                    "poids_kg": net_weight,
+                    "poids_brut_kg": gross_weight,
+                    "quantite_coussins": qty_cushions,
+                    "colis": current_colis,
+                    "zone": current_zone,
+                    "dimensions": _dimensions(dims_raw, "cm") if dims_raw else "",
+                    "observation": current_zone,
+                    "source_file": filename,
+                    "source_page": page_no,
+                    "source_headers": {
+                        "reference": "Référence",
+                        "designation": "Description",
+                        "quantite": "Quantité Canapés/Fauteuils/Voilages/Rideaux",
+                        "dimensions": "Dimensions (Cm)",
+                        "poids_kg": "Poids net (kg)",
+                    },
+                    "_profile_key": profile_key,
+                }
+                rows_out.append(row)
+    return rows_out
+
+
+def _extract_generic_articles_pdf(pdf, filename: str, profile_key: str) -> List[Dict]:
+    """Secours PDF generique pour tableaux simples ARTICLES/PACKING LIST."""
+    rows_out = []
+    current_colis = ""
+    for page_no, page in enumerate(pdf.pages, 1):
+        try:
+            tables = page.extract_tables() or []
+        except Exception:
+            tables = []
+        for table in tables:
+            if not table:
+                continue
+            best = None
+            for i, raw in enumerate((table or [])[:10]):
+                mapping = {}
+                headers = {}
+                for col, value in enumerate(raw or []):
+                    n = _norm(value)
+                    if not n:
+                        continue
+                    if n in {"reference", "ref", "ref esi", "item id", "object id"} or "reference" in n:
+                        mapping.setdefault("reference", col); headers.setdefault("reference", _text(value))
+                    elif n in {"description", "designation", "title", "object name"} or "description" in n:
+                        mapping.setdefault("designation", col); headers.setdefault("designation", _text(value))
+                    elif n in {"quantite", "qte", "qty", "quantity"} or n.startswith("quantite "):
+                        mapping.setdefault("quantite", col); headers.setdefault("quantite", _text(value))
+                    elif "dimension" in n or n in {"dims", "size"}:
+                        mapping.setdefault("dimensions", col); headers.setdefault("dimensions", _text(value))
+                    elif "poids net" in n or "net weight" in n:
+                        mapping.setdefault("poids_kg", col); headers.setdefault("poids_kg", _text(value))
+                    elif "poids brut" in n or "gross weight" in n:
+                        mapping.setdefault("poids_brut_kg", col); headers.setdefault("poids_brut_kg", _text(value))
+                    elif n in {"colis", "colis n", "colis no", "crate", "case", "package"} or n.startswith("colis "):
+                        mapping.setdefault("colis", col); headers.setdefault("colis", _text(value))
+                score = len(mapping) + (2 if "designation" in mapping else 0) + (1 if "reference" in mapping else 0)
+                if score >= 4 and (best is None or score > best[0]):
+                    best = (score, i, mapping, headers)
+            if not best:
+                continue
+            _, header_idx, mapping, headers = best
+            for raw in table[header_idx + 1:]:
+                raw = list(raw or [])
+                def cell(name):
+                    idx = mapping.get(name)
+                    return raw[idx] if idx is not None and idx < len(raw) else None
+                colis = _text(cell("colis"))
+                if colis:
+                    if "total" in _norm(colis):
+                        continue
+                    current_colis = colis
+                designation = _text(cell("designation"))
+                reference = _text(cell("reference"))
+                if not designation and not reference:
+                    continue
+                dims_raw = _text(cell("dimensions"))
+                longueur, largeur, hauteur = _split_dimensions_cm(dims_raw)
+                row = {
+                    "reference": reference,
+                    "designation": designation,
+                    "quantite": _article_number_text(cell("quantite"), "1") or "1",
+                    "longueur_cm": longueur,
+                    "largeur_cm": largeur,
+                    "hauteur_cm": hauteur,
+                    "poids_kg": _article_number_text(cell("poids_kg")),
+                    "poids_brut_kg": _article_number_text(cell("poids_brut_kg")),
+                    "colis": current_colis,
+                    "dimensions": _dimensions(dims_raw, "cm") if dims_raw else "",
+                    "observation": "",
+                    "source_file": filename,
+                    "source_page": page_no,
+                    "source_headers": headers,
+                    "_profile_key": profile_key,
+                }
+                rows_out.append(row)
+    return rows_out
+
+
+def extract_articles_pdf(
+    filename: str,
+    content: bytes,
+    learned_profiles: List[Dict] | None = None,
+    learned_rules: List[Dict] | None = None,
+) -> Dict:
+    import pdfplumber
+
+    with pdfplumber.open(BytesIO(content)) as pdf:
+        full_text = "\n".join((page.extract_text() or "") for page in pdf.pages)
+        signature = _article_pdf_signature(pdf, full_text)
+        n = _norm(full_text)
+        builtin_profile = ""
+        if "jouffre maroc" in n and "liste de colisage" in n:
+            builtin_profile = "Jouffre - Liste de colisage VCO"
+
+        matched_profile = None
+        learned_score = 0.0
+        if not builtin_profile:
+            matched_profile, learned_score = _best_learned_profile(signature, learned_profiles)
+
+        if builtin_profile:
+            profile = builtin_profile
+            profile_key = _profile_key("articles", profile)
+            profile_confidence = 1.0
+            profile_source = "built-in"
+        elif matched_profile:
+            profile = _text(matched_profile.get("name")) or "PDF - profil ARTICLES appris"
+            profile_key = _text(matched_profile.get("profile_key")) or _profile_key("articles", profile)
+            profile_confidence = learned_score
+            profile_source = "learned"
+        else:
+            profile = "PDF ARTICLES - structure reconnue"
+            profile_key = f"articles:pdf:{_signature_hash(signature)}"
+            profile_confidence = learned_score
+            profile_source = "generic"
+
+        if builtin_profile:
+            rows = _extract_jouffre_articles_pdf(pdf, filename, profile_key)
+        else:
+            rows = _extract_generic_articles_pdf(pdf, filename, profile_key)
+
+    if not rows and not builtin_profile and not matched_profile:
+        profile = "PDF ARTICLES - aucun tableau reconnu"
+
+    return {
+        "filename": filename,
+        "profile": profile,
+        "profile_key": profile_key,
+        "profile_confidence": profile_confidence,
+        "profile_source": profile_source,
+        "signature": signature,
+        "owner": "",
+        "row_count": len(rows),
+        "rows": rows,
+        "sheets": [],
+        "detected_headers": [],
+    }
+
+
 def extract_articles_document(
     filename: str,
     content: bytes,
@@ -1080,4 +1334,6 @@ def extract_articles_document(
     lower = filename.lower()
     if lower.endswith(".xlsx"):
         return extract_articles_xlsx(filename, content, learned_profiles, learned_rules)
-    raise ValueError("Format non encore pris en charge par le moteur ARTICLES (XLSX disponible dans cette version).")
+    if lower.endswith(".pdf"):
+        return extract_articles_pdf(filename, content, learned_profiles, learned_rules)
+    raise ValueError("Format non encore pris en charge par le moteur ARTICLES (PDF et XLSX disponibles dans cette version).")

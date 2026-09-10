@@ -4922,7 +4922,7 @@ def api_cleaner_analyse():
             'errors': errors,
         }), (200 if rows else 422)
 
-    if mode == 'articles':
+    if mode in ('articles', 'packing'):
         try:
             from cleaner_engine import extract_articles_document
         except Exception as e:
@@ -4941,20 +4941,42 @@ def api_cleaner_analyse():
                     learned_rules=learned_rules,
                 )
                 profile_key = _as_text(result.get('profile_key')).strip()
-                for row in result.get('rows') or []:
-                    if isinstance(row, dict):
-                        row['_profile_key'] = profile_key
-                _cleaner_apply_persistent_fields(result.get('rows') or [], persistent_fields)
+                if mode == 'packing' and profile_key.startswith('articles:'):
+                    profile_key = 'packing:' + profile_key.split(':', 1)[1]
+                    result['profile_key'] = profile_key
+                prepared_rows = []
+                for source_row in result.get('rows') or []:
+                    if not isinstance(source_row, dict):
+                        continue
+                    row = dict(source_row)
+                    row['_profile_key'] = profile_key
+                    if mode == 'packing':
+                        dims = _as_text(row.get('dimensions')).strip()
+                        if not dims:
+                            parts = [
+                                _as_text(row.get('longueur_cm')).strip(),
+                                _as_text(row.get('largeur_cm')).strip(),
+                                _as_text(row.get('hauteur_cm')).strip(),
+                            ]
+                            if any(parts):
+                                dims = ' × '.join(x or '-' for x in parts) + ' cm'
+                        row['dimensions'] = dims
+                        row['poids'] = _as_text(row.get('poids_brut_kg')).strip() or _as_text(row.get('poids_kg')).strip()
+                        row['observation'] = _as_text(row.get('observation')).strip() or _as_text(row.get('zone')).strip()
+                    prepared_rows.append(row)
+                result['rows'] = prepared_rows
+                result['row_count'] = len(prepared_rows)
+                _cleaner_apply_persistent_fields(prepared_rows, persistent_fields)
                 results.append(result)
             except Exception as e:
-                print(f'[CLEANER ARTICLES] {filename}: {e}')
+                print(f'[CLEANER {mode.upper()}] {filename}: {e}')
                 errors.append({'filename': filename, 'error': str(e)})
 
         all_rows = [row for result in results for row in (result.get('rows') or [])]
         if not all_rows and results and not errors:
             errors.append({
                 'filename': results[0].get('filename') or 'document',
-                'error': "Aucune liste d'articles reconnue. CLEANER cherche les en-têtes dans les premières lignes de chaque onglet."
+                'error': "Aucune liste d'articles reconnue. CLEANER cherche les en-têtes et tableaux dans les documents."
             })
         return jsonify({
             'ok': bool(all_rows) and not errors,
@@ -4996,6 +5018,7 @@ def api_cleaner_analyse():
                     'instructions': parsed.get('instructions') or '',
                     'source_file': filename, 'source_page': '', 'source_headers': {},
                     '_profile_key': 'enlevement:bon-enlevement',
+                    '_analysis': {k: v for k, v in parsed.items() if k != 'raw_text'},
                 }
                 _cleaner_apply_persistent_fields([row], persistent_fields)
                 results.append({
@@ -5052,6 +5075,703 @@ def api_cleaner_analyse():
 
     return jsonify({'ok': False, 'error': "Ce type d'extraction est prêt dans l'interface mais son moteur n'est pas encore défini."}), 501
 
+
+
+# -----------------------------------------------------------------------------
+# CLEANER V3.3 - destinations métier après contrôle
+# -----------------------------------------------------------------------------
+def _cleaner_check_pwd():
+    return request.args.get('pwd') == '1234'
+
+
+def _cleaner_num(value, default=0.0):
+    try:
+        return float(_as_text(value).strip().replace(',', '.'))
+    except Exception:
+        return float(default)
+
+
+def _cleaner_article_values(row):
+    row = dict(row or {})
+    longueur = _as_text(row.get('longueur_cm')).strip()
+    largeur = _as_text(row.get('largeur_cm')).strip()
+    hauteur = _as_text(row.get('hauteur_cm')).strip()
+    if not any((longueur, largeur, hauteur)):
+        dims = _as_text(row.get('dimensions')).strip()
+        nums = re.findall(r"[-+]?\d+(?:[.,]\d+)?", dims)
+        if len(nums) >= 3:
+            longueur, largeur, hauteur = [x.replace(',', '.') for x in nums[:3]]
+    return {
+        'reference': _as_text(row.get('reference')).strip(),
+        'description': _as_text(row.get('designation') or row.get('description') or row.get('title')).strip(),
+        'longueur_cm': longueur,
+        'largeur_cm': largeur,
+        'hauteur_cm': hauteur,
+        'poids_kg': _as_text(row.get('poids_kg') or row.get('poids')).strip(),
+    }
+
+
+def _cleaner_article_plan(rows):
+    """Prépare un import en conservant la quantité totale des lignes identiques."""
+    requested = {}
+    row_data = []
+    errors = []
+    for index, row in enumerate(rows or [], 1):
+        values = _cleaner_article_values(row)
+        if not values['reference'] and not values['description']:
+            errors.append({'ligne': index, 'error': 'Référence et désignation toutes les deux vides'})
+            continue
+        qty = _article_quantity((row or {}).get('quantite'), 1)
+        sig = _article_import_signature(values)
+        requested[sig] = requested.get(sig, 0) + qty
+        row_data.append({'index': index, 'row': dict(row or {}), 'values': values, 'qty': qty, 'signature': sig})
+    return requested, row_data, errors
+
+
+def _cleaner_existing_counts():
+    return _article_import_existing_counts()
+
+
+def _cleaner_resolve_dossier_identity(dossier, client='', projet=''):
+    identity = _article_dossier_identity(dossier)
+    final_client = _as_text(identity.get('client')).strip() or _as_text(client).strip()
+    final_projet = _as_text(identity.get('projet')).strip() or _as_text(projet).strip()
+    return final_client, final_projet, identity
+
+
+@app.route('/api/cleaner/articles/import', methods=['POST'])
+def api_cleaner_import_articles():
+    """Prévisualise puis importe le tableau contrôlé CLEANER dans la base Articles."""
+    if not _cleaner_check_pwd():
+        return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
+    data = request.get_json(silent=True) or {}
+    rows = data.get('rows') or []
+    dossier = _as_text(data.get('dossier')).strip()
+    client = _as_text(data.get('client')).strip()
+    projet = _as_text(data.get('projet')).strip()
+    confirm_import = bool(data.get('confirm'))
+    source_mode = _as_text(data.get('source_mode') or 'articles').strip().upper()
+
+    if not dossier:
+        return jsonify({'ok': False, 'error': 'Le N° dossier est obligatoire.'}), 400
+    if not isinstance(rows, list) or not rows:
+        return jsonify({'ok': False, 'error': 'Aucune ligne CLEANER à importer.'}), 400
+
+    requested, row_data, errors = _cleaner_article_plan(rows)
+    try:
+        existing = _cleaner_existing_counts()
+        final_client, final_projet, identity = _cleaner_resolve_dossier_identity(dossier, client, projet)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'Impossible de préparer l’import : {e}'}), 500
+
+    to_create_by_sig = {
+        sig: max(0, qty - int(existing.get(sig, 0)))
+        for sig, qty in requested.items()
+    }
+    requested_total = sum(requested.values())
+    create_total = sum(to_create_by_sig.values())
+    duplicate_total = requested_total - create_total
+
+    preview = {
+        'ok': not errors,
+        'preview': True,
+        'dossier': dossier,
+        'client': final_client,
+        'projet': final_projet,
+        'identity_from_existing_dossier': bool(identity.get('client') or identity.get('projet')),
+        'lignes_lues': len(row_data),
+        'articles_demandes': requested_total,
+        'articles_a_creer': create_total,
+        'doublons_existants': duplicate_total,
+        'lignes_invalides': len(errors),
+        'errors': errors,
+    }
+    if not confirm_import:
+        return jsonify(preview), (200 if row_data else 400)
+
+    if errors:
+        return jsonify({**preview, 'ok': False, 'error': 'Corrige les lignes invalides avant import.'}), 400
+
+    remaining = dict(to_create_by_sig)
+    stats = {
+        'lignes_lues': len(row_data),
+        'articles_demandes': requested_total,
+        'articles_crees': 0,
+        'doublons_ignores': duplicate_total,
+        'esi_ids': [],
+        'errors': [],
+    }
+    now = datetime.now().isoformat()
+
+    with _ARTICLE_LOCK:
+        for item in row_data:
+            sig = item['signature']
+            quota = remaining.get(sig, 0)
+            if quota <= 0:
+                continue
+            create_for_row = min(item['qty'], quota)
+            for unit_no in range(1, create_for_row + 1):
+                values = item['values']
+                source_row = item['row']
+                payload = {
+                    'ticket_id': None,
+                    'source_module': f'CLEANER - {source_mode}',
+                    'source_index': item['index'],
+                    'unit_index': unit_no,
+                    'reference': values['reference'],
+                    'description': values['description'],
+                    'dossier': dossier,
+                    'client': final_client,
+                    'projet': final_projet,
+                    'ref_caisse': _as_text(source_row.get('numero_caisse') or source_row.get('colis')).strip(),
+                    'transporteur_ref': '',
+                    'longueur_cm': values['longueur_cm'],
+                    'largeur_cm': values['largeur_cm'],
+                    'hauteur_cm': values['hauteur_cm'],
+                    'volume_m3': '',
+                    'surface_m2': '',
+                    'poids_kg': values['poids_kg'],
+                    'lieu_stockage': '',
+                    'statut_logistique': 'Créé',
+                    'created_at': now,
+                    'updated_at': now,
+                    'raw_json': {
+                        'source': 'cleaner',
+                        'source_mode': source_mode,
+                        'source_file': source_row.get('source_file') or '',
+                        'source_sheet': source_row.get('source_sheet') or '',
+                        'source_page': source_row.get('source_page') or '',
+                        'quantity_source': item['qty'],
+                        'unit_index': unit_no,
+                        'cleaner_row': {k: v for k, v in source_row.items() if not str(k).startswith('_')},
+                    },
+                }
+                payload['search_text'] = _article_search_text(payload)
+                try:
+                    article = _create_article_record(payload)
+                    stats['articles_crees'] += 1
+                    if article.get('esi_id'):
+                        stats['esi_ids'].append(article['esi_id'])
+                    remaining[sig] = max(0, remaining.get(sig, 0) - 1)
+                except Exception as e:
+                    stats['errors'].append({'ligne': item['index'], 'error': str(e)})
+                    break
+
+    try:
+        if final_client or final_projet:
+            _article_sync_dossier_identity(dossier, final_client or None, final_projet or None)
+    except Exception as e:
+        stats['errors'].append({'ligne': 0, 'error': f'Synchronisation dossier : {e}'})
+
+    return jsonify({
+        'ok': not stats['errors'],
+        'preview': False,
+        'dossier': dossier,
+        'client': final_client,
+        'projet': final_projet,
+        **stats,
+    }), (200 if not stats['errors'] else 207)
+
+
+@app.route('/api/cleaner/douanes/save', methods=['POST'])
+def api_cleaner_save_douanes():
+    """Enregistre les lignes DOUANES validées dans une table métier dédiée."""
+    if not _cleaner_check_pwd():
+        return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
+    data = request.get_json(silent=True) or {}
+    dossier = _as_text(data.get('dossier')).strip()
+    rows = data.get('rows') or []
+    if not dossier:
+        return jsonify({'ok': False, 'error': 'Le N° dossier est obligatoire.'}), 400
+    if not isinstance(rows, list) or not rows:
+        return jsonify({'ok': False, 'error': 'Aucune ligne douanière à enregistrer.'}), 400
+
+    try:
+        existing_rows = supabase_rest_request(
+            'GET', 'cleaner_douanes',
+            f'select=record_hash&dossier=eq.{urllib.parse.quote(dossier, safe="")}&limit=10000'
+        ) or []
+    except Exception as e:
+        msg = str(e)
+        if 'cleaner_douanes' in msg or '42P01' in msg or 'does not exist' in msg.lower():
+            return jsonify({
+                'ok': False,
+                'migration_required': True,
+                'error': "La table Supabase 'cleaner_douanes' n'existe pas encore. Exécute le script SQL CLEANER V3.3 une seule fois dans DBeaver."
+            }), 503
+        return jsonify({'ok': False, 'error': msg}), 500
+
+    existing_hashes = {_as_text(x.get('record_hash')).strip() for x in existing_rows}
+    to_insert = []
+    ignored = 0
+    now = datetime.now().isoformat()
+    technical = {'source_headers', 'source_value_number', '_profile_key', '_analysis'}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        clean_row = {k: v for k, v in row.items() if k not in technical and not str(k).startswith('_')}
+        identity = {
+            'owner': _as_text(row.get('owner')).strip(),
+            'title': _as_text(row.get('title')).strip(),
+            'medium': _as_text(row.get('medium')).strip(),
+            'hs_code': _as_text(row.get('hs_code')).strip(),
+            'license': _as_text(row.get('license')).strip(),
+            'dimensions': _as_text(row.get('dimensions')).strip(),
+            'value_usd': _as_text(row.get('value_usd')).strip(),
+            'country_origin': _as_text(row.get('country_origin') or row.get('custom_pays_d_origine')).strip(),
+            'source_file': _as_text(row.get('source_file')).strip(),
+            'source_page': _as_text(row.get('source_page')).strip(),
+        }
+        record_hash = hashlib.sha1(
+            json.dumps(identity, ensure_ascii=False, sort_keys=True).encode('utf-8')
+        ).hexdigest()
+        if record_hash in existing_hashes:
+            ignored += 1
+            continue
+        existing_hashes.add(record_hash)
+        to_insert.append({
+            'dossier': dossier,
+            **identity,
+            'record_hash': record_hash,
+            'raw_json': clean_row,
+            'created_at': now,
+            'updated_at': now,
+        })
+
+    created = 0
+    if to_insert:
+        try:
+            inserted = supabase_rest_request(
+                'POST', 'cleaner_douanes', '', to_insert, prefer='return=representation'
+            ) or []
+            created = len(inserted) if inserted else len(to_insert)
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)}), 500
+
+    return jsonify({
+        'ok': True,
+        'dossier': dossier,
+        'lignes_recues': len(rows),
+        'lignes_enregistrees': created,
+        'doublons_ignores': ignored,
+    })
+
+
+def _cleaner_attach_ticket_files(ticket_id, incoming_files):
+    out = []
+    for fs in incoming_files or []:
+        if not fs or not fs.filename:
+            continue
+        content = fs.read()
+        if not content:
+            continue
+        clean_name = safe_filename(fs.filename)
+        storage_path = f"{ticket_id}/{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{clean_name}"
+        supabase_upload_bytes(storage_path, content, fs.content_type or 'application/octet-stream')
+        out.append({'name': fs.filename, 'size': len(content), 'path': storage_path})
+    return out
+
+
+def _cleaner_reuse_existing_items(dossier, items):
+    """Rattache des ESI déjà présents dans le même dossier avant de créer les manquants."""
+    safe_dossier = urllib.parse.quote(_as_text(dossier).strip(), safe='')
+    rows = supabase_rest_request(
+        'GET', 'articles', f'select=*&dossier=eq.{safe_dossier}&limit=10000'
+    ) or []
+    by_sig = {}
+    for article in rows:
+        sig = _article_import_signature({
+            'reference': article.get('reference'),
+            'description': article.get('description'),
+            'longueur_cm': article.get('longueur_cm'),
+            'largeur_cm': article.get('largeur_cm'),
+            'hauteur_cm': article.get('hauteur_cm'),
+            'poids_kg': article.get('poids_kg'),
+        })
+        if sig.strip('|'):
+            by_sig.setdefault(sig, []).append(_article_row_to_public(article))
+
+    reused = 0
+    used = set()
+    prepared = []
+    for source in items:
+        item = dict(source or {})
+        qty = _article_quantity(item.get('quantite'), 1)
+        sig = _article_import_signature({
+            'reference': item.get('reference'),
+            'description': item.get('description'),
+            'longueur_cm': item.get('longueur_cm'),
+            'largeur_cm': item.get('largeur_cm'),
+            'hauteur_cm': item.get('hauteur_cm'),
+            'poids_kg': item.get('poids_kg'),
+        })
+        chosen = []
+        for article in by_sig.get(sig, []):
+            esi = _as_text(article.get('esi_id')).strip()
+            if not esi or esi in used:
+                continue
+            chosen.append(esi)
+            used.add(esi)
+            if len(chosen) >= qty:
+                break
+        if chosen:
+            item['esi_ids'] = chosen
+            item['esi_id'] = chosen[0]
+            reused += len(chosen)
+        prepared.append(item)
+    return prepared, reused
+
+
+
+@app.route('/api/cleaner/reception/validate', methods=['POST'])
+def api_cleaner_validate_reception():
+    """Prévisualise puis valide une réception de caisses depuis les lignes corrigées dans CLEANER."""
+    if not _cleaner_check_pwd():
+        return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
+    localisation = _as_text(request.form.get('localisation')).strip()
+    confirm_validation = _as_text(request.form.get('confirm')).strip().lower() in ('1', 'true', 'yes')
+    try:
+        rows = json.loads(request.form.get('rows') or '[]')
+    except Exception:
+        rows = []
+    if not localisation:
+        return jsonify({'ok': False, 'error': 'La localisation est obligatoire.'}), 400
+    if not isinstance(rows, list) or not rows:
+        return jsonify({'ok': False, 'error': 'Aucune caisse à réceptionner.'}), 400
+
+    references = []
+    seen = set()
+    for row in rows:
+        dossier = _as_text((row or {}).get('numero_dossier')).strip()
+        numero_pdf = _as_text((row or {}).get('reference')).strip()
+        numero = _normalise_numero_caisse(numero_pdf)
+        key = (dossier, numero)
+        if dossier and numero and key not in seen:
+            seen.add(key)
+            references.append({'dossier': dossier, 'numero': numero, 'numero_pdf': numero_pdf or numero})
+    if not references:
+        return jsonify({'ok': False, 'error': 'Aucune référence dossier/caisse exploitable.'}), 400
+
+    matches = _match_reception_refs_to_tickets(references)
+    found = [x for x in matches if x.get('found') and x.get('ticket_id')]
+    preview = {
+        'ok': bool(found),
+        'preview': True,
+        'found_count': len(found),
+        'missing_count': len(matches) - len(found),
+        'items': matches,
+        'localisation': localisation,
+    }
+    if not confirm_validation:
+        return jsonify(preview), (200 if found else 422)
+    if not found:
+        return jsonify({**preview, 'ok': False, 'error': 'Aucune caisse ESI TICKETS correspondante.'}), 422
+
+    bl_numero = ''
+    bl_date = ''
+    for row in rows:
+        if not bl_numero:
+            bl_numero = _as_text((row or {}).get('bl_br')).strip()
+        if not bl_date:
+            bl_date = _as_text((row or {}).get('date')).strip()
+
+    files = [fs for fs in request.files.getlist('files') if fs and fs.filename]
+    if not files:
+        return jsonify({'ok': False, 'error': 'Le PDF source est nécessaire pour rattacher le BL à la réception.'}), 400
+    fs = files[0]
+    content = fs.read()
+    if not content:
+        return jsonify({'ok': False, 'error': 'Le PDF source est vide.'}), 400
+    pdf_hash = hashlib.sha256(content).hexdigest()[:16]
+    safe_bl = safe_filename(bl_numero or 'sans_numero')
+    bl_filename = fs.filename
+    bl_storage_path = f"reception_bls/{safe_bl}_{pdf_hash}_{safe_filename(bl_filename)}"
+    try:
+        supabase_upload_bytes(bl_storage_path, content, fs.content_type or 'application/pdf')
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'Upload du BL impossible : {e}'}), 500
+
+    updated = []
+    errors = []
+    receptionnee_le = datetime.now().isoformat()
+    for match in found:
+        ticket_id = _as_text(match.get('ticket_id')).strip()
+        try:
+            ticket = load_ticket(ticket_id)
+            if not ticket or ticket.get('module') != 'Fiche de caisse':
+                errors.append({'ticket_id': ticket_id, 'error': 'Fiche de caisse introuvable'})
+                continue
+            fiche = dict(ticket.get('fiche') or {})
+            if not fiche:
+                errors.append({'ticket_id': ticket_id, 'error': 'Fiche de caisse introuvable'})
+                continue
+            fiche['localisation'] = localisation
+            ticket['fiche'] = fiche
+            ticket['reception'] = {
+                'receptionnee': True,
+                'receptionnee_le': receptionnee_le,
+                'localisation': localisation,
+                'mode': 'cleaner_bl',
+                'bl_numero': bl_numero,
+                'bl_date': bl_date,
+                'bl_storage_path': bl_storage_path,
+                'bl_filename': bl_filename,
+            }
+            ticket['updatedAt'] = datetime.now().isoformat()
+            supabase_rest_request(
+                'PATCH', 'fiches', 'ticket_id=eq.' + urllib.parse.quote(ticket_id, safe=''),
+                {'localisation': localisation}, prefer='return=minimal'
+            )
+            supabase_rest_request(
+                'PATCH', 'tickets', 'id=eq.' + urllib.parse.quote(ticket_id, safe=''),
+                {'updated_at': ticket['updatedAt'], 'raw_json': ticket}, prefer='return=minimal'
+            )
+            updated.append(ticket_id)
+        except Exception as e:
+            errors.append({'ticket_id': ticket_id, 'error': str(e)})
+
+    return jsonify({
+        'ok': not errors,
+        'preview': False,
+        'updated_count': len(updated),
+        'updated': updated,
+        'missing_count': len(matches) - len(found),
+        'errors': errors,
+        'bl_numero': bl_numero,
+        'localisation': localisation,
+    }), (200 if not errors else 207)
+
+@app.route('/api/cleaner/reception/create', methods=['POST'])
+def api_cleaner_create_reception():
+    """Crée un avis de réception ESI TICKETS depuis une liste ARTICLES/PACKING contrôlée."""
+    if not _cleaner_check_pwd():
+        return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
+
+    dossier = _as_text(request.form.get('dossier')).strip()
+    client = _as_text(request.form.get('client')).strip()
+    projet = _as_text(request.form.get('projet')).strip()
+    coordinateur = _as_text(request.form.get('coordinateur')).strip()
+    date_reception = _as_text(request.form.get('date_reception')).strip()
+    expediteur_nom = _as_text(request.form.get('expediteur_nom')).strip()
+    transporteur_nom = _as_text(request.form.get('transporteur_nom')).strip()
+    transporteur_ref = _as_text(request.form.get('transporteur_ref')).strip()
+    commentaire = _as_text(request.form.get('commentaire')).strip()
+    try:
+        rows = json.loads(request.form.get('rows') or '[]')
+    except Exception:
+        rows = []
+
+    missing = []
+    if not dossier: missing.append('N° dossier')
+    if not client: missing.append('Client')
+    if not projet: missing.append('Projet')
+    if not coordinateur: missing.append('Coordinateur')
+    if not date_reception: missing.append('Date de réception prévue')
+    if missing:
+        return jsonify({'ok': False, 'error': 'Champ(s) obligatoire(s) : ' + ', '.join(missing)}), 400
+    if not isinstance(rows, list) or not rows:
+        return jsonify({'ok': False, 'error': 'Aucune marchandise à préparer.'}), 400
+
+    items = []
+    total_volume = total_surface = total_weight = 0.0
+    total_qty = 0
+    for row in rows:
+        values = _cleaner_article_values(row)
+        if not values['reference'] and not values['description']:
+            continue
+        qty = _article_quantity((row or {}).get('quantite'), 1)
+        l = _cleaner_num(values['longueur_cm'])
+        w = _cleaner_num(values['largeur_cm'])
+        h = _cleaner_num(values['hauteur_cm'])
+        weight = _cleaner_num(values['poids_kg'])
+        volume = (l * w * h / 1000000.0) if l and w and h else 0.0
+        surface = (l * w / 10000.0) if l and w else 0.0
+        item = {
+            'reference': values['reference'],
+            'description': values['description'],
+            'longueur_cm': values['longueur_cm'],
+            'largeur_cm': values['largeur_cm'],
+            'hauteur_cm': values['hauteur_cm'],
+            'volume_m3': f'{volume:.3f}' if volume else '',
+            'surface_m2': f'{surface:.3f}' if surface else '',
+            'poids_kg': values['poids_kg'],
+            'quantite': str(qty),
+            'ref_caisse': _as_text((row or {}).get('numero_caisse') or (row or {}).get('colis')).strip(),
+        }
+        items.append(item)
+        total_volume += volume * qty
+        total_surface += surface * qty
+        total_weight += weight * qty
+        total_qty += qty
+
+    if not items:
+        return jsonify({'ok': False, 'error': 'Aucune ligne exploitable après contrôle.'}), 400
+
+    try:
+        items, reused_count = _cleaner_reuse_existing_items(dossier, items)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'Contrôle des articles existants impossible : {e}'}), 500
+
+    ticket_id = next_id('ARR')
+    avis = {
+        'dossier_ref': dossier,
+        'client': client,
+        'projet': projet,
+        'date_reception_prevue': date_reception,
+        'coordinateur': coordinateur,
+        'expediteur': {'nom': expediteur_nom, 'adresse': '', 'contact': ''},
+        'transporteur': {'nom': transporteur_nom, 'adresse': '', 'contact': '', 'reference': transporteur_ref},
+        'items': items,
+        'totaux': {
+            'volume_m3': f'{total_volume:.3f}',
+            'surface_m2': f'{total_surface:.3f}',
+            'poids_kg': f'{total_weight:.2f}',
+            'quantite': str(total_qty),
+        },
+        'commentaire': commentaire,
+        'cleaner_source': True,
+    }
+    ticket = {
+        'id': ticket_id,
+        'module': "Avis d'arrivée",
+        'status': 'Demande créée',
+        'createdAt': datetime.now().isoformat(),
+        'dossier': dossier,
+        'ref': transporteur_ref or '-',
+        'preteur': expediteur_nom or '-',
+        'expo': projet,
+        'objet': projet,
+        'chargeProjet': coordinateur,
+        'typeCaisse': '-',
+        'dimensions': '-',
+        'dateEmballage': date_reception,
+        'prixDevis': '-',
+        'dateRdv': '-', 'heureRdv': '-', 'lieuRdv': '-', 'contactRdv': '-',
+        'commentaire': commentaire,
+        'files': [], 'managerSheets': [],
+        'avisArrivee': avis,
+    }
+
+    try:
+        ticket_folder(ticket_id)
+        ticket['files'] = _cleaner_attach_ticket_files(ticket_id, request.files.getlist('files'))
+        save_ticket(ticket)
+        created = _ensure_articles_for_ticket(ticket, save=True)
+        return jsonify({
+            'ok': True,
+            'id': ticket_id,
+            'items': len(items),
+            'articles_reutilises': reused_count,
+            'articles_crees': len(created),
+        }), 201
+    except Exception as e:
+        print(f'[CLEANER RECEPTION] {e}')
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/cleaner/enlevement/create', methods=['POST'])
+def api_cleaner_create_enlevement():
+    """Crée un ticket d'enlèvement depuis l'analyse déjà contrôlée dans CLEANER."""
+    if not _cleaner_check_pwd():
+        return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
+
+    dossier = _as_text(request.form.get('dossier')).strip()
+    client = _as_text(request.form.get('client')).strip()
+    projet = _as_text(request.form.get('projet')).strip()
+    coordinateur = _as_text(request.form.get('coordinateur')).strip()
+    try:
+        analysis = json.loads(request.form.get('analysis') or '{}')
+    except Exception:
+        analysis = {}
+    if not dossier:
+        return jsonify({'ok': False, 'error': 'Le N° dossier est obligatoire.'}), 400
+    if not isinstance(analysis, dict) or not analysis:
+        return jsonify({'ok': False, 'error': "L'analyse du bon d'enlèvement est manquante."}), 400
+
+    clean_analysis = dict(analysis)
+    clean_analysis.pop('raw_text', None)
+    clean_analysis['numero_dossier'] = dossier
+    if client: clean_analysis['client'] = client
+    if projet: clean_analysis['exhibition'] = projet
+    if coordinateur: clean_analysis['coordinateur'] = coordinateur
+    clean_analysis['display_name'] = ' - '.join(x for x in [clean_analysis.get('client'), clean_analysis.get('numero_bon')] if x)
+    clean_analysis['analysis_status'] = 'ready'
+    clean_analysis['analysis_error'] = ''
+    clean_analysis['analysed_at'] = datetime.now().isoformat()
+
+    # Réutilise automatiquement les ESI dont la référence correspond exactement,
+    # en privilégiant ceux du même dossier. Les unités manquantes seront créées.
+    used_esi = set()
+    reused_count = 0
+    items = []
+    for source in clean_analysis.get('items') or []:
+        item = dict(source or {})
+        qty = _article_quantity(item.get('quantite'), 1)
+        candidates = _find_existing_articles_for_reference(item.get('reference'), limit=max(25, qty * 10))
+        candidates.sort(key=lambda x: 0 if _as_text(x.get('dossier')).strip() == dossier else 1)
+        chosen = []
+        for candidate in candidates:
+            esi = _as_text(candidate.get('esi_id')).strip()
+            if not esi or esi in used_esi:
+                continue
+            chosen.append(esi)
+            used_esi.add(esi)
+            if len(chosen) >= qty:
+                break
+        if chosen:
+            item['esi_ids'] = chosen
+            item['esi_id'] = chosen[0]
+            reused_count += len(chosen)
+        item.pop('article_candidates', None)
+        item.pop('source_index', None)
+        items.append(item)
+    clean_analysis['items'] = items
+    clean_analysis['references'] = [_as_text(x.get('reference')).strip() for x in items if _as_text(x.get('reference')).strip()]
+
+    ticket_id = next_id('ENL')
+    date_rdv = '-'
+    raw_date = _as_text(clean_analysis.get('date_enlevement')).strip()
+    if raw_date:
+        for fmt in ('%d/%m/%Y', '%Y-%m-%d'):
+            try:
+                date_rdv = datetime.strptime(raw_date, fmt).strftime('%Y-%m-%d')
+                break
+            except Exception:
+                pass
+
+    ticket = {
+        'id': ticket_id,
+        'module': "Demande d'enlèvement",
+        'status': 'Demande créée',
+        'createdAt': datetime.now().isoformat(),
+        'dossier': dossier,
+        'numeroDossier': dossier,
+        'ref': _as_text(clean_analysis.get('numero_bon')).strip() or '-',
+        'preteur': '-',
+        'expo': projet or _as_text(clean_analysis.get('exhibition')).strip() or '-',
+        'objet': projet or _as_text(clean_analysis.get('exhibition')).strip() or '-',
+        'chargeProjet': coordinateur or _as_text(clean_analysis.get('coordinateur')).strip() or '-',
+        'typeCaisse': '-', 'dimensions': '-', 'dateEmballage': '-', 'prixDevis': '-',
+        'dateRdv': date_rdv, 'heureRdv': '-', 'lieuRdv': '-', 'contactRdv': '-',
+        'commentaire': '', 'files': [], 'managerSheets': [],
+        'enlevement': clean_analysis,
+    }
+
+    try:
+        ticket_folder(ticket_id)
+        ticket['files'] = _cleaner_attach_ticket_files(ticket_id, request.files.getlist('files'))
+        save_ticket(ticket)
+        created = _ensure_articles_for_ticket(ticket, save=True)
+        return jsonify({
+            'ok': True,
+            'id': ticket_id,
+            'articles_reutilises': reused_count,
+            'articles_crees': len(created),
+            'references': len(clean_analysis.get('references') or []),
+        }), 201
+    except Exception as e:
+        print(f'[CLEANER ENLEVEMENT] {e}')
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 @app.route('/api/cleaner/export-excel', methods=['POST'])
 def api_cleaner_export_excel():
