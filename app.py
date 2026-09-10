@@ -2,7 +2,7 @@ from flask import Flask, render_template, jsonify, request, send_file, abort, re
 from pathlib import Path
 import json, webbrowser, os, urllib.request, urllib.parse
 import csv, re, time
-import hashlib, threading
+import hashlib, hmac, threading
 import uuid
 import shutil
 from io import StringIO, BytesIO
@@ -373,6 +373,184 @@ def _as_text(value, default=''):
     if value is None:
         return default
     return str(value)
+
+
+# -----------------------------------------------------------------------------
+# QR code colis - accès mobile en lecture seule
+# -----------------------------------------------------------------------------
+def _colis_qr_secret():
+    """Clé de signature des liens QR. Aucune donnée sensible n'est placée dans le QR."""
+    secret = (
+        os.getenv('ESI_COLIS_QR_SECRET')
+        or SUPABASE_KEY
+        or os.getenv('SECRET_KEY')
+        or 'esi-tickets-colis-fallback'
+    )
+    return _as_text(secret).encode('utf-8')
+
+
+def _colis_qr_token(colis_ref):
+    colis_ref = _as_text(colis_ref).strip()
+    return hmac.new(
+        _colis_qr_secret(),
+        colis_ref.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()[:32]
+
+
+def _colis_qr_url(colis_ref):
+    """URL absolue encodée dans l'étiquette colis."""
+    colis_ref = _as_text(colis_ref).strip()
+    token = _colis_qr_token(colis_ref)
+    try:
+        # Les QR sont destinés à être scannés depuis un téléphone : HTTPS obligatoire.
+        return url_for(
+            'colis_public_page',
+            colis_ref=colis_ref,
+            k=token,
+            _external=True,
+            _scheme='https',
+        )
+    except Exception:
+        base = _as_text(os.getenv('ESI_PUBLIC_URL') or 'https://esi-tickets.onrender.com').rstrip('/')
+        return f"{base}/colis/{urllib.parse.quote(colis_ref, safe='-')}?k={urllib.parse.quote(token, safe='')}"
+
+
+def _colis_articles(colis_ref):
+    """Retourne l'état actuel du colis depuis la base Articles."""
+    colis_ref = _as_text(colis_ref).strip()
+    if not colis_ref:
+        return []
+    safe_colis = urllib.parse.quote(colis_ref, safe='-_')
+    rows = supabase_rest_request(
+        'GET',
+        'articles',
+        'select=esi_id,dossier,reference,description,client,projet,longueur_cm,largeur_cm,'
+        'hauteur_cm,poids_kg,lieu_stockage,statut_logistique,dernier_colis,'
+        'derniere_reception_ref,article_no'
+        f'&dernier_colis=eq.{safe_colis}&order=article_no.asc&limit=5000'
+    ) or []
+    return [_article_row_to_public(row) for row in rows]
+
+
+@app.route('/colis/<path:colis_ref>')
+def colis_public_page(colis_ref):
+    """Fiche colis mobile ouverte depuis le QR code de l'étiquette."""
+    colis_ref = _as_text(colis_ref).strip()
+    supplied = _as_text(request.args.get('k')).strip()
+    expected = _colis_qr_token(colis_ref)
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        abort(403)
+
+    try:
+        articles = _colis_articles(colis_ref)
+    except Exception as e:
+        print(f'[QR COLIS] Lecture impossible pour {colis_ref}: {e}')
+        return (
+            '<!doctype html><html lang="fr"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<body style="font-family:Arial,sans-serif;padding:24px"><h2>Colis indisponible</h2>'
+            '<p>Impossible de charger les informations du colis pour le moment.</p></body></html>',
+            503,
+        )
+
+    first = articles[0] if articles else {}
+    esc = lambda v: html.escape(_as_text(v).strip() or '-', quote=True)
+
+    dossier = first.get('dossier') or (colis_ref.rsplit('-', 1)[0] if '-' in colis_ref else '')
+    client = first.get('client') or ''
+    projet = first.get('projet') or ''
+    lieu = first.get('lieu_stockage') or ''
+    bon = first.get('derniere_reception_ref') or ''
+
+    cards = []
+    for article in articles:
+        dims = ' × '.join(
+            _as_text(article.get(k)).strip()
+            for k in ('longueur_cm', 'largeur_cm', 'hauteur_cm')
+            if _as_text(article.get(k)).strip()
+        )
+        dims = (dims + ' cm') if dims else '-'
+        poids = _as_text(article.get('poids_kg')).strip()
+        poids = (poids + ' kg') if poids else '-'
+        esi = esc(article.get('esi_id'))
+        ref = esc(article.get('reference'))
+        desc = esc(article.get('description'))
+        cards.append(f'''
+          <article class="item">
+            <div class="item-head"><strong>{esi}</strong><span>{ref}</span></div>
+            <div class="designation">{desc}</div>
+            <div class="meta"><span><b>Dimensions</b>{esc(dims)}</span><span><b>Poids</b>{esc(poids)}</span></div>
+          </article>
+        ''')
+
+    item_html = ''.join(cards) if cards else (
+        '<div class="empty">Aucun article n’est actuellement affecté à ce colis.</div>'
+    )
+    count = len(articles)
+
+    page = f'''<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Colis {esc(colis_ref)} - ESI Tickets</title>
+<style>
+:root{{--blue:#0f2f4f;--light:#eef8fd;--line:#cfe3ee;--text:#17324a;--muted:#60758a}}
+*{{box-sizing:border-box}}
+body{{margin:0;background:#f4f8fb;color:var(--text);font-family:Arial,Helvetica,sans-serif}}
+.wrap{{max-width:780px;margin:0 auto;padding:18px}}
+.hero{{background:linear-gradient(135deg,#0f2f4f,#16476f);color:#fff;border-radius:20px;padding:22px;box-shadow:0 10px 28px rgba(15,47,79,.18)}}
+.brand{{font-size:12px;font-weight:800;letter-spacing:.12em;opacity:.85}}
+h1{{font-size:31px;line-height:1.05;margin:9px 0 5px}}
+.sub{{font-size:13px;opacity:.88}}
+.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:14px}}
+.field{{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}}
+.field b{{display:block;font-size:10px;text-transform:uppercase;color:var(--muted);margin-bottom:5px}}
+.field div{{font-size:14px;font-weight:700;overflow-wrap:anywhere}}
+.section-title{{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:22px 2px 10px}}
+.section-title h2{{font-size:17px;margin:0}}
+.badge{{background:#dff3ff;color:#075985;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800}}
+.items{{display:grid;gap:10px}}
+.item{{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 3px 12px rgba(15,47,79,.05)}}
+.item-head{{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}}
+.item-head strong{{font-size:16px;color:#0369a1}}
+.item-head span{{font-size:12px;font-weight:800;text-align:right;overflow-wrap:anywhere}}
+.designation{{font-size:14px;margin-top:9px;line-height:1.35}}
+.meta{{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:11px}}
+.meta span{{background:var(--light);border-radius:10px;padding:8px;font-size:12px}}
+.meta b{{display:block;font-size:9px;text-transform:uppercase;color:var(--muted);margin-bottom:3px}}
+.empty{{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px;color:var(--muted)}}
+.foot{{font-size:11px;color:var(--muted);text-align:center;margin:20px 0 8px}}
+@media(max-width:520px){{.wrap{{padding:12px}}h1{{font-size:27px}}.grid{{grid-template-columns:1fr}}.meta{{grid-template-columns:1fr 1fr}}}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <div class="brand">ESI TICKETS · COLIS</div>
+    <h1>{esc(colis_ref)}</h1>
+    <div class="sub">Informations en temps réel issues de la base Articles</div>
+  </header>
+
+  <section class="grid">
+    <div class="field"><b>N° dossier</b><div>{esc(dossier)}</div></div>
+    <div class="field"><b>Bon de réception</b><div>{esc(bon)}</div></div>
+    <div class="field"><b>Client</b><div>{esc(client)}</div></div>
+    <div class="field"><b>Projet / exposition</b><div>{esc(projet)}</div></div>
+    <div class="field" style="grid-column:1/-1"><b>Stockage actuel</b><div>{esc(lieu)}</div></div>
+  </section>
+
+  <div class="section-title"><h2>Articles contenus dans le colis</h2><span class="badge">{count} article{'s' if count != 1 else ''}</span></div>
+  <section class="items">{item_html}</section>
+  <div class="foot">Page en lecture seule · ESI Tickets</div>
+</div>
+</body>
+</html>'''
+    response = app.make_response(page)
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['X-Robots-Tag'] = 'noindex, nofollow'
+    return response
 
 
 # -----------------------------------------------------------------------------
@@ -7022,6 +7200,7 @@ def api_reception_avis_arrivee(ticket_id):
             'colis': colis_ref,
             'lieu': lieu_stockage,
             'bon': reception_ref,
+            'qr_url': _colis_qr_url(colis_ref),
         } for colis_ref in colis_refs]
 
         colis_labels_bytes = _build_labels_pdf_bytes(colis_labels, kind="colis")
@@ -7681,10 +7860,45 @@ def _build_labels_pdf_bytes(labels, kind="article"):
         ).encode('latin-1') + logo_image_bytes + b'\nendstream'
         objects.append(image_obj)
 
+    def build_qr_jpeg(value):
+        """Construit le QR en mémoire. L'import local évite d'impacter les autres écrans."""
+        value = _as_text(value).strip()
+        if not value:
+            return None, None, None
+        try:
+            import qrcode
+            qr = qrcode.QRCode(
+                version=None,
+                error_correction=qrcode.constants.ERROR_CORRECT_M,
+                box_size=8,
+                border=3,
+            )
+            qr.add_data(value)
+            qr.make(fit=True)
+            im = qr.make_image(fill_color='black', back_color='white').convert('RGB')
+            w, h = im.size
+            buf = io.BytesIO()
+            im.save(buf, format='JPEG', quality=100, subsampling=0)
+            return buf.getvalue(), w, h
+        except Exception as e:
+            print(f'[ETIQUETTE COLIS] QR code non genere: {e}')
+            return None, None, None
+
     page_refs = []
 
     for label in labels or [{"titre": "COLIS"}]:
         stream_lines = []
+
+        # Un QR différent est embarqué sur chaque page car chaque colis a sa propre URL.
+        qr_obj_num = None
+        qr_bytes, qr_w, qr_h = build_qr_jpeg(label.get('qr_url'))
+        if qr_bytes and qr_w and qr_h:
+            qr_obj_num = len(objects) + 1
+            qr_obj = (
+                f'<< /Type /XObject /Subtype /Image /Width {qr_w} /Height {qr_h} '
+                f'/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {len(qr_bytes)} >>\nstream\n'
+            ).encode('latin-1') + qr_bytes + b'\nendstream'
+            objects.append(qr_obj)
 
         # Logo en haut à gauche, avec zone réservée 92 x 48 points.
         logo_box_x = margin
@@ -7765,6 +7979,21 @@ def _build_labels_pdf_bytes(labels, kind="article"):
                 y -= 14
             y -= 8
 
+        # QR code : 27 mm environ, positionné en bas à droite pour ne pas perturber
+        # la mise en page historique de l'étiquette 100 x 148 mm.
+        if qr_obj_num:
+            qr_size = 76
+            qr_x = page_width - margin - qr_size
+            qr_y = 28
+            stream_lines += [
+                'q',
+                f'{qr_size:.2f} 0 0 {qr_size:.2f} {qr_x:.2f} {qr_y:.2f} cm',
+                '/Qr1 Do',
+                'Q',
+                'BT', '/F2 6 Tf', f'{qr_x + 1:.2f} 17 Td',
+                '(SCAN - CONTENU DU COLIS) Tj', 'ET',
+            ]
+
         stream = "\n".join(stream_lines).encode("latin-1", errors="replace")
         content_obj_num = len(objects) + 1
         objects.append(
@@ -7773,7 +8002,12 @@ def _build_labels_pdf_bytes(labels, kind="article"):
         )
 
         page_obj_num = len(objects) + 1
-        xobject = f" /XObject << /Im1 {image_obj_num} 0 R >>" if image_obj_num else ""
+        xobjects = []
+        if image_obj_num:
+            xobjects.append(f'/Im1 {image_obj_num} 0 R')
+        if qr_obj_num:
+            xobjects.append(f'/Qr1 {qr_obj_num} 0 R')
+        xobject = f" /XObject << {' '.join(xobjects)} >>" if xobjects else ""
         page = (
             f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width:.4f} {page_height:.4f}] "
             f"/Resources << /Font << /F1 3 0 R /F2 4 0 R >>{xobject} >> "
@@ -8096,6 +8330,7 @@ def api_create_bon_livraison(ticket_id):
             'colis': colis_ref,
             'lieu': lieu_stockage,
             'bon': blr_ref,
+            'qr_url': _colis_qr_url(colis_ref),
         } for colis_ref in colis_refs]
         colis_labels_bytes = _build_labels_pdf_bytes(colis_labels, kind="colis")
         colis_labels_filename = f"{blr_ref}_etiquettes_colis.pdf"
