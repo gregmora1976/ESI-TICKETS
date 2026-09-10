@@ -226,6 +226,13 @@
                 <div class="field"><label>Contact (nom + téléphone)</label><input class="input" id="aller-contact-rdv" autocomplete="off" /></div>
                 <div class="field"><label>Date du RDV</label><input class="input" id="aller-date-rdv" type="date" /></div>
                 <div class="field"><label>Heure du RDV</label><input class="input" id="aller-heure-rdv" type="time" /></div>
+                <div class="field"><label>Type de visite</label><select class="input" id="aller-type-visite">
+                  <option value="">Choisir le type de visite</option>
+                  <option value="Devis – visite simple">Devis – visite simple</option>
+                  <option value="Devis – visite complexe / 2 personnes">Devis – visite complexe / 2 personnes</option>
+                  <option value="Réalisation – visite simple">Réalisation – visite simple</option>
+                  <option value="Réalisation – visite complexe / 2 personnes">Réalisation – visite complexe / 2 personnes</option>
+                </select></div>
               </div>
               <div style="height:14px"></div>
               <div class="field"><label>Description du besoin</label><textarea class="textarea" id="aller-description"></textarea></div>
@@ -844,9 +851,10 @@ async function sendAllerVoir(){
   const contactRdv = document.getElementById('aller-contact-rdv').value.trim();
   const dateRdv = document.getElementById('aller-date-rdv').value;
   const heureRdv = document.getElementById('aller-heure-rdv').value;
+  const typeVisite = document.getElementById('aller-type-visite').value;
 
-  if(!client || !chargeProjet || !projet || !lieuRdv || !dateRdv || !heureRdv){
-    showNotice('Merci de renseigner le dossier/client, le chargé de projet, le projet, le lieu, la date et l\'heure du RDV.');
+  if(!client || !chargeProjet || !projet || !lieuRdv || !dateRdv || !heureRdv || !typeVisite){
+    showNotice('Merci de renseigner le dossier/client, le chargé de projet, le projet, le lieu, la date, l\'heure du RDV et le type de visite.');
     return;
   }
 
@@ -864,6 +872,7 @@ async function sendAllerVoir(){
     fd.append('dateEmballage', '-');
     fd.append('dateRdv', dateRdv);
     fd.append('heureRdv', heureRdv);
+    fd.append('typeVisite', typeVisite);
     fd.append('lieuRdv', lieuRdv);
     fd.append('contactRdv', contactRdv);
     fd.append('prixDevis', '-');
@@ -1503,7 +1512,7 @@ function ticketSearchText(ticket){
     ticket.id, ticket.module, ticket.status, dossier, ref,
     dossier && ref && ref !== '-' ? `${dossier}-${ref}` : '',
     ticket.preteur, ticket.expo, ticket.objet, ticket.chargeProjet,
-    ticket.lieuRdv, ticket.contactRdv,
+    ticket.lieuRdv, ticket.contactRdv, ticket.typeVisite,
     avis.client, avis.projet, avis.coordinateur,
     enl.client, enl.exhibition, enl.coordinateur, enl.numero_bon
   ].filter(Boolean).join(' ').toLowerCase();
@@ -1589,6 +1598,7 @@ function openDoneTicketDetails(ticket){
           ${infoBox('Contact', ticket.contactRdv)}
           ${infoBox('Date du RDV', ticket.dateRdv)}
           ${infoBox('Heure du RDV', ticket.heureRdv)}
+          ${infoBox('Type de visite', ticket.typeVisite)}
         </div>
         <div style="height:10px"></div>
         <div class="info-box">

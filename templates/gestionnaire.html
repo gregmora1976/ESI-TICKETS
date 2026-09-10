@@ -41,6 +41,8 @@
   .ref-meta{font-size:12px;color:#64748b;margin-top:3px;line-height:1.35}
   .ref-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
   .ref-search-row{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+  .btn.danger{background:#fff;border:1px solid #fecaca;color:#b91c1c}
+  .btn.danger:hover{background:#fee2e2}
   @media (max-width:900px){.ref-layout{grid-template-columns:1fr}}
 
 </style>
@@ -164,6 +166,7 @@
               <button class="btn secondary" id="editTicketBtn" type="button">Modifier</button>
               <button class="btn primary" id="saveTicketBtn" type="button" style="display:none">Enregistrer</button>
               <button class="btn secondary" id="cancelEditBtn" type="button" style="display:none">Annuler</button>
+              <button class="btn danger" id="deleteTicketBtn" type="button" style="display:none">Supprimer le ticket</button>
             </div>
           </div>
           <div>
@@ -398,7 +401,7 @@ function filteredTickets(){
       normalizeModule(t.module) === normalizeModule(state.currentFilter);
 
     const statusOk = state.currentStatusFilter === 'all' || (t.status || 'Demande créée') === state.currentStatusFilter;
-    const hay = `${t.id} ${t.dossier} ${t.ref} ${t.objet} ${t.preteur} ${t.expo} ${t.chargeProjet || ''} ${t.lieuRdv || ''} ${t.contactRdv || ''} ${t.dateRdv || ''} ${t.heureRdv || ''}`.toLowerCase();
+    const hay = `${t.id} ${t.dossier} ${t.ref} ${t.objet} ${t.preteur} ${t.expo} ${t.chargeProjet || ''} ${t.lieuRdv || ''} ${t.contactRdv || ''} ${t.dateRdv || ''} ${t.heureRdv || ''} ${t.typeVisite || ''}`.toLowerCase();
     return filterOk && statusOk && hay.includes(state.searchTerm.toLowerCase());
   });
   const weight = {high:0, medium:1, normal:2};
@@ -505,6 +508,8 @@ async function renderDetail(){
     els.managerSheetBox.innerHTML='<div class="small">Aucune feuille de caisse déposée.</div>';
     const notifyBtn = document.getElementById('notifyBtn');
     if(notifyBtn) notifyBtn.style.display = 'none';
+    const deleteBtn = document.getElementById('deleteTicketBtn');
+    if(deleteBtn) deleteBtn.style.display = 'none';
     return;
   }
   if(ticket.module === 'Fiche de caisse'){
@@ -525,6 +530,17 @@ async function renderDetail(){
   const canEdit = state.editMode;
   const safeValue = value => escapeHtml(value || '');
   const input = (id, value, type='text') => `<input class="input" id="${id}" type="${type}" value="${safeValue(value)}">`;
+  const select = (id, value, options) => {
+    const current = String(value || '');
+    return `<select class="input" id="${id}">${options.map(option => `<option value="${safeValue(option)}" ${current === option ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}</select>`;
+  };
+  const visitTypeOptions = [
+    '-',
+    'Devis – visite simple',
+    'Devis – visite complexe / 2 personnes',
+    'Réalisation – visite simple',
+    'Réalisation – visite complexe / 2 personnes'
+  ];
   const textarea = (id, value) => `<textarea class="textarea" id="${id}">${safeValue(value)}</textarea>`;
 
   const commentValue =
@@ -578,6 +594,7 @@ async function renderDetail(){
       ['Lieu de RDV', canEdit ? input('edit-lieuRdv', ticket.lieuRdv || '') : escapeHtml(ticket.lieuRdv||'-')],
       ['Date de RDV', canEdit ? input('edit-dateRdv', ticket.dateRdv || '', 'date') : escapeHtml(formatDateSimpleFR(ticket.dateRdv))],
       ['Heure de RDV', canEdit ? input('edit-heureRdv', ticket.heureRdv || '', 'time') : escapeHtml(ticket.heureRdv||'-')],
+      ['Type de visite', canEdit ? select('edit-typeVisite', ticket.typeVisite || '-', visitTypeOptions) : escapeHtml(ticket.typeVisite||'-')],
       ['Description / informations', commentValue],
       ['Date création', escapeHtml(ticket.createdAt?fmtDateFR(ticket.createdAt):'-')]
     ];
@@ -609,6 +626,7 @@ async function renderDetail(){
   const saveBtn = document.getElementById('saveTicketBtn');
   const cancelBtn = document.getElementById('cancelEditBtn');
   const notifyBtn = document.getElementById('notifyBtn');
+  const deleteBtn = document.getElementById('deleteTicketBtn');
   if(editBtn && saveBtn && cancelBtn){
     editBtn.style.display = state.editMode ? 'none' : 'inline-block';
     saveBtn.style.display = state.editMode ? 'inline-block' : 'none';
@@ -616,6 +634,9 @@ async function renderDetail(){
   }
   if(notifyBtn){
     notifyBtn.style.display = (!state.editMode && ticket.status === 'Terminé') ? 'inline-block' : 'none';
+  }
+  if(deleteBtn){
+    deleteBtn.style.display = state.editMode ? 'none' : 'inline-block';
   }
 
   els.requestFiles.innerHTML='';
@@ -755,6 +776,7 @@ async function saveEditedTicket(){
     contactRdv: getValue('edit-contactRdv'),
     dateRdv: getValue('edit-dateRdv'),
     heureRdv: getValue('edit-heureRdv'),
+    typeVisite: getValue('edit-typeVisite'),
     dateEmballage: getValue('edit-dateEmballage'),
     dimensions: getValue('edit-dimensions'),
     prixDevis: getValue('edit-prixDevis'),
@@ -776,6 +798,30 @@ async function saveEditedTicket(){
   state.editMode = false;
   await refreshTickets();
   showNotice('Ticket modifié');
+}
+
+
+async function deleteSelectedTicket(){
+  const ticket=state.tickets.find(t=>t.id===state.selectedTicketId);
+  if(!ticket){showNotice('Sélectionne un ticket.');return;}
+
+  const ok = window.confirm(`Supprimer définitivement le ticket ${ticket.id} ?\n\nCette action est irréversible.`);
+  if(!ok) return;
+
+  try{
+    const res = await fetch(`/api/tickets/${encodeURIComponent(ticket.id)}`, {method:'DELETE'});
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok){
+      showNotice(data.error || 'Impossible de supprimer le ticket');
+      return;
+    }
+    state.selectedTicketId = null;
+    state.editMode = false;
+    await refreshTickets();
+    showNotice(`Ticket ${ticket.id} supprimé définitivement`);
+  }catch(e){
+    showNotice('Erreur suppression : ' + (e.message || e));
+  }
 }
 
 
@@ -1155,6 +1201,7 @@ document.getElementById('validateAllerVoirBtn').addEventListener('click', valida
 document.getElementById('editTicketBtn').addEventListener('click', startEditTicket);
 document.getElementById('saveTicketBtn').addEventListener('click', saveEditedTicket);
 document.getElementById('cancelEditBtn').addEventListener('click', cancelEditTicket);
+document.getElementById('deleteTicketBtn').addEventListener('click', deleteSelectedTicket);
 
 
 document.getElementById('notifyBtn').addEventListener('click', openNotificationEmail);
