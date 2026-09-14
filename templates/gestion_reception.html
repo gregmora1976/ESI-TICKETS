@@ -30,7 +30,8 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .week-head div{padding:12px 10px;font-weight:900;text-transform:lowercase;border-right:1px solid var(--line)}.week-head div:last-child{border-right:none}
 .month-grid{display:grid;grid-template-columns:repeat(5,1fr)}
 .day{min-height:130px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px;position:relative;background:#fff}
-.day:nth-child(5n){border-right:none}.day.other-month{background:#f8fafc;color:#94a3b8}.day.today{background:#eff6ff}
+.day:nth-child(5n){border-right:none}.day.other-month{background:#f8fafc;color:#94a3b8}.day.today{background:#eff6ff;max-height:260px;overflow-y:auto;scrollbar-gutter:stable}
+.day.today::-webkit-scrollbar{width:8px}.day.today::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:999px}.day.today::-webkit-scrollbar-track{background:transparent}
 .day-number{font-size:18px;font-weight:900;margin-bottom:8px}.day-number.small{font-size:14px;color:#94a3b8}
 .event{display:block;width:100%;border:none;border-left:5px solid var(--event-border);background:var(--event);color:#111827;border-radius:3px;padding:6px 7px;margin:4px 0;font-size:13px;line-height:1.25;text-align:left;cursor:pointer;font-weight:800;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .event.arrival-event{background:#fef3c7;border-left-color:#d97706;color:#78350f}
@@ -227,27 +228,6 @@ function avisDate(t){
   return /^\d{4}-\d{2}-\d{2}$/.test(v)?v:'';
 }
 function planningDate(t){return isAvisArrivee(t)?avisDate(t):enlDate(t);}
-function isReceptionFinalisee(t){
-  // Une reception n'est finalisee que lorsque toutes les quantites prevues
-  // ont ete receptionnees. Une reception partielle reste donc a suivre.
-  const its=isAvisArrivee(t)
-    ? (Array.isArray(avisData(t).items)?avisData(t).items:[])
-    : items(t);
-  if(!its.length) return false;
-  return its.every(i=>receivedQty(i)>=plannedQty(i));
-}
-function effectivePlanningDate(t){
-  const original=planningDate(t);
-  if(!original) return '';
-
-  // Les receptions terminees restent affichees a leur date d'origine.
-  if(isReceptionFinalisee(t)) return original;
-
-  // Toute reception en retard et non finalisee est reportee au jour courant
-  // afin qu'elle reste visible dans le planning jusqu'a sa cloture.
-  const today=isoDate(new Date());
-  return original<today?today:original;
-}
 function planningEventText(t){
   if(isAvisArrivee(t)){
     const a=avisData(t);
@@ -1085,8 +1065,8 @@ function renderPending(){
 }
 function grouped(){
   const g={};
-  tickets.filter(t=>(isEnlevement(t)||isAvisArrivee(t))&&!isCancelled(t)&&effectivePlanningDate(t)&&matches(t))
-    .forEach(t=>{const d=effectivePlanningDate(t);(g[d]??=[]).push(t);});
+  tickets.filter(t=>(isEnlevement(t)||isAvisArrivee(t))&&!isCancelled(t)&&planningDate(t)&&matches(t))
+    .forEach(t=>{const d=planningDate(t);(g[d]??=[]).push(t);});
   return g;
 }
 function renderCalendar(){
