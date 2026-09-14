@@ -416,6 +416,33 @@ def _colis_qr_url(colis_ref):
         return f"{base}/colis/{urllib.parse.quote(colis_ref, safe='-')}?k={urllib.parse.quote(token, safe='')}"
 
 
+def _article_qr_token(esi_id):
+    """Signature stable d'un lien QR d'article, distincte des liens colis."""
+    esi_id = _as_text(esi_id).strip()
+    return hmac.new(
+        _colis_qr_secret(),
+        ("article:" + esi_id).encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()[:32]
+
+
+def _article_qr_url(esi_id):
+    """URL absolue vers la carte d'identité mobile d'un article ESI."""
+    esi_id = _as_text(esi_id).strip()
+    token = _article_qr_token(esi_id)
+    try:
+        return url_for(
+            'article_public_page',
+            esi_id=esi_id,
+            k=token,
+            _external=True,
+            _scheme='https',
+        )
+    except Exception:
+        base = _as_text(os.getenv('ESI_PUBLIC_URL') or 'https://esi-tickets.onrender.com').rstrip('/')
+        return f"{base}/article/{urllib.parse.quote(esi_id, safe='-')}?k={urllib.parse.quote(token, safe='')}"
+
+
 def _colis_articles(colis_ref):
     """Retourne l'état actuel du colis depuis la base Articles."""
     colis_ref = _as_text(colis_ref).strip()
@@ -2219,6 +2246,164 @@ def api_article_detail(esi_id):
 
     return jsonify(detail)
 
+
+@app.route('/article/<path:esi_id>')
+def article_public_page(esi_id):
+    """Carte d'identité mobile en lecture seule ouverte depuis le QR de l'étiquette article."""
+    esi_id = _as_text(esi_id).strip()
+    supplied = _as_text(request.args.get('k')).strip()
+    expected = _article_qr_token(esi_id)
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        abort(403)
+
+    safe_esi = urllib.parse.quote(esi_id, safe='-')
+    try:
+        rows = supabase_rest_request(
+            'GET', 'articles', f'select=*&esi_id=eq.{safe_esi}&limit=1'
+        ) or []
+    except Exception as e:
+        print(f'[QR ARTICLE] Lecture impossible pour {esi_id}: {e}')
+        return (
+            '<!doctype html><html lang="fr"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<body style="font-family:Arial,sans-serif;padding:24px"><h2>Article indisponible</h2>'
+            '<p>Impossible de charger la carte d’identité pour le moment.</p></body></html>',
+            503,
+        )
+
+    if not rows:
+        abort(404)
+
+    article = _article_row_to_public(rows[0])
+    raw = article.get('raw_json') if isinstance(article.get('raw_json'), dict) else {}
+    raw = dict(raw or {})
+    esc = lambda v: html.escape(_as_text(v).strip() or '-', quote=True)
+
+    dims = ' × '.join(
+        _as_text(article.get(k)).strip()
+        for k in ('longueur_cm', 'largeur_cm', 'hauteur_cm')
+        if _as_text(article.get(k)).strip()
+    )
+    dims = (dims + ' cm') if dims else '-'
+    poids = _as_text(article.get('poids_kg')).strip()
+    poids = (poids + ' kg') if poids else '-'
+
+    photo_html = '<div class="no-photo">Aucune photo enregistrée</div>'
+    if _as_text(raw.get('photo_storage_path')).strip():
+        photo_version = _as_text(raw.get('photo_updated_at') or article.get('updated_at')).strip()
+        photo_url = f"/api/articles/{urllib.parse.quote(esi_id, safe='-')}/photo"
+        if photo_version:
+            photo_url += '?v=' + urllib.parse.quote(photo_version, safe='')
+        photo_html = f'<img src="{html.escape(photo_url, quote=True)}" alt="Photo de l’article">'
+
+    history = []
+    for entry in raw.get('receptions') or []:
+        if not isinstance(entry, dict):
+            continue
+        history.append({
+            'reference': _as_text(entry.get('reception_ref')).strip(),
+            'date': _as_text(entry.get('date')).strip(),
+            'lieu': _as_text(entry.get('lieu_stockage')).strip(),
+            'colis': ', '.join(_as_text(x).strip() for x in (entry.get('colis') or []) if _as_text(x).strip()),
+            'par': _as_text(entry.get('receptionne_par')).strip(),
+        })
+
+    history_html = ''
+    for entry in reversed(history):
+        date_txt = entry['date']
+        if date_txt:
+            try:
+                date_txt = datetime.fromisoformat(date_txt.replace('Z', '+00:00')).strftime('%d/%m/%Y %H:%M')
+            except Exception:
+                pass
+        history_html += f"""
+          <div class="history-item">
+            <strong>{esc(entry['reference'] or 'Réception')}</strong>
+            <div>{esc(date_txt)}</div>
+            <div>Stockage : {esc(entry['lieu'])} · Colis : {esc(entry['colis'])}</div>
+            {f'<div>Réceptionné par : {esc(entry["par"])}</div>' if entry['par'] else ''}
+          </div>
+        """
+    if not history_html:
+        history_html = '<div class="empty">Aucune réception enregistrée.</div>'
+
+    page = f"""<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>{esc(esi_id)} - Carte d’identité article</title>
+<style>
+:root{{--blue:#0f2f4f;--blue2:#16476f;--accent:#0284c7;--light:#eef8fd;--line:#cfe3ee;--text:#17324a;--muted:#60758a}}
+*{{box-sizing:border-box}}
+body{{margin:0;background:#f4f8fb;color:var(--text);font-family:Arial,Helvetica,sans-serif}}
+.wrap{{max-width:860px;margin:0 auto;padding:18px}}
+.hero{{background:linear-gradient(135deg,var(--blue),var(--blue2));color:#fff;border-radius:20px;padding:20px;box-shadow:0 10px 28px rgba(15,47,79,.18)}}
+.hero-top{{display:flex;align-items:center;justify-content:space-between;gap:18px}}
+.logo{{display:block;max-width:112px;max-height:52px;object-fit:contain;background:#fff;border-radius:8px;padding:4px}}
+.brand{{font-size:11px;font-weight:900;letter-spacing:.09em;text-align:right;opacity:.9}}
+h1{{font-size:30px;line-height:1.05;margin:16px 0 5px;overflow-wrap:anywhere}}
+.desc{{font-size:14px;line-height:1.4;color:#dbeafe}}
+.layout{{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:14px;margin-top:14px}}
+.grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}}
+.field{{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}}
+.field.wide{{grid-column:1/-1}}
+.field b{{display:block;font-size:9px;text-transform:uppercase;color:var(--muted);letter-spacing:.04em;margin-bottom:5px}}
+.field div{{font-size:14px;font-weight:700;overflow-wrap:anywhere;white-space:pre-wrap}}
+.photo{{background:#fff;border:1px solid var(--line);border-radius:16px;min-height:250px;display:flex;align-items:center;justify-content:center;overflow:hidden}}
+.photo img{{display:block;width:100%;height:100%;min-height:250px;object-fit:contain}}
+.no-photo{{font-size:12px;color:var(--muted);text-align:center;padding:20px}}
+.section{{margin-top:14px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px}}
+.section-title{{font-size:11px;font-weight:900;text-transform:uppercase;color:var(--accent);letter-spacing:.04em;margin-bottom:10px}}
+.history{{display:grid;gap:8px}}
+.history-item{{border-left:4px solid #0ea5e9;background:#f8fafc;border-radius:10px;padding:10px;font-size:12px;line-height:1.45;color:#334155}}
+.history-item strong{{color:var(--blue)}}
+.empty{{font-size:12px;color:var(--muted)}}
+.foot{{font-size:11px;color:var(--muted);text-align:center;margin:20px 0 8px}}
+@media(max-width:650px){{.wrap{{padding:12px}}.layout{{grid-template-columns:1fr}}.grid{{grid-template-columns:1fr}}.field.wide{{grid-column:auto}}h1{{font-size:27px}}.hero-top{{align-items:flex-start}}.logo{{max-width:92px}}}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <div class="hero-top">
+      <img class="logo" src="/static/logo.png" alt="ESI" onerror="this.style.display='none'">
+      <div class="brand">ESI TICKETS · CARTE D’IDENTITÉ ARTICLE</div>
+    </div>
+    <h1>{esc(article.get('reference') or article.get('esi_id') or esi_id)}</h1>
+    <div class="desc">{esc(article.get('description'))}</div>
+  </header>
+
+  <div class="layout">
+    <section class="grid">
+      <div class="field"><b>N° ESI</b><div>{esc(article.get('esi_id'))}</div></div>
+      <div class="field"><b>N° dossier</b><div>{esc(article.get('dossier'))}</div></div>
+      <div class="field"><b>Référence / inventaire</b><div>{esc(article.get('reference'))}</div></div>
+      <div class="field"><b>Client</b><div>{esc(article.get('client'))}</div></div>
+      <div class="field wide"><b>Projet / exposition</b><div>{esc(article.get('projet'))}</div></div>
+      <div class="field wide"><b>Description / désignation</b><div>{esc(article.get('description'))}</div></div>
+      <div class="field"><b>Dimensions</b><div>{esc(dims)}</div></div>
+      <div class="field"><b>Poids</b><div>{esc(poids)}</div></div>
+      <div class="field"><b>Stockage actuel</b><div>{esc(article.get('lieu_stockage'))}</div></div>
+      <div class="field"><b>Statut logistique</b><div>{esc(article.get('statut_logistique'))}</div></div>
+      <div class="field"><b>N° colis</b><div>{esc(article.get('dernier_colis'))}</div></div>
+      <div class="field"><b>Dernière réception</b><div>{esc(article.get('derniere_reception_ref'))}</div></div>
+    </section>
+    <aside class="photo">{photo_html}</aside>
+  </div>
+
+  <section class="section">
+    <div class="section-title">Historique des réceptions</div>
+    <div class="history">{history_html}</div>
+  </section>
+  <div class="foot">Page en lecture seule · ESI Tickets</div>
+</div>
+</body>
+</html>"""
+    response = app.make_response(page)
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['X-Robots-Tag'] = 'noindex, nofollow'
+    return response
 
 
 
@@ -7160,6 +7345,7 @@ def api_reception_avis_arrivee(ticket_id):
                 'designation': _as_text(item.get('description')).strip(),
                 'quantite': f"{unit_no}/{qty_received}",
                 'lieu': lieu_stockage,
+                'qr_url': _article_qr_url(esi_id),
             })
 
     if not selected:
@@ -7703,13 +7889,13 @@ def _build_labels_pdf_bytes(labels, kind="article"):
 
     - Étiquettes COLIS : format exact 100 x 148 mm avec le vrai logo ESI
       chargé depuis static/logo.png et affiché en haut à gauche sans déformation.
-    - Étiquettes ARTICLE : format historique inchangé (A6), sans logo ajouté.
+    - Étiquettes ARTICLE : format A6 avec vrai logo ESI et QR vers la carte d'identité.
     """
     import io
     import textwrap as _tw
 
     # ------------------------------------------------------------------
-    # Étiquettes ARTICLE : comportement historique strictement inchangé.
+    # Étiquettes ARTICLE : A6 + vrai logo ESI + QR vers la carte d'identité.
     # ------------------------------------------------------------------
     if kind != "colis":
         page_width, page_height = 298, 420
@@ -7719,32 +7905,135 @@ def _build_labels_pdf_bytes(labels, kind="article"):
             value = _as_text(value)
             return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
+        # Logo ESI : même principe que pour les étiquettes colis, sans recadrage.
+        logo_path = APP_DIR / 'static' / 'logo.png'
+        logo_image_bytes = None
+        logo_w = logo_h = None
+        if logo_path.exists():
+            try:
+                from PIL import Image
+                with Image.open(logo_path) as im:
+                    if im.mode != 'RGB':
+                        bg = Image.new('RGB', im.size, 'white')
+                        if 'A' in im.getbands():
+                            bg.paste(im, mask=im.getchannel('A'))
+                        else:
+                            bg.paste(im.convert('RGB'))
+                        im = bg
+                    logo_w, logo_h = im.size
+                    buf = io.BytesIO()
+                    im.save(buf, format='JPEG', quality=95)
+                    logo_image_bytes = buf.getvalue()
+            except Exception as e:
+                print(f'[ETIQUETTE ARTICLE] Logo ESI non charge: {e}')
+
         objects = [
             b"<< /Type /Catalog /Pages 2 0 R >>",
             None,
             b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
             b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
         ]
+
+        logo_obj_num = None
+        if logo_image_bytes and logo_w and logo_h:
+            logo_obj_num = len(objects) + 1
+            logo_obj = (
+                f'<< /Type /XObject /Subtype /Image /Width {logo_w} /Height {logo_h} '
+                f'/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {len(logo_image_bytes)} >>\nstream\n'
+            ).encode('latin-1') + logo_image_bytes + b'\nendstream'
+            objects.append(logo_obj)
+
+        def build_article_qr_jpeg(value):
+            value = _as_text(value).strip()
+            if not value:
+                return None, None, None
+            try:
+                import qrcode
+                qr = qrcode.QRCode(
+                    version=None,
+                    error_correction=qrcode.constants.ERROR_CORRECT_M,
+                    box_size=8,
+                    border=3,
+                )
+                qr.add_data(value)
+                qr.make(fit=True)
+                im = qr.make_image(fill_color='black', back_color='white').convert('RGB')
+                w, h = im.size
+                buf = io.BytesIO()
+                im.save(buf, format='JPEG', quality=100, subsampling=0)
+                return buf.getvalue(), w, h
+            except Exception as e:
+                print(f'[ETIQUETTE ARTICLE] QR code non genere: {e}')
+                return None, None, None
+
         page_refs = []
 
-        for label in labels or [{"titre": "ETIQUETTE"}]:
-            content_obj_num = len(objects) + 1
-            lines = []
+        for label in labels or [{"titre": "ARTICLE"}]:
+            qr_obj_num = None
+            qr_bytes, qr_w, qr_h = build_article_qr_jpeg(label.get('qr_url'))
+            if qr_bytes and qr_w and qr_h:
+                qr_obj_num = len(objects) + 1
+                qr_obj = (
+                    f'<< /Type /XObject /Subtype /Image /Width {qr_w} /Height {qr_h} '
+                    f'/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {len(qr_bytes)} >>\nstream\n'
+                ).encode('latin-1') + qr_bytes + b'\nendstream'
+                objects.append(qr_obj)
 
-            title = _as_text(label.get("titre") or "ARTICLE").strip()
-            lines.append(("B", 20, title))
+            stream_lines = []
 
-            principal = _as_text(label.get("principal")).strip()
+            logo_box_x = margin
+            logo_box_y = page_height - 66
+            logo_box_w = 90
+            logo_box_h = 40
+            if logo_obj_num:
+                scale = min(logo_box_w / float(logo_w), logo_box_h / float(logo_h))
+                draw_w = logo_w * scale
+                draw_h = logo_h * scale
+                draw_x = logo_box_x
+                draw_y = logo_box_y + (logo_box_h - draw_h) / 2
+                stream_lines += [
+                    'q',
+                    f'{draw_w:.2f} 0 0 {draw_h:.2f} {draw_x:.2f} {draw_y:.2f} cm',
+                    '/ImLogo Do',
+                    'Q',
+                ]
+            else:
+                stream_lines += [
+                    'BT', '/F2 20 Tf', f'{margin} {page_height - 43:.2f} Td', '(ESI) Tj', 'ET'
+                ]
+
+            title = _as_text(label.get('titre') or 'ARTICLE').strip()
+            stream_lines += [
+                'BT', '/F2 16 Tf', f'{page_width - margin - 72:.2f} {page_height - 43:.2f} Td',
+                f'({pdf_escape(title)}) Tj', 'ET'
+            ]
+
+            principal = _as_text(label.get('principal') or label.get('esi_id')).strip()
+            y = page_height - 92
             if principal:
-                for part in _tw.wrap(principal, width=28) or [principal]:
-                    lines.append(("B", 18, part))
+                stream_lines += [
+                    'BT', '/F2 9 Tf', f'{margin} {y:.2f} Td', '(N\260 ESI) Tj', 'ET'
+                ]
+                y -= 20
+                size = 22 if len(principal) <= 18 else 18
+                for part in _tw.wrap(principal, width=24) or [principal]:
+                    stream_lines += [
+                        'BT', f'/F2 {size} Tf', f'{margin} {y:.2f} Td',
+                        f'({pdf_escape(part)}) Tj', 'ET'
+                    ]
+                    y -= size + 8
 
-            for key in ("esi_id", "dossier", "client", "reference", "designation", "quantite", "colis", "lieu", "bon"):
+            y -= 2
+            stream_lines += [
+                '0.25 w', f'{margin} {y:.2f} m {page_width - margin:.2f} {y:.2f} l S'
+            ]
+            y -= 20
+
+            for key in ("dossier", "client", "reference", "designation", "quantite", "colis", "lieu", "bon"):
                 value = _as_text(label.get(key)).strip()
                 if not value:
                     continue
                 label_name = {
-                    "esi_id": "N° ESI",
                     "dossier": "Dossier",
                     "client": "Client",
                     "reference": "Article",
@@ -7755,31 +8044,51 @@ def _build_labels_pdf_bytes(labels, kind="article"):
                     "bon": "Bon",
                 }.get(key, key)
                 text_line = f"{label_name} : {value}"
-                for part in _tw.wrap(text_line, width=42) or [text_line]:
-                    lines.append(("R", 11, part))
+                for part in (_tw.wrap(text_line, width=43) or [text_line]):
+                    if y < 118:
+                        break
+                    stream_lines += [
+                        'BT', '/F1 10 Tf', f'{margin} {y:.2f} Td',
+                        f'({pdf_escape(part)}) Tj', 'ET'
+                    ]
+                    y -= 15
+                if y < 118:
+                    break
 
-            stream_lines = []
-            y = page_height - margin - 20
-            for font_kind, size, line in lines:
-                font = "F2" if font_kind == "B" else "F1"
+            if qr_obj_num:
+                qr_size = 76
+                qr_x = page_width - margin - qr_size
+                qr_y = 24
                 stream_lines += [
-                    "BT",
-                    f"/{font} {size} Tf",
-                    f"{margin} {y} Td",
-                    f"({pdf_escape(line)}) Tj",
-                    "ET",
+                    'BT', '/F2 7 Tf', f'{qr_x:.2f} {qr_y + qr_size + 6:.2f} Td',
+                    '(CARTE IDENTITE) Tj', 'ET',
+                    'q',
+                    f'{qr_size:.2f} 0 0 {qr_size:.2f} {qr_x:.2f} {qr_y:.2f} cm',
+                    '/ImQR Do',
+                    'Q',
                 ]
-                y -= max(size + 8, 18)
 
             stream = "\n".join(stream_lines).encode("latin-1", errors="replace")
+            content_obj_num = len(objects) + 1
             objects.append(
                 f"<< /Length {len(stream)} >>\nstream\n".encode("latin-1")
                 + stream + b"\nendstream"
             )
             page_obj_num = len(objects) + 1
+
+            resources = '/Resources << /Font << /F1 3 0 R /F2 4 0 R >>'
+            xobjects = []
+            if logo_obj_num:
+                xobjects.append(f'/ImLogo {logo_obj_num} 0 R')
+            if qr_obj_num:
+                xobjects.append(f'/ImQR {qr_obj_num} 0 R')
+            if xobjects:
+                resources += ' /XObject << ' + ' '.join(xobjects) + ' >>'
+            resources += ' >>'
+
             page = (
                 f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width} {page_height}] "
-                f"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {content_obj_num} 0 R >>"
+                f"{resources} /Contents {content_obj_num} 0 R >>"
             )
             objects.append(page.encode("latin-1"))
             page_refs.append(f"{page_obj_num} 0 R")
@@ -8279,6 +8588,7 @@ def api_create_bon_livraison(ticket_id):
                 'designation': _as_text(item.get('designation')).strip(),
                 'quantite': f"{unit_no}/{qty_received}",
                 'lieu': lieu_stockage,
+                'qr_url': _article_qr_url(esi_id),
             })
 
     if not selected:
