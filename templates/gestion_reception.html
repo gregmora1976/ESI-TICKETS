@@ -34,6 +34,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .day-number{font-size:18px;font-weight:900;margin-bottom:8px}.day-number.small{font-size:14px;color:#94a3b8}
 .event{display:block;width:100%;border:none;border-left:5px solid var(--event-border);background:var(--event);color:#111827;border-radius:3px;padding:6px 7px;margin:4px 0;font-size:13px;line-height:1.25;text-align:left;cursor:pointer;font-weight:800;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .event.arrival-event{background:#fef3c7;border-left-color:#d97706;color:#78350f}
+.event.reception-validated{background:#dcfce7;border-left-color:#16a34a;color:#166534}
 .event:hover{filter:brightness(.97)}
 .legend{padding:10px 14px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#fff;border-top:1px solid var(--line)}
 .modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.42);display:none;align-items:center;justify-content:center;padding:20px;z-index:1000}.modal-backdrop.open{display:flex}
@@ -234,6 +235,35 @@ function planningEventText(t){
   return eventText(t);
 }
 function isCancelled(t){return String(t.status||'').trim().toLowerCase()==='annulé'||String(t.status||'').trim().toLowerCase()==='annule';}
+function hasValidatedReception(t){
+  // Source prioritaire : indicateur normalisé fourni par app.py.
+  if(t.receptionValidee===true) return true;
+
+  if(isAvisArrivee(t)){
+    const receptions=Array.isArray(t.receptionsAvisArrivee)?t.receptionsAvisArrivee:[];
+    if(receptions.some(r=>r&& !r.annulee)) return true;
+
+    const last=t.receptionAvisArrivee;
+    if(last && !last.annulee && (last.receptionnee===true || last.reference || last.receptionnee_le || last.date_reception)) return true;
+
+    const a=avisData(t);
+    const aitems=Array.isArray(a.items)?a.items:[];
+    return aitems.some(i=>{
+      const q=Number(String(i.quantite_recue_totale||'0').replace(',','.'));
+      return i.receptionne===true || (Number.isFinite(q)&&q>0) || !!i.receptionne_le || (Array.isArray(i.receptions)&&i.receptions.length>0);
+    });
+  }
+
+  const x=extraction(t);
+  const bons=Array.isArray(x.bons_livraison)?x.bons_livraison:[];
+  if(bons.some(b=>b&& !b.annulee)) return true;
+
+  const its=Array.isArray(x.items)?x.items:[];
+  return its.some(i=>{
+    const q=Number(String(i.quantite_recue_totale||'0').replace(',','.'));
+    return i.receptionne===true || (Number.isFinite(q)&&q>0) || !!i.receptionne_le || (Array.isArray(i.receptions)&&i.receptions.length>0);
+  });
+}
 
 function fieldValue(t,key){
   const map={
@@ -1048,7 +1078,7 @@ function renderCalendar(){
       if(d.getMonth()!==currentDate.getMonth())day.classList.add('other-month');if(key===today)day.classList.add('today');
       const num=document.createElement('div');num.className=d.getMonth()!==currentDate.getMonth()?'day-number small':'day-number';
       num.textContent=d.getDate()===1?d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'}):d.getDate();day.appendChild(num);
-      (g[key]||[]).sort((a,b)=>planningEventText(a).localeCompare(planningEventText(b))).forEach(t=>{const e=document.createElement('button');e.className=isAvisArrivee(t)?'event arrival-event':'event';e.type='button';e.textContent=planningEventText(t);e.title=e.textContent;e.addEventListener('click',()=>openTicket(t));day.appendChild(e);});
+      (g[key]||[]).sort((a,b)=>planningEventText(a).localeCompare(planningEventText(b))).forEach(t=>{const e=document.createElement('button');const classes=['event'];if(isAvisArrivee(t))classes.push('arrival-event');if(hasValidatedReception(t))classes.push('reception-validated');e.className=classes.join(' ');e.type='button';e.textContent=planningEventText(t);e.title=e.textContent;e.addEventListener('click',()=>openTicket(t));day.appendChild(e);});
       grid.appendChild(day);
     }
     d.setDate(d.getDate()+1);
