@@ -29,9 +29,9 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .week-head{display:grid;grid-template-columns:repeat(5,1fr);border-bottom:1px solid var(--line);background:#f8fafc}
 .week-head div{padding:12px 10px;font-weight:900;text-transform:lowercase;border-right:1px solid var(--line)}.week-head div:last-child{border-right:none}
 .month-grid{display:grid;grid-template-columns:repeat(5,1fr)}
-.day{height:130px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px;position:relative;background:#fff;display:flex;flex-direction:column;overflow:hidden}
+.day{height:145px;min-height:145px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px;position:relative;background:#fff;display:flex;flex-direction:column;overflow:hidden}
 .day:nth-child(5n){border-right:none}.day.other-month{background:#f8fafc;color:#94a3b8}.day.today{background:#eff6ff}
-.day-number{font-size:18px;font-weight:900;margin-bottom:8px;flex:0 0 auto}.day-number.small{font-size:14px;color:#94a3b8}
+.day-number{font-size:18px;font-weight:900;margin-bottom:6px;flex:0 0 auto}.day-number.small{font-size:14px;color:#94a3b8}
 .day-events{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:3px;scrollbar-gutter:stable}
 .day-events::-webkit-scrollbar{width:8px}.day-events::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:999px}.day-events::-webkit-scrollbar-track{background:transparent}
 .event{display:block;width:100%;border:none;border-left:5px solid var(--event-border);background:var(--event);color:#111827;border-radius:3px;padding:6px 7px;margin:4px 0;font-size:13px;line-height:1.25;text-align:left;cursor:pointer;font-weight:800;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
@@ -71,7 +71,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 
 .colis-repartition{margin-top:12px;border:1px solid var(--line);border-radius:12px;padding:12px;background:#fff}.colis-repartition-title{font-size:13px;font-weight:900;margin-bottom:8px}.colis-unit{display:grid;grid-template-columns:1fr minmax(160px,220px);gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid #eef2f7}.colis-unit:last-child{border-bottom:none}.colis-unit select{width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:7px;background:#fff;font-weight:800}
 @media(max-width:600px){.detail-grid{grid-template-columns:1fr;gap:4px}.detail-value{margin-bottom:8px}}
-@media(max-width:900px){.month-grid,.week-head{grid-template-columns:1fr}.week-head{display:none}.day{height:auto;min-height:130px;border-right:none;overflow:visible}.day-events{max-height:240px;overflow-y:auto}}
+@media(max-width:900px){.month-grid,.week-head{grid-template-columns:1fr}.week-head{display:none}.day{height:auto;min-height:130px;border-right:none}.day-events{max-height:220px}}
 </style>
 </head>
 <body>
@@ -229,6 +229,32 @@ function avisDate(t){
   return /^\d{4}-\d{2}-\d{2}$/.test(v)?v:'';
 }
 function planningDate(t){return isAvisArrivee(t)?avisDate(t):enlDate(t);}
+
+// Une réception passée mais pas totalement finalisée reste visible aujourd'hui.
+// Dès qu'elle est entièrement réceptionnée, elle retrouve sa date prévue d'origine.
+function isReceptionFinalisee(t){
+  let its=[];
+  if(isAvisArrivee(t)){
+    const a=avisData(t);
+    its=Array.isArray(a.items)?a.items:[];
+  }else{
+    its=items(t);
+  }
+
+  if(its.length){
+    return its.every(i=>receivedQty(i)>=plannedQty(i));
+  }
+
+  // Compatibilité avec les anciens tickets sans détail d'articles.
+  return hasValidatedReception(t);
+}
+function planningDisplayDate(t){
+  const original=planningDate(t);
+  if(!original) return '';
+  const today=isoDate(new Date());
+  if(original<today && !isReceptionFinalisee(t)) return today;
+  return original;
+}
 function planningEventText(t){
   if(isAvisArrivee(t)){
     const a=avisData(t);
@@ -1067,7 +1093,7 @@ function renderPending(){
 function grouped(){
   const g={};
   tickets.filter(t=>(isEnlevement(t)||isAvisArrivee(t))&&!isCancelled(t)&&planningDate(t)&&matches(t))
-    .forEach(t=>{const d=planningDate(t);(g[d]??=[]).push(t);});
+    .forEach(t=>{const d=planningDisplayDate(t);if(d)(g[d]??=[]).push(t);});
   return g;
 }
 function renderCalendar(){
@@ -1081,7 +1107,19 @@ function renderCalendar(){
       const num=document.createElement('div');num.className=d.getMonth()!==currentDate.getMonth()?'day-number small':'day-number';
       num.textContent=d.getDate()===1?d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'}):d.getDate();day.appendChild(num);
       const eventsBox=document.createElement('div');eventsBox.className='day-events';day.appendChild(eventsBox);
-      (g[key]||[]).sort((a,b)=>planningEventText(a).localeCompare(planningEventText(b))).forEach(t=>{const e=document.createElement('button');const classes=['event'];if(isAvisArrivee(t))classes.push('arrival-event');if(hasValidatedReception(t))classes.push('reception-validated');e.className=classes.join(' ');e.type='button';e.textContent=planningEventText(t);e.title=e.textContent;e.addEventListener('click',()=>openTicket(t));eventsBox.appendChild(e);});
+      (g[key]||[]).sort((a,b)=>planningEventText(a).localeCompare(planningEventText(b))).forEach(t=>{
+        const e=document.createElement('button');
+        const classes=['event'];
+        if(isAvisArrivee(t))classes.push('arrival-event');
+        if(hasValidatedReception(t))classes.push('reception-validated');
+        e.className=classes.join(' ');
+        e.type='button';
+        e.textContent=planningEventText(t);
+        const original=planningDate(t);
+        e.title=(original&&original!==key)?`${e.textContent} — reporté depuis le ${original.split('-').reverse().join('/')}`:e.textContent;
+        e.addEventListener('click',()=>openTicket(t));
+        eventsBox.appendChild(e);
+      });
       grid.appendChild(day);
     }
     d.setDate(d.getDate()+1);
