@@ -227,6 +227,27 @@ function avisDate(t){
   return /^\d{4}-\d{2}-\d{2}$/.test(v)?v:'';
 }
 function planningDate(t){return isAvisArrivee(t)?avisDate(t):enlDate(t);}
+function isReceptionFinalisee(t){
+  // Une reception n'est finalisee que lorsque toutes les quantites prevues
+  // ont ete receptionnees. Une reception partielle reste donc a suivre.
+  const its=isAvisArrivee(t)
+    ? (Array.isArray(avisData(t).items)?avisData(t).items:[])
+    : items(t);
+  if(!its.length) return false;
+  return its.every(i=>receivedQty(i)>=plannedQty(i));
+}
+function effectivePlanningDate(t){
+  const original=planningDate(t);
+  if(!original) return '';
+
+  // Les receptions terminees restent affichees a leur date d'origine.
+  if(isReceptionFinalisee(t)) return original;
+
+  // Toute reception en retard et non finalisee est reportee au jour courant
+  // afin qu'elle reste visible dans le planning jusqu'a sa cloture.
+  const today=isoDate(new Date());
+  return original<today?today:original;
+}
 function planningEventText(t){
   if(isAvisArrivee(t)){
     const a=avisData(t);
@@ -1064,8 +1085,8 @@ function renderPending(){
 }
 function grouped(){
   const g={};
-  tickets.filter(t=>(isEnlevement(t)||isAvisArrivee(t))&&!isCancelled(t)&&planningDate(t)&&matches(t))
-    .forEach(t=>{const d=planningDate(t);(g[d]??=[]).push(t);});
+  tickets.filter(t=>(isEnlevement(t)||isAvisArrivee(t))&&!isCancelled(t)&&effectivePlanningDate(t)&&matches(t))
+    .forEach(t=>{const d=effectivePlanningDate(t);(g[d]??=[]).push(t);});
   return g;
 }
 function renderCalendar(){
