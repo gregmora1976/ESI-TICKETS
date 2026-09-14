@@ -2957,6 +2957,72 @@ def _is_caisse_receptionnee(ticket):
     return False
 
 
+def _ticket_reception_validee(ticket):
+    """
+    Indicateur unique pour le planning réception.
+
+    Retourne True dès qu'au moins une réception active a été validée, y compris
+    pour les anciens tickets qui ne possèdent pas encore les listes modernes
+    receptionsAvisArrivee / bons_livraison mais portent l'état sur les articles.
+    """
+    module = _as_text(ticket.get('module')).replace("’", "'").strip()
+    ticket_id = _as_text(ticket.get('id')).strip()
+
+    is_avis = module == "Avis d'arrivée" or ticket_id.startswith('ARR-')
+    is_enlevement = (
+        module in ("Demande d'enlèvement", "Demande d'enlevement")
+        or ticket_id.startswith('ENL-')
+    )
+
+    if is_avis:
+        # Structure actuelle : chaque validation crée une réception active.
+        for reception in ticket.get('receptionsAvisArrivee') or []:
+            if isinstance(reception, dict) and not reception.get('annulee'):
+                return True
+
+        # Compatibilité avec l'ancien champ de synthèse.
+        last = ticket.get('receptionAvisArrivee')
+        if isinstance(last, dict) and not last.get('annulee'):
+            if (
+                last.get('receptionnee') is True
+                or last.get('reference')
+                or last.get('receptionnee_le')
+                or last.get('date_reception')
+            ):
+                return True
+
+        container = ticket.get('avisArrivee') or ticket.get('avis_arrivee') or {}
+        item_list = container.get('items') or []
+
+    elif is_enlevement:
+        container = ticket.get('enlevement') or {}
+        for reception in container.get('bons_livraison') or []:
+            if isinstance(reception, dict) and not reception.get('annulee'):
+                return True
+        item_list = container.get('items') or []
+
+    else:
+        return False
+
+    # Secours pour l'historique : les anciennes validations peuvent n'avoir
+    # enregistré que l'état de réception directement dans les lignes articles.
+    for item in item_list:
+        if not isinstance(item, dict):
+            continue
+        if item.get('receptionne') is True:
+            return True
+        try:
+            qty = int(float(str(item.get('quantite_recue_totale') or 0).replace(',', '.')))
+        except Exception:
+            qty = 0
+        if qty > 0 or item.get('receptionne_le'):
+            return True
+        if any(isinstance(r, dict) for r in (item.get('receptions') or [])):
+            return True
+
+    return False
+
+
 def migrate_caisses_avant_18_aout_2026():
     """
     Corrige l'ancienne logique qui utilisait 'Réceptionnée' comme statut de ticket.
@@ -6397,6 +6463,10 @@ def api_tickets():
             reception = dict(ticket.get('reception') or {})
             reception['receptionnee'] = _is_caisse_receptionnee(ticket)
             ticket['reception'] = reception
+
+        # Indicateur explicite utilisé par le planning Gestion réception.
+        # Il fonctionne aussi pour les anciennes réceptions déjà enregistrées.
+        ticket['receptionValidee'] = _ticket_reception_validee(ticket)
 
     return jsonify(tickets)
 
