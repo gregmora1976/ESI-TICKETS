@@ -62,6 +62,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .delivery-item{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fff}
 .delivery-item.received{background:#f0fdf4}
 .delivery-meta{font-size:12px;color:var(--muted);margin-top:4px}
+.delivery-parts{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px;padding:8px 10px;border:1px dashed #bae6fd;background:#f0f9ff;border-radius:9px}.delivery-parts label{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:900;color:#075985;cursor:pointer}.delivery-parts-count-wrap{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:900;color:#475569}.delivery-parts-count{width:74px;border:1px solid #7dd3fc;border-radius:8px;padding:6px 8px;font:inherit;font-weight:900;background:#fff}.delivery-parts-count:disabled{background:#f1f5f9;color:#94a3b8}
 .delivery-line{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .delivery-qty-wrap{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:900;color:var(--muted)}
 .delivery-qty{width:82px;border:1px solid #cbd5e1;border-radius:8px;padding:6px 8px;font:inherit;font-weight:800;background:#fff}
@@ -625,32 +626,43 @@ function colisDisplayList(colis,types){
     return type?`${ref} - ${type.toUpperCase()}`:ref;
   }).join(', ');
 }
+function readArticleParts(prefix, checkClass, qtyClass){
+  const result=[];
+  document.querySelectorAll('.'+checkClass+':checked:not(:disabled)').forEach(cb=>{
+    const index=Number(cb.dataset.index), qty=Math.max(0,Math.floor(Number(document.querySelector('.'+qtyClass+'[data-index="'+index+'"]')?.value||0)));
+    const split=document.querySelector('.'+prefix+'-parts-check[data-index="'+index+'"]'), count=document.querySelector('.'+prefix+'-parts-count[data-index="'+index+'"]');
+    const total=split&&split.checked?Math.max(2,Math.floor(Number(count?.value||2))):1;
+    if(total>1){for(let u=0;u<qty;u++)result.push({index,unit_offset:u,total_parts:total});}
+  });
+  return result;
+}
 function buildColisRepartition(prefix, checkClass, qtyClass, packageInputId){
   const box=document.getElementById(prefix+'ColisRepartition'); if(!box) return;
   const count=Math.max(1,Number(document.getElementById(packageInputId)?.value||1));
-  const previousTypes=readColisTypes(prefix);
-  const units=[];
+  const previousTypes=readColisTypes(prefix), units=[];
   document.querySelectorAll('.'+checkClass+':checked:not(:disabled)').forEach(cb=>{
     const index=Number(cb.dataset.index), qty=Math.max(0,Math.floor(Number(document.querySelector('.'+qtyClass+'[data-index="'+index+'"]')?.value||0)));
     const source=prefix==='arrival'?((avisData(openedTicket).items||[])[index]||{}):(items(openedTicket)[index]||{});
-    const ids=Array.isArray(source.esi_ids)?source.esi_ids:[]; const already=receivedQty(source);
-    const reference=source.reference||source.ref||'-';
-    const designation=source.designation||source.description||'-';
-    for(let u=0;u<qty;u++) units.push({
-      index,
-      unit_offset:u,
-      reference,
-      designation,
-      esi:ids[already+u]||`${reference} #${already+u+1}`
-    });
+    const ids=Array.isArray(source.esi_ids)?source.esi_ids:[], already=receivedQty(source), reference=source.reference||source.ref||'-', designation=source.designation||source.description||'-';
+    const split=document.querySelector('.'+prefix+'-parts-check[data-index="'+index+'"]'), partsInput=document.querySelector('.'+prefix+'-parts-count[data-index="'+index+'"]');
+    const totalParts=split&&split.checked?Math.max(2,Math.floor(Number(partsInput?.value||2))):1;
+    for(let u=0;u<qty;u++){
+      const parentEsi=ids[already+u]||`${reference} #${already+u+1}`;
+      if(totalParts>1){for(let part=1;part<=totalParts;part++)units.push({index,unit_offset:u,part_index:part,reference,designation,esi:parentEsi,part_label:`Partie ${part}/${totalParts}`});}
+      else units.push({index,unit_offset:u,part_index:0,reference,designation,esi:parentEsi,part_label:''});
+    }
   });
   if(!units.length){box.innerHTML='<div class="muted">Sélectionne les articles à réceptionner.</div>';return;}
   const opts=Array.from({length:count},(_,i)=>`<option value="${i}">Colis ${i+1}</option>`).join('');
   const typeCards=Array.from({length:count},(_,i)=>`<div class="colis-type-card"><label for="${prefix}ColisType${i}">Colis ${i+1} - Type de colis</label><select id="${prefix}ColisType${i}" class="${prefix}-colis-type" data-colis-index="${i}" required>${colisTypeOptions(previousTypes[i]||'')}</select></div>`).join('');
-  box.innerHTML=`<div class="colis-repartition-title">Constitution des colis</div><div class="colis-type-title">Type de chaque colis</div><div class="colis-type-grid">${typeCards}</div><div class="colis-type-title">Répartition des articles dans les colis</div>`+units.map((u,i)=>`<div class="colis-unit"><div><strong>${esc(u.reference)} - ${esc(u.designation)} - ${esc(u.esi)}</strong></div><select class="${prefix}-colis-select" data-index="${u.index}" data-unit-offset="${u.unit_offset}">${opts}</select></div>`).join('');
+  box.innerHTML=`<div class="colis-repartition-title">Constitution des colis</div><div class="colis-type-title">Type de chaque colis</div><div class="colis-type-grid">${typeCards}</div><div class="colis-type-title">Répartition des articles / parties dans les colis</div>`+units.map(u=>`<div class="colis-unit"><div><strong>${esc(u.reference)} - ${esc(u.designation)} - ${esc(u.esi)}${u.part_label?' - '+esc(u.part_label):''}</strong></div><select class="${prefix}-colis-select" data-index="${u.index}" data-unit-offset="${u.unit_offset}" data-part-index="${u.part_index}">${opts}</select></div>`).join('');
   box.querySelectorAll('.'+prefix+'-colis-select').forEach((sel,i)=>sel.value=String(i%count));
 }
-function readColisRepartition(prefix){return [...document.querySelectorAll('.'+prefix+'-colis-select')].map(x=>({index:Number(x.dataset.index),unit_offset:Number(x.dataset.unitOffset),colis_index:Number(x.value)}));}
+function readColisRepartition(prefix){return [...document.querySelectorAll('.'+prefix+'-colis-select')].map(x=>({index:Number(x.dataset.index),unit_offset:Number(x.dataset.unitOffset),part_index:Number(x.dataset.partIndex||0),colis_index:Number(x.value)}));}
+function setupPartsControls(prefix, checkClass, qtyClass, packageInputId){
+  document.querySelectorAll('.'+prefix+'-parts-check').forEach(cb=>cb.addEventListener('change',()=>{const c=document.querySelector('.'+prefix+'-parts-count[data-index="'+cb.dataset.index+'"]');if(c)c.disabled=!cb.checked;buildColisRepartition(prefix,checkClass,qtyClass,packageInputId);}));
+  document.querySelectorAll('.'+prefix+'-parts-count').forEach(inp=>{inp.addEventListener('input',()=>buildColisRepartition(prefix,checkClass,qtyClass,packageInputId));inp.addEventListener('change',()=>buildColisRepartition(prefix,checkClass,qtyClass,packageInputId));});
+}
 function closeReceptionModal(){
   const b=document.getElementById('receptionModalBackdrop');
   b.classList.remove('open');b.setAttribute('aria-hidden','true');
@@ -685,6 +697,7 @@ function openReceptionModal(){
             </div>`}
           </div>
           <div class="delivery-meta">Qté prévue : ${esc(planned)} · Déjà reçue : ${esc(received)} · Reste : ${esc(remaining)}</div>
+          ${fullyReceived?'':`<div class="delivery-parts"><label><input type="checkbox" class="arrival-parts-check" data-index="${index}"> Article en plusieurs parties</label><div class="delivery-parts-count-wrap">Nombre de parties <input class="delivery-parts-count arrival-parts-count" data-index="${index}" type="number" min="2" max="20" value="2" disabled></div></div>`}
           ${fullyReceived?`<div class="delivery-meta"><strong>Déjà réceptionné en totalité</strong>${i.lieu_stockage?` · ${esc(i.lieu_stockage)}`:''}${i.receptionne_par?` · ${esc(i.receptionne_par)}`:''}</div>`:''}
         </div>
       </div>`;
@@ -775,7 +788,9 @@ function openReceptionModal(){
   document.getElementById('arrivalReceptionPackageCount')?.addEventListener('input',()=>buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount'));
   document.getElementById('arrivalReceptionPackageCount')?.addEventListener('change',()=>buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount'));
 
-  // Initialise immédiatement la répartition Article -> Colis à l'ouverture.
+  setupPartsControls('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount');
+
+  // Initialise immédiatement la répartition Article / Partie -> Colis à l'ouverture.
   buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount');
 
   const b=document.getElementById('receptionModalBackdrop');
@@ -811,14 +826,15 @@ async function validateArrivalReception(){
   }
 
   const repartition=readColisRepartition('arrival');
-  const totalUnits=selected.reduce((sum,x)=>sum+x.quantite_recue,0);
-  if(repartition.length!==totalUnits){
-    alert("Chaque article physique doit être associé à un colis.");
+  const articleParts=readArticleParts('arrival','arrival-reception-check','arrival-reception-qty');
+  const totalUnits=repartition.length;
+  if(!totalUnits){
+    alert("Chaque article ou partie physique doit être associé à un colis.");
     buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount');
     return;
   }
   if(packageCount>totalUnits){
-    alert("Le nombre de colis ne peut pas dépasser le nombre d'articles réceptionnés.");
+    alert("Le nombre de colis ne peut pas dépasser le nombre d'articles ou parties physiques réceptionnés.");
     return;
   }
   if(new Set(repartition.map(x=>x.colis_index)).size!==packageCount){
@@ -848,6 +864,7 @@ async function validateArrivalReception(){
         items_reception:selected,
         selected_indexes:selected.map(x=>x.index),
         colis_repartition:repartition,
+        article_parts:articleParts,
         colis_types:colisTypes
       })
     });
@@ -955,6 +972,7 @@ function openDeliveryModal(){
           </div>`}
         </div>
         <div class="delivery-meta">Qté prévue : ${esc(planned)} · Déjà reçue : ${esc(received)} · Reste : ${esc(remaining)}${i.dimensions?` · Dimensions : ${esc(i.dimensions)}`:''}</div>
+        ${fullyReceived?'':`<div class="delivery-parts"><label><input type="checkbox" class="delivery-parts-check" data-index="${index}"> Article en plusieurs parties</label><div class="delivery-parts-count-wrap">Nombre de parties <input class="delivery-parts-count" data-index="${index}" type="number" min="2" max="20" value="2" disabled></div></div>`}
         ${fullyReceived?`<div class="delivery-meta"><strong>Déjà réceptionné en totalité</strong>${i.lieu_stockage?` · ${esc(i.lieu_stockage)}`:''}${i.receptionne_par?` · ${esc(i.receptionne_par)}`:''}</div>`:''}
       </div>
     </div>`;
@@ -1026,6 +1044,8 @@ function openDeliveryModal(){
     qty.addEventListener('change',recalcDeliveryPackageCount);
   });
 
+  setupPartsControls('delivery','delivery-check','delivery-qty','deliveryPackageCount');
+
   // Valeur initiale = quantité totale des articles actuellement sélectionnés.
   // Le champ reste ensuite librement modifiable par l'utilisateur.
   recalcDeliveryPackageCount();
@@ -1061,14 +1081,15 @@ async function validateDelivery(){
   }
 
   const repartition=readColisRepartition('delivery');
-  const totalUnits=selected.reduce((sum,x)=>sum+x.quantite_recue,0);
-  if(repartition.length!==totalUnits){
-    alert("Chaque article physique doit être associé à un colis.");
+  const articleParts=readArticleParts('delivery','delivery-check','delivery-qty');
+  const totalUnits=repartition.length;
+  if(!totalUnits){
+    alert("Chaque article ou partie physique doit être associé à un colis.");
     buildColisRepartition('delivery','delivery-check','delivery-qty','deliveryPackageCount');
     return;
   }
   if(packageCount>totalUnits){
-    alert("Le nombre de colis ne peut pas dépasser le nombre d'articles réceptionnés.");
+    alert("Le nombre de colis ne peut pas dépasser le nombre d'articles ou parties physiques réceptionnés.");
     return;
   }
   if(new Set(repartition.map(x=>x.colis_index)).size!==packageCount){
@@ -1096,6 +1117,7 @@ async function validateDelivery(){
         items_reception:selected,
         selected_indexes:selected.map(x=>x.index),
         colis_repartition:repartition,
+        article_parts:articleParts,
         colis_types:colisTypes
       })
     });
