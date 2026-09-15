@@ -554,10 +554,16 @@ def colis_public_page(colis_ref):
         esi = esc(article.get('esi_id'))
         ref = esc(article.get('reference'))
         desc = esc(article.get('description'))
+        part_label = _as_text(article.get('partie_label')).strip()
+        parent_esi = _as_text(article.get('parent_esi')).strip()
+        part_html = ''
+        if part_label:
+            part_html = f'<div class="part-info">Partie {esc(part_label)}' + (f' · Article principal {esc(parent_esi)}' if parent_esi else '') + '</div>'
         cards.append(f'''
           <article class="item">
             <div class="item-head"><strong>{esi}</strong><span>{ref}</span></div>
             <div class="designation">{desc}</div>
+            {part_html}
             <div class="meta"><span><b>Dimensions</b>{esc(dims)}</span><span><b>Poids</b>{esc(poids)}</span></div>
           </article>
         ''')
@@ -595,6 +601,7 @@ h1{{font-size:31px;line-height:1.05;margin:9px 0 5px}}
 .item-head strong{{font-size:16px;color:#0369a1}}
 .item-head span{{font-size:12px;font-weight:800;text-align:right;overflow-wrap:anywhere}}
 .designation{{font-size:14px;margin-top:9px;line-height:1.35}}
+.part-info{{margin-top:8px;display:inline-block;background:#e0f2fe;color:#075985;border-radius:999px;padding:5px 8px;font-size:11px;font-weight:900}}
 .meta{{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:11px}}
 .meta span{{background:var(--light);border-radius:10px;padding:8px;font-size:12px}}
 .meta b{{display:block;font-size:9px;text-transform:uppercase;color:var(--muted);margin-bottom:3px}}
@@ -756,6 +763,7 @@ def _article_payload_from_item(ticket, item, source_module=None, source_index=No
 
 _ARTICLE_EXTRA_FIELDS = {
     "charge_projet", "type_colis",
+    "parent_esi", "partie_label", "partie_index", "partie_total", "article_en_plusieurs_parties",
     "oeuvre_reference", "artiste", "oeuvre_titre", "oeuvre_technique",
     "oeuvre_longueur_cm", "oeuvre_largeur_cm", "oeuvre_hauteur_cm",
     "oeuvre_volume_m3", "oeuvre_surface_m2", "oeuvre_poids_kg",
@@ -819,6 +827,344 @@ def _create_article_record(payload):
         raise RuntimeError("Supabase n'a pas retourné l'article créé.")
     return _article_row_to_public(rows[0])
 
+
+
+
+def _article_part_meta(row):
+    # Métadonnées de composition stockées dans raw_json pour éviter une migration SQL.
+    row = dict(row or {})
+    raw = row.get("raw_json") if isinstance(row.get("raw_json"), dict) else {}
+    extra = raw.get("article_fields") if isinstance(raw.get("article_fields"), dict) else {}
+    parent_esi = _as_text(extra.get("parent_esi") or raw.get("parent_esi")).strip()
+    try:
+        partie_index = int(extra.get("partie_index") or raw.get("partie_index") or 0)
+    except Exception:
+        partie_index = 0
+    try:
+        partie_total = int(extra.get("partie_total") or raw.get("partie_total") or 0)
+    except Exception:
+        partie_total = 0
+    partie_label = _as_text(extra.get("partie_label") or raw.get("partie_label")).strip()
+    if not partie_label and partie_index > 0 and partie_total > 1:
+        partie_label = f"{partie_index}/{partie_total}"
+    return {
+        "parent_esi": parent_esi,
+        "partie_index": partie_index,
+        "partie_total": partie_total,
+        "partie_label": partie_label,
+    }
+
+
+def _article_parts_for_parent(parent_esi, dossier=""):
+    parent_esi = _as_text(parent_esi).strip()
+    dossier = _as_text(dossier).strip()
+    if not parent_esi:
+        return []
+    query = "select=*&order=article_no.asc&limit=5000"
+    if dossier:
+        query += "&dossier=eq." + urllib.parse.quote(dossier, safe='')
+    rows = supabase_rest_request("GET", "articles", query) or []
+    parts = []
+    for row in rows:
+        meta = _article_part_meta(row)
+        if meta.get("parent_esi") != parent_esi:
+            continue
+        public = _article_row_to_public(row)
+        public.update(meta)
+        parts.append(public)
+    parts.sort(key=lambda x: (int(x.get("partie_index") or 0), int(x.get("article_no") or 0)))
+    return parts
+
+
+def _sync_parent_parts_logistics(parent_esi):
+    parent_esi = _as_text(parent_esi).strip()
+    if not parent_esi:
+        return
+    safe_parent = urllib.parse.quote(parent_esi, safe='-')
+    parent_rows = supabase_rest_request("GET", "articles", f"select=*&esi_id=eq.{safe_parent}&limit=1") or []
+    if not parent_rows:
+        return
+    parent = dict(parent_rows[0])
+    parts = _article_parts_for_parent(parent_esi, parent.get("dossier"))
+    if not parts:
+        return
+
+    raw = parent.get("raw_json") if isinstance(parent.get("raw_json"), dict) else {}
+    raw = dict(raw or {})
+    extra = raw.get("article_fields") if isinstance(raw.get("article_fields"), dict) else {}
+    extra = dict(extra or {})
+    extra["article_en_plusieurs_parties"] = "Oui"
+    extra["parties_total"] = str(len(parts))
+    raw["article_fields"] = extra
+    raw["parties"] = [
+        {
+            "esi_id": _as_text(x.get("esi_id")).strip(),
+            "partie_label": _as_text(x.get("partie_label")).strip(),
+            "dernier_colis": _as_text(x.get("dernier_colis")).strip(),
+            "type_colis": _as_text(x.get("type_colis")).strip(),
+            "lieu_stockage": _as_text(x.get("lieu_stockage")).strip(),
+            "statut_logistique": _as_text(x.get("statut_logistique")).strip(),
+        }
+        for x in parts
+    ]
+
+    received = [x for x in parts if _as_text(x.get("statut_logistique")).strip().lower().startswith("réceptionné")]
+    colis = list(dict.fromkeys(_as_text(x.get("dernier_colis")).strip() for x in parts if _as_text(x.get("dernier_colis")).strip()))
+    types = list(dict.fromkeys(_as_text(x.get("type_colis")).strip() for x in parts if _as_text(x.get("type_colis")).strip()))
+    lieux = list(dict.fromkeys(_as_text(x.get("lieu_stockage")).strip() for x in parts if _as_text(x.get("lieu_stockage")).strip()))
+    refs = list(dict.fromkeys(_as_text(x.get("derniere_reception_ref")).strip() for x in parts if _as_text(x.get("derniere_reception_ref")).strip()))
+
+    if len(received) == len(parts):
+        statut = f"Réceptionné ({len(parts)} parties)"
+    elif received:
+        statut = f"Réception partielle ({len(received)}/{len(parts)} parties)"
+    else:
+        statut = f"Article en {len(parts)} parties"
+
+    if len(types) == 1:
+        extra["type_colis"] = types[0]
+    elif len(types) > 1:
+        extra["type_colis"] = "Plusieurs types"
+    else:
+        extra["type_colis"] = ""
+    raw["article_fields"] = extra
+
+    patch = {
+        "statut_logistique": statut,
+        "dernier_colis": ", ".join(colis),
+        "lieu_stockage": lieux[0] if len(lieux) == 1 else ("Plusieurs emplacements" if lieux else ""),
+        "derniere_reception_ref": refs[-1] if refs else "",
+        "updated_at": datetime.now().isoformat(),
+        "raw_json": raw,
+    }
+    merged = dict(parent)
+    merged.update(patch)
+    patch["search_text"] = _article_search_text(merged)
+    supabase_rest_request("PATCH", "articles", f"esi_id=eq.{safe_parent}", patch, prefer="return=minimal")
+
+
+def _ensure_article_parts(parent_esi, total_parts):
+    parent_esi = _as_text(parent_esi).strip()
+    try:
+        total_parts = int(total_parts)
+    except Exception:
+        total_parts = 0
+    if not parent_esi or total_parts < 2 or total_parts > 20:
+        raise ValueError("Le nombre de parties doit être compris entre 2 et 20.")
+
+    safe_parent = urllib.parse.quote(parent_esi, safe='-')
+    parent_rows = supabase_rest_request("GET", "articles", f"select=*&esi_id=eq.{safe_parent}&limit=1") or []
+    if not parent_rows:
+        raise ValueError(f"Article principal {parent_esi} introuvable.")
+    parent = dict(parent_rows[0])
+    dossier = _as_text(parent.get("dossier")).strip()
+    existing = _article_parts_for_parent(parent_esi, dossier)
+
+    if existing:
+        valid = len(existing) == total_parts and [int(x.get("partie_index") or 0) for x in existing] == list(range(1, total_parts + 1))
+        if valid:
+            return existing
+        can_replace = True
+        for child in existing:
+            raw = child.get("raw_json") if isinstance(child.get("raw_json"), dict) else {}
+            if (raw.get("receptions") or []) or _as_text(child.get("derniere_reception_ref")).strip():
+                can_replace = False
+                break
+        if not can_replace:
+            raise ValueError(f"{parent_esi} est déjà défini avec {len(existing)} partie(s) et possède un historique de réception.")
+        for child in existing:
+            child_esi = _as_text(child.get("esi_id")).strip()
+            if child_esi:
+                supabase_rest_request("DELETE", "articles", "esi_id=eq." + urllib.parse.quote(child_esi, safe='-'), prefer="return=minimal")
+
+    parent_raw = parent.get("raw_json") if isinstance(parent.get("raw_json"), dict) else {}
+    parent_raw = dict(parent_raw or {})
+    inherited_extra = parent_raw.get("article_fields") if isinstance(parent_raw.get("article_fields"), dict) else {}
+    inherited_extra = dict(inherited_extra or {})
+    for key in ("parent_esi", "partie_index", "partie_total", "partie_label", "article_en_plusieurs_parties", "parties_total"):
+        inherited_extra.pop(key, None)
+
+    created = []
+    now = datetime.now().isoformat()
+    for idx in range(1, total_parts + 1):
+        part_extra = dict(inherited_extra)
+        part_extra.update({
+            "parent_esi": parent_esi,
+            "partie_index": str(idx),
+            "partie_total": str(total_parts),
+            "partie_label": f"{idx}/{total_parts}",
+        })
+        payload = {
+            "ticket_id": parent.get("ticket_id"),
+            "source_module": "Partie article",
+            "source_index": None,
+            "unit_index": idx,
+            "type_objet": parent.get("type_objet") or "PRODUIT",
+            "reference": parent.get("reference") or "",
+            "description": parent.get("description") or "",
+            "dossier": parent.get("dossier") or "",
+            "client": parent.get("client") or "",
+            "projet": parent.get("projet") or "",
+            "ref_caisse": parent.get("ref_caisse") or "",
+            "transporteur_ref": parent.get("transporteur_ref") or "",
+            "longueur_cm": parent.get("longueur_cm") or "",
+            "largeur_cm": parent.get("largeur_cm") or "",
+            "hauteur_cm": parent.get("hauteur_cm") or "",
+            "volume_m3": parent.get("volume_m3") or "",
+            "surface_m2": parent.get("surface_m2") or "",
+            "poids_kg": parent.get("poids_kg") or "",
+            "lieu_stockage": "",
+            "statut_logistique": "Partie créée",
+            "created_at": now,
+            "updated_at": now,
+            "raw_json": {
+                "source": "partie_article",
+                "parent_esi": parent_esi,
+                "partie_index": idx,
+                "partie_total": total_parts,
+                "partie_label": f"{idx}/{total_parts}",
+                "article_fields": part_extra,
+            },
+        }
+        payload["search_text"] = _article_search_text(payload)
+        created.append(_create_article_record(payload))
+
+    parent_raw["parts_created_at"] = now
+    parent_raw["parts_total"] = total_parts
+    parent_raw["parts"] = [{"esi_id": _as_text(x.get("esi_id")).strip(), "partie_label": _as_text(x.get("partie_label")).strip()} for x in created]
+    parent_extra = parent_raw.get("article_fields") if isinstance(parent_raw.get("article_fields"), dict) else {}
+    parent_extra = dict(parent_extra or {})
+    parent_extra["article_en_plusieurs_parties"] = "Oui"
+    parent_extra["parties_total"] = str(total_parts)
+    parent_raw["article_fields"] = parent_extra
+    patch = {"raw_json": parent_raw, "updated_at": now, "statut_logistique": f"Article en {total_parts} parties"}
+    merged = dict(parent)
+    merged.update(patch)
+    patch["search_text"] = _article_search_text(merged)
+    supabase_rest_request("PATCH", "articles", f"esi_id=eq.{safe_parent}", patch, prefer="return=minimal")
+    return _article_parts_for_parent(parent_esi, dossier)
+
+
+def _normalise_article_parts_specs(raw_specs):
+    result = {}
+    for entry in raw_specs or []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            idx = int(entry.get("index"))
+            unit_offset = int(entry.get("unit_offset") or 0)
+            total_parts = int(entry.get("total_parts") or 0)
+        except Exception:
+            continue
+        if idx < 0 or unit_offset < 0:
+            continue
+        if total_parts < 2 or total_parts > 20:
+            raise ValueError("Le nombre de parties doit être compris entre 2 et 20.")
+        result[(idx, unit_offset)] = total_parts
+    return result
+
+
+def _expected_reception_unit_keys(selected_items, raw_part_specs):
+    specs = _normalise_article_parts_specs(raw_part_specs)
+    expected = []
+    for item in selected_items:
+        idx = int(item.get("index"))
+        for unit_offset, _esi_id in enumerate(item.get("esi_ids") or []):
+            total = specs.get((idx, unit_offset), 1)
+            if total > 1:
+                for part_index in range(1, total + 1):
+                    expected.append((idx, unit_offset, part_index))
+            else:
+                expected.append((idx, unit_offset, 0))
+    return expected
+
+
+def _validate_colis_repartition_shape(selected_items, raw_assignments, colis_count, raw_part_specs):
+    expected = set(_expected_reception_unit_keys(selected_items, raw_part_specs))
+    assignments = {}
+    for entry in raw_assignments or []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            key = (int(entry.get("index")), int(entry.get("unit_offset") or 0), int(entry.get("part_index") or 0))
+            ci = int(entry.get("colis_index"))
+        except Exception:
+            continue
+        if key not in expected or ci < 0 or ci >= int(colis_count):
+            continue
+        assignments[key] = ci
+    if set(assignments) != expected:
+        raise ValueError("Chaque article ou partie physique doit être associé à un colis.")
+    if int(colis_count) > len(expected):
+        raise ValueError("Le nombre de colis ne peut pas dépasser le nombre d'articles ou parties physiques réceptionnés.")
+    if set(assignments.values()) != set(range(int(colis_count))):
+        raise ValueError("Chaque colis créé doit contenir au moins un article ou une partie.")
+    return assignments
+
+
+def _expand_selected_items_with_parts(selected_items, raw_part_specs):
+    specs = _normalise_article_parts_specs(raw_part_specs)
+    expanded_ids = []
+    parent_ids = set()
+    for item in selected_items:
+        idx = int(item.get("index"))
+        original_ids = list(item.get("esi_ids") or [])
+        new_ids = []
+        part_map = {}
+        parent_map = {}
+        reception_units = []
+        composition = []
+        for unit_offset, parent_esi in enumerate(original_ids):
+            parent_esi = _as_text(parent_esi).strip()
+            total = specs.get((idx, unit_offset), 1)
+            if total > 1:
+                children = _ensure_article_parts(parent_esi, total)
+                if len(children) != total:
+                    raise ValueError(f"Impossible de préparer les {total} parties de {parent_esi}.")
+                parent_ids.add(parent_esi)
+                for part_index, child in enumerate(children, start=1):
+                    child_esi = _as_text(child.get("esi_id")).strip()
+                    label = _as_text(child.get("partie_label")).strip() or f"{part_index}/{total}"
+                    new_ids.append(child_esi)
+                    part_map[child_esi] = label
+                    parent_map[child_esi] = parent_esi
+                    reception_units.append({"index": idx, "unit_offset": unit_offset, "part_index": part_index, "esi_id": child_esi, "parent_esi": parent_esi, "partie_label": label})
+                    composition.append({"parent_esi": parent_esi, "esi_id": child_esi, "partie_label": label})
+            else:
+                new_ids.append(parent_esi)
+                reception_units.append({"index": idx, "unit_offset": unit_offset, "part_index": 0, "esi_id": parent_esi, "parent_esi": "", "partie_label": ""})
+        item["esi_ids_origine"] = original_ids
+        item["esi_ids"] = new_ids
+        item["partie_par_esi"] = part_map
+        item["parent_esi_par_esi"] = parent_map
+        item["reception_units"] = reception_units
+        if composition:
+            item["composition_parties"] = composition
+        expanded_ids.extend(new_ids)
+    return expanded_ids, parent_ids
+
+
+def _build_article_labels_from_selected(selected_items, dossier, client, lieu):
+    labels = []
+    for item in selected_items:
+        part_map = item.get("partie_par_esi") if isinstance(item.get("partie_par_esi"), dict) else {}
+        parent_map = item.get("parent_esi_par_esi") if isinstance(item.get("parent_esi_par_esi"), dict) else {}
+        for esi_id in item.get("esi_ids") or []:
+            labels.append({
+                "titre": "ARTICLE",
+                "principal": esi_id,
+                "esi_id": esi_id,
+                "dossier": dossier,
+                "client": client,
+                "reference": _as_text(item.get("reference")).strip(),
+                "designation": _as_text(item.get("designation") or item.get("description")).strip(),
+                "partie": _as_text(part_map.get(esi_id)).strip(),
+                "article_principal": _as_text(parent_map.get(esi_id)).strip(),
+                "quantite": "1",
+                "lieu": lieu,
+                "qr_url": _article_qr_url(esi_id),
+            })
+    return labels
 
 def _normalise_article_reference(value):
     """Normalise une référence uniquement pour le rapprochement bon d'enlèvement / base articles."""
@@ -1176,6 +1522,7 @@ def _update_article_logistics(esi_ids, lieu_stockage="", statut_logistique="Réc
     colis_by_esi = dict(colis_by_esi or {})
     colis_type_by_esi = dict(colis_type_by_esi or {})
     fallback = list(colis or [])
+    parent_ids_to_sync = set()
     for esi_id in esi_ids or []:
         esi_id = _as_text(esi_id).strip()
         if not esi_id:
@@ -1190,6 +1537,9 @@ def _update_article_logistics(esi_ids, lieu_stockage="", statut_logistique="Réc
         current = dict(rows[0])
         raw = current.get("raw_json") if isinstance(current.get("raw_json"), dict) else {}
         raw = dict(raw or {})
+        part_meta = _article_part_meta(current)
+        if part_meta.get("parent_esi"):
+            parent_ids_to_sync.add(part_meta["parent_esi"])
         history = list(raw.get("receptions") or [])
         history.append({"date": datetime.now().isoformat(), "lieu_stockage": lieu_stockage,
                         "colis": article_colis_list, "type_colis": article_type_colis,
@@ -1208,6 +1558,12 @@ def _update_article_logistics(esi_ids, lieu_stockage="", statut_logistique="Réc
                  "updated_at": datetime.now().isoformat(), "raw_json": raw}
         merged = dict(current); merged.update(patch); patch["search_text"] = _article_search_text(merged)
         supabase_rest_request("PATCH", "articles", f"esi_id=eq.{safe_esi}", patch, prefer="return=minimal")
+
+    for parent_esi in sorted(parent_ids_to_sync):
+        try:
+            _sync_parent_parts_logistics(parent_esi)
+        except Exception as e:
+            print(f"[ARTICLES] Synchronisation article principal {parent_esi} impossible: {e}")
 
 
 def _article_ids_for_received_units(item, previous_qty, qty_received):
@@ -1766,6 +2122,8 @@ def _article_reception_history_from_ticket(ticket, article):
             "nombre_colis": reception.get("nombre_colis") or "",
             "colis": colis_values,
             "type_colis": article_type_colis,
+            "partie_label": _as_text((linked_item.get("partie_par_esi") or {}).get(esi_id)).strip() if isinstance(linked_item.get("partie_par_esi"), dict) else _as_text(article.get("partie_label")).strip(),
+            "parent_esi": _as_text((linked_item.get("parent_esi_par_esi") or {}).get(esi_id)).strip() if isinstance(linked_item.get("parent_esi_par_esi"), dict) else _as_text(article.get("parent_esi")).strip(),
             "quantite": linked_item.get("quantite") or "",
             "files": files,
         })
@@ -2372,6 +2730,19 @@ def api_article_detail(esi_id):
     ticket_id = _as_text(article.get("ticket_id")).strip()
     ticket = load_ticket(ticket_id) if ticket_id else None
 
+    part_meta = _article_part_meta(article)
+    parent_summary = None
+    composition_parts = []
+    if part_meta.get("parent_esi"):
+        safe_parent = urllib.parse.quote(part_meta["parent_esi"], safe='-')
+        parent_rows = supabase_rest_request("GET", "articles", f"select=*&esi_id=eq.{safe_parent}&limit=1") or []
+        if parent_rows:
+            p = _article_row_to_public(parent_rows[0])
+            parent_summary = {"esi_id": p.get("esi_id"), "reference": p.get("reference"), "description": p.get("description"), "statut_logistique": p.get("statut_logistique"), "dernier_colis": p.get("dernier_colis")}
+        composition_parts = _article_parts_for_parent(part_meta["parent_esi"], article.get("dossier"))
+    else:
+        composition_parts = _article_parts_for_parent(esi_id, article.get("dossier"))
+
     detail = {
         "article": article,
         "ticket": None,
@@ -2379,6 +2750,7 @@ def api_article_detail(esi_id):
         "demande_enlevement": None,
         "receptions": [],
         "documents_source": [],
+        "composition": {"is_part": bool(part_meta.get("parent_esi")), "parent": parent_summary, "partie_label": part_meta.get("partie_label") or "", "parts": composition_parts},
     }
 
     if ticket:
@@ -2448,6 +2820,8 @@ def api_article_detail(esi_id):
                 "nombre_colis": "",
                 "colis": r.get("colis") or [],
                 "type_colis": _normalise_colis_type(r.get("type_colis")),
+                "partie_label": _as_text(article.get("partie_label")).strip(),
+                "parent_esi": _as_text(article.get("parent_esi")).strip(),
                 "quantite": "1",
                 "files": [],
             })
@@ -2484,6 +2858,11 @@ def article_public_page(esi_id):
     article = _article_row_to_public(rows[0])
     raw = article.get('raw_json') if isinstance(article.get('raw_json'), dict) else {}
     raw = dict(raw or {})
+    part_meta = _article_part_meta(article)
+    if part_meta.get('parent_esi'):
+        related_parts = _article_parts_for_parent(part_meta.get('parent_esi'), article.get('dossier'))
+    else:
+        related_parts = _article_parts_for_parent(article.get('esi_id'), article.get('dossier'))
     esc = lambda v: html.escape(_as_text(v).strip() or '-', quote=True)
 
     dims = ' × '.join(
@@ -2548,6 +2927,28 @@ def article_public_page(esi_id):
     if not history_html:
         history_html = '<div class="empty">Aucune réception enregistrée.</div>'
 
+    composition_html = ''
+    if part_meta.get('parent_esi'):
+        composition_html = (
+            '<section class="section"><div class="section-title">Composition de l’article</div><div class="grid">'
+            f'<div class="field"><b>Partie</b><div>{esc(part_meta.get("partie_label"))}</div></div>'
+            f'<div class="field"><b>Article principal</b><div>{esc(part_meta.get("parent_esi"))}</div></div>'
+            '</div></section>'
+        )
+    elif related_parts:
+        part_cards = []
+        for part in related_parts:
+            child_esi = _as_text(part.get('esi_id')).strip()
+            child_url = _article_qr_url(child_esi)
+            part_cards.append(
+                f'<a class="part-card" href="{html.escape(child_url, quote=True)}">'
+                f'<strong>Partie {esc(part.get("partie_label"))}</strong>'
+                f'<span>{esc(child_esi)}</span>'
+                f'<span>Colis : {esc(part.get("dernier_colis"))} · {esc(part.get("type_colis"))}</span>'
+                '</a>'
+            )
+        composition_html = '<section class="section"><div class="section-title">Composition de l’article</div><div class="parts-list">' + ''.join(part_cards) + '</div></section>'
+
     page = f"""<!doctype html>
 <html lang="fr">
 <head>
@@ -2579,6 +2980,7 @@ h1{{font-size:30px;line-height:1.05;margin:16px 0 5px;overflow-wrap:anywhere}}
 .history{{display:grid;gap:8px}}
 .history-item{{border-left:4px solid #0ea5e9;background:#f8fafc;border-radius:10px;padding:10px;font-size:12px;line-height:1.45;color:#334155}}
 .history-item strong{{color:var(--blue)}}
+.parts-list{{display:grid;gap:8px}}.part-card{{display:grid;gap:4px;text-decoration:none;color:var(--text);border:1px solid var(--line);border-radius:12px;background:#f8fafc;padding:11px}}.part-card strong{{color:var(--accent)}}.part-card span{{font-size:12px;color:#475569}}
 .empty{{font-size:12px;color:var(--muted)}}
 .foot{{font-size:11px;color:var(--muted);text-align:center;margin:20px 0 8px}}
 @media(max-width:650px){{.wrap{{padding:12px}}.layout{{grid-template-columns:1fr}}.grid{{grid-template-columns:1fr}}.field.wide{{grid-column:auto}}h1{{font-size:27px}}.hero-top{{align-items:flex-start}}.logo{{max-width:92px}}}}
@@ -2599,6 +3001,7 @@ h1{{font-size:30px;line-height:1.05;margin:16px 0 5px;overflow-wrap:anywhere}}
     <section class="grid">
       <div class="field"><b>N° ESI</b><div>{esc(article.get('esi_id'))}</div></div>
       <div class="field"><b>N° dossier</b><div>{esc(article.get('dossier'))}</div></div>
+      {f'<div class="field"><b>Partie</b><div>{esc(part_meta.get("partie_label"))}</div></div><div class="field"><b>Article principal</b><div>{esc(part_meta.get("parent_esi"))}</div></div>' if part_meta.get('parent_esi') else ''}
       <div class="field"><b>Référence / inventaire</b><div>{esc(article.get('reference'))}</div></div>
       <div class="field"><b>Client</b><div>{esc(article.get('client'))}</div></div>
       <div class="field"><b>Chargé de projet</b><div>{esc(article.get('charge_projet'))}</div></div>
@@ -2614,6 +3017,8 @@ h1{{font-size:30px;line-height:1.05;margin:16px 0 5px;overflow-wrap:anywhere}}
     </section>
     <aside class="photo">{photo_html}</aside>
   </div>
+
+  {composition_html}
 
   <section class="section">
     <div class="section-title">Informations de l’œuvre</div>
@@ -7428,6 +7833,7 @@ def _sync_articles_after_reception_cancel(ticket, cancelled, is_avis):
                 affected.append(esi_id)
 
     cancelled_ref = _as_text(cancelled.get('reference')).strip()
+    parent_ids_to_sync = set()
     for esi_id in affected:
         try:
             safe_esi = urllib.parse.quote(esi_id, safe='-')
@@ -7437,6 +7843,9 @@ def _sync_articles_after_reception_cancel(ticket, cancelled, is_avis):
             article = dict(rows[0])
             raw = article.get('raw_json') if isinstance(article.get('raw_json'), dict) else {}
             raw = dict(raw or {})
+            part_meta = _article_part_meta(article)
+            if part_meta.get('parent_esi'):
+                parent_ids_to_sync.add(part_meta['parent_esi'])
 
             old_history = list(raw.get('receptions') or [])
             removed = [r for r in old_history if _as_text(r.get('reception_ref')).strip() == cancelled_ref]
@@ -7484,6 +7893,12 @@ def _sync_articles_after_reception_cancel(ticket, cancelled, is_avis):
             supabase_rest_request('PATCH', 'articles', f'esi_id=eq.{safe_esi}', patch, prefer='return=minimal')
         except Exception as e:
             print(f'[ANNULATION RECEPTION] Article {esi_id}: {e}')
+
+    for parent_esi in sorted(parent_ids_to_sync):
+        try:
+            _sync_parent_parts_logistics(parent_esi)
+        except Exception as e:
+            print(f'[ANNULATION RECEPTION] Synchronisation article principal {parent_esi}: {e}')
 
 
 def _cancel_specific_reception(ticket, reference):
@@ -7655,6 +8070,7 @@ def api_reception_avis_arrivee(ticket_id):
     items_reception = data.get('items_reception')
     selected_indexes = data.get('selected_indexes') or []
     colis_repartition = data.get('colis_repartition') or []
+    article_parts = data.get('article_parts') or []
 
     if not receptionne_par:
         return jsonify({'ok': False, 'error': 'Nom et prénom du réceptionnaire manquants'}), 400
@@ -7817,6 +8233,14 @@ def api_reception_avis_arrivee(ticket_id):
         colis_types = _resolve_colis_types(data.get('colis_types'), colis_refs)
         if any(not colis_types.get(ref) for ref in colis_refs):
             return jsonify({'ok': False, 'error': 'Le type de chaque colis est obligatoire : Softpack, Carton ou Caisse bois.'}), 400
+        try:
+            _validate_colis_repartition_shape(selected, colis_repartition, len(colis_refs), article_parts)
+            reception_esi_ids, parent_part_ids = _expand_selected_items_with_parts(selected, article_parts)
+        except ValueError as e:
+            return jsonify({'ok': False, 'error': str(e)}), 400
+        except Exception as e:
+            return jsonify({'ok': False, 'error': f"Impossible de créer les parties de l'article : {e}"}), 500
+        article_labels = _build_article_labels_from_selected(selected, numero_dossier, avis.get('client') or ticket.get('dossier') or '', lieu_stockage)
         try:
             colis_by_esi = _resolve_colis_repartition(selected, colis_repartition, colis_refs)
         except ValueError as e:
@@ -8094,13 +8518,21 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
         esi_ids = [str(v).strip() for v in (row.get('esi_ids') or []) if str(v).strip()]
         colis_par_esi = row.get('colis_par_esi') if isinstance(row.get('colis_par_esi'), dict) else {}
         type_colis_par_esi = row.get('type_colis_par_esi') if isinstance(row.get('type_colis_par_esi'), dict) else {}
+        partie_par_esi = row.get('partie_par_esi') if isinstance(row.get('partie_par_esi'), dict) else {}
+        parent_esi_par_esi = row.get('parent_esi_par_esi') if isinstance(row.get('parent_esi_par_esi'), dict) else {}
 
         if esi_ids:
             for esi_id in esi_ids:
+                part_label = _as_text(partie_par_esi.get(esi_id)).strip()
+                designation = _as_text(row.get('designation') or row.get('description')).strip()
+                if part_label:
+                    designation = (designation + f" - Partie {part_label}").strip(" -")
                 unit_rows.append({
                     'esi_id': esi_id,
                     'reference': row.get('reference'),
-                    'designation': row.get('designation') or row.get('description'),
+                    'designation': designation,
+                    'partie': part_label,
+                    'parent_esi': _as_text(parent_esi_par_esi.get(esi_id)).strip(),
                     'colis': _colis_display(colis_par_esi.get(esi_id), type_colis_par_esi.get(esi_id)),
                     'dimensions': row.get('dimensions'),
                     'quantite': '1',
@@ -8488,7 +8920,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
             ]
             y -= 20
 
-            for key in ("dossier", "client", "reference", "designation", "quantite", "colis", "lieu", "bon"):
+            for key in ("dossier", "client", "reference", "designation", "partie", "article_principal", "quantite", "colis", "lieu", "bon"):
                 value = _as_text(label.get(key)).strip()
                 if not value:
                     continue
@@ -8497,6 +8929,8 @@ def _build_labels_pdf_bytes(labels, kind="article"):
                     "client": "Client",
                     "reference": "Article",
                     "designation": "Designation",
+                    "partie": "Partie",
+                    "article_principal": "Article principal",
                     "quantite": "Quantite",
                     "colis": "Colis",
                     "lieu": "Stockage",
@@ -8837,21 +9271,36 @@ def _existing_colis_numbers(numero_dossier):
 
 
 def _resolve_colis_repartition(selected_items, raw_assignments, colis_refs):
-    expected={}
+    expected = {}
     for item in selected_items:
-        idx=int(item.get('index'))
-        for unit_offset, esi_id in enumerate(item.get('esi_ids') or []): expected[(idx,unit_offset)]=esi_id
-    assignments={}
+        units = item.get('reception_units') if isinstance(item.get('reception_units'), list) else []
+        if units:
+            for unit in units:
+                key = (int(unit.get('index')), int(unit.get('unit_offset') or 0), int(unit.get('part_index') or 0))
+                expected[key] = _as_text(unit.get('esi_id')).strip()
+        else:
+            idx = int(item.get('index'))
+            for unit_offset, esi_id in enumerate(item.get('esi_ids') or []):
+                expected[(idx, unit_offset, 0)] = esi_id
+    assignments = {}
     for entry in raw_assignments or []:
-        try: key=(int(entry.get('index')),int(entry.get('unit_offset'))); ci=int(entry.get('colis_index'))
-        except Exception: continue
-        if key not in expected or ci<0 or ci>=len(colis_refs): continue
-        assignments[key]=ci
-    if set(assignments)!=set(expected): raise ValueError("Chaque article physique doit être associé à un colis.")
-    used=set(assignments.values())
-    if len(colis_refs)>len(expected): raise ValueError("Le nombre de colis ne peut pas dépasser le nombre d'articles réceptionnés.")
-    if used != set(range(len(colis_refs))): raise ValueError("Chaque colis créé doit contenir au moins un article.")
-    return {expected[k]:colis_refs[ci] for k,ci in assignments.items()}
+        try:
+            key = (int(entry.get('index')), int(entry.get('unit_offset') or 0), int(entry.get('part_index') or 0))
+            ci = int(entry.get('colis_index'))
+        except Exception:
+            continue
+        if key not in expected or ci < 0 or ci >= len(colis_refs):
+            continue
+        assignments[key] = ci
+    if set(assignments) != set(expected):
+        raise ValueError("Chaque article ou partie physique doit être associé à un colis.")
+    used = set(assignments.values())
+    if len(colis_refs) > len(expected):
+        raise ValueError("Le nombre de colis ne peut pas dépasser le nombre d'articles ou parties physiques réceptionnés.")
+    if used != set(range(len(colis_refs))):
+        raise ValueError("Chaque colis créé doit contenir au moins un article ou une partie.")
+    return {expected[k]: colis_refs[ci] for k, ci in assignments.items()}
+
 
 def _apply_colis_to_selected_items(selected_items, colis_by_esi, reception_ref, lieu_stockage, colis_type_by_esi=None):
     colis_type_by_esi = dict(colis_type_by_esi or {})
@@ -8919,6 +9368,7 @@ def api_create_bon_livraison(ticket_id):
     items_reception = data.get('items_reception')
     selected_indexes = data.get('selected_indexes') or []
     colis_repartition = data.get('colis_repartition') or []
+    article_parts = data.get('article_parts') or []
 
     if not receptionne_par:
         return jsonify({'ok': False, 'error': 'Nom et prénom du réceptionnaire obligatoires'}), 400
@@ -9065,6 +9515,14 @@ def api_create_bon_livraison(ticket_id):
         if any(not colis_types.get(ref) for ref in colis_refs):
             return jsonify({'ok': False, 'error': 'Le type de chaque colis est obligatoire : Softpack, Carton ou Caisse bois.'}), 400
         try:
+            _validate_colis_repartition_shape(selected, colis_repartition, len(colis_refs), article_parts)
+            reception_esi_ids, parent_part_ids = _expand_selected_items_with_parts(selected, article_parts)
+        except ValueError as e:
+            return jsonify({'ok': False, 'error': str(e)}), 400
+        except Exception as e:
+            return jsonify({'ok': False, 'error': f"Impossible de créer les parties de l'article : {e}"}), 500
+        article_labels = _build_article_labels_from_selected(selected, numero_dossier, enl.get('client') or ticket.get('dossier') or '', lieu_stockage)
+        try:
             colis_by_esi = _resolve_colis_repartition(selected, colis_repartition, colis_refs)
         except ValueError as e:
             return jsonify({'ok': False, 'error': str(e)}), 400
@@ -9172,6 +9630,7 @@ def api_create_bon_livraison(ticket_id):
         'filename': filename,
         'bon': bon,
         'colis': colis_refs,
+        'colis_types': colis_types,
         'etiquettes_articles_filename': article_labels_filename,
         'etiquettes_colis_filename': colis_labels_filename,
     })
