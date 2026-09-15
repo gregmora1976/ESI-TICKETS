@@ -12,7 +12,7 @@
     .hero{background:#fff;border:1px solid var(--line);border-radius:30px;box-shadow:0 8px 30px rgba(15,23,42,.06);overflow:hidden}
     .hero-top{display:flex;align-items:center;gap:16px;padding:22px 24px;border-bottom:1px solid var(--line)} .logo{width:98px;height:70px;flex:0 0 auto;object-fit:contain;object-position:center;display:block}
     .eyebrow{color:var(--blue-dark);font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase} h1,h2,h3,p{margin:0} h1{font-size:34px}
-    .sub{margin-top:8px;color:var(--muted);font-size:15px}.content{padding:24px;display:grid;gap:22px}.layout{display:grid;grid-template-columns:1.05fr .95fr;gap:22px}
+    .sub{margin-top:8px;color:var(--muted);font-size:15px}.content{padding:24px;display:grid;gap:22px}.layout{display:grid;grid-template-columns:1.05fr .95fr;gap:22px}.layout.single-column{grid-template-columns:1fr}
     .card{background:#fff;border:1px solid var(--line);border-radius:26px;padding:22px}
     .section-title{color:var(--blue-dark);font-size:14px;font-weight:700;margin-bottom:14px}.tabs{display:flex;gap:10px;flex-wrap:wrap}
     .tab{border:1px solid var(--line);background:#fff;border-radius:16px;padding:12px 16px;font-weight:700;font-size:14px;cursor:pointer}
@@ -149,7 +149,7 @@
 
         <div class="success" id="successBox">Votre demande a bien été envoyée.</div>
 
-        <div class="layout">
+        <div class="layout" id="mainLayout">
           <div>
             <form id="form-caisse" class="card">
               <div class="section-title">Formulaire fiche de caisse</div>
@@ -377,7 +377,7 @@
             </form>
           </div>
 
-          <div class="card">
+          <div class="card" id="ticketTrackingPanel">
             <div class="row">
               <div>
                 <div class="section-title" style="margin-bottom:6px">Suivi des tickets</div>
@@ -510,6 +510,15 @@ function activateModule(module){
   els.formAllerVoir.classList.toggle('hidden', !isAllerVoir);
   els.formEnlevement.classList.toggle('hidden', !isEnlevement);
   els.formAvisArrivee.classList.toggle('hidden', !isAvisArrivee);
+
+  // Le suivi des tickets concerne uniquement les trois demandes de production.
+  // Pour Enlèvement et Créer RECEPTION, le formulaire utilise toute la largeur.
+  const trackingPanel = document.getElementById('ticketTrackingPanel');
+  const mainLayout = document.getElementById('mainLayout');
+  const showTracking = isCaisse || isDevis || isAllerVoir;
+  if(trackingPanel) trackingPanel.classList.toggle('hidden', !showTracking);
+  if(mainLayout) mainLayout.classList.toggle('single-column', !showTracking);
+
   els.successBox.classList.remove('show');
 }
 function moduleKeyFromTicketModule(module){

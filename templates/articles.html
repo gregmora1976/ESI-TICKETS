@@ -316,6 +316,29 @@ function articleEditField(label,field,value,cls='',textarea=false){
   const v=String(value??'');
   return `<div class="identity-field ${cls}"><div class="identity-field-label">${esc(label)}</div>${textarea?`<textarea class="article-edit-textarea" data-article-field="${esc(field)}">${esc(v)}</textarea>`:`<input class="article-edit-input" data-article-field="${esc(field)}" value="${esc(v)}">`}</div>`;
 }
+function articleSelectEditField(label,field,value,options,cls=''){
+  const current=String(value??'');
+  const opts=options.map(opt=>`<option value="${esc(opt)}" ${current===opt?'selected':''}>${esc(opt||'Non renseigné')}</option>`).join('');
+  return `<div class="identity-field ${cls}"><div class="identity-field-label">${esc(label)}</div><select class="article-edit-input" data-article-field="${esc(field)}">${opts}</select></div>`;
+}
+function articleDateEditField(label,field,value,cls=''){
+  return `<div class="identity-field ${cls}"><div class="identity-field-label">${esc(label)}</div><input type="date" class="article-edit-input" data-article-field="${esc(field)}" value="${esc(String(value??''))}"></div>`;
+}
+function metricAutoEditCard(label,id,value,unit=''){
+  return `<div class="metric-card article-readonly"><div class="metric-label">${esc(label)}${unit?` (${esc(unit)})`:''} — automatique</div><input id="${esc(id)}" class="article-edit-input" value="${esc(String(value??''))}" readonly></div>`;
+}
+function jsMetric(v){if(v===null||!Number.isFinite(v))return '';return v.toFixed(6).replace(/0+$/,'').replace(/\.$/,'')}
+function setupArticleMetricAutocalc(){
+  function numberOf(field){const el=document.querySelector(`[data-article-field="${field}"]`);if(!el)return null;const n=Number(String(el.value||'').replace(',','.'));return Number.isFinite(n)?n:null}
+  function calc(prefix,volId,surfId){const l=numberOf(prefix+'longueur_cm'),w=numberOf(prefix+'largeur_cm'),h=numberOf(prefix+'hauteur_cm'),vol=document.getElementById(volId),surf=document.getElementById(surfId);if(surf)surf.value=(l!==null&&w!==null)?jsMetric(l*w/10000):'';if(vol)vol.value=(l!==null&&w!==null&&h!==null)?jsMetric(l*w*h/1000000):''}
+  const groups=[['','articleAutoVolume','articleAutoSurface'],['oeuvre_','articleAutoOeuvreVolume','articleAutoOeuvreSurface']];
+  groups.forEach(([prefix,volId,surfId])=>{['longueur_cm','largeur_cm','hauteur_cm'].forEach(name=>{const el=document.querySelector(`[data-article-field="${prefix+name}"]`);if(el)el.addEventListener('input',()=>calc(prefix,volId,surfId))});calc(prefix,volId,surfId)});
+}
+function setupArticleDossierAutofill(){
+  const dossier=document.querySelector('[data-article-field="dossier"]');if(!dossier)return;let seq=0;
+  async function fill(){const value=String(dossier.value||'').trim(),mine=++seq;if(!value)return;try{const r=await fetch('/api/dossiers/lookup?dossier='+encodeURIComponent(value),{cache:'no-store'}),d=await apiJson(r);if(!r.ok||mine!==seq||!d.found)return;const fields={client:d.client,projet:d.projet,charge_projet:d.charge_projet};Object.entries(fields).forEach(([name,val])=>{const el=document.querySelector(`[data-article-field="${name}"]`);if(el&&String(val||'').trim())el.value=val})}catch(e){}}
+  dossier.addEventListener('change',fill);dossier.addEventListener('blur',fill);
+}
 function articleTypeEditField(value){
   const t=String(value||'PRODUIT').toUpperCase()==='CONTENANT'?'CONTENANT':'PRODUIT';
   return `<div class="identity-field"><div class="identity-field-label">Type</div><select class="article-edit-input" data-article-field="type_objet"><option value="PRODUIT" ${t==='PRODUIT'?'selected':''}>PRODUIT</option><option value="CONTENANT" ${t==='CONTENANT'?'selected':''}>CONTENANT</option></select></div>`;
@@ -431,20 +454,41 @@ function renderArticleDetail(d,editing=false){
     ${editing?articleEditField(isContainer?'Référence contenant':'Référence','reference',a.reference):identityField(isContainer?'Référence contenant':'Référence',a.reference)}
     ${editing?articleEditField('Dossier','dossier',dossier==='-'?'':dossier):identityField('Dossier',dossier)}
     ${editing?articleEditField('Client','client',a.client):identityField('Client',a.client)}
+    ${editing?articleEditField('Chargé de projet','charge_projet',a.charge_projet):identityField('Chargé de projet',a.charge_projet)}
     ${editing?articleEditField('Projet / exposition','projet',a.projet):identityField('Projet / exposition',a.projet)}
     ${editing?articleEditField(isContainer?'Description du contenant':'Description / désignation','description',a.description,'span-2',true):identityField(isContainer?'Description du contenant':'Description / désignation',a.description,'span-2')}
     ${isContainer?'':(editing?articleEditField('Réf. caisse','ref_caisse',a.ref_caisse):identityField('Réf. caisse',a.ref_caisse))}
     ${editing?articleEditField(isContainer?'Réf. transporteur / BL':'Réf. transporteur','transporteur_ref',a.transporteur_ref):identityField(isContainer?'Réf. transporteur / BL':'Réf. transporteur',a.transporteur_ref)}
   </div>${articlePhotoMarkup(a,editing)}</div></div>`;
 
-  html+=`<div class="identity-section"><div class="identity-section-title">Dimensions et caractéristiques</div><div class="metric-grid">
+  html+=`<div class="identity-section"><div class="identity-section-title">Dimensions et caractéristiques <span class="identity-section-sub">Champs existants conservés</span></div><div class="metric-grid">
     ${editing?metricEditCard('Longueur','longueur_cm',a.longueur_cm,'cm'):metricCard('Longueur',a.longueur_cm,'cm')}
     ${editing?metricEditCard('Largeur','largeur_cm',a.largeur_cm,'cm'):metricCard('Largeur',a.largeur_cm,'cm')}
     ${editing?metricEditCard('Hauteur','hauteur_cm',a.hauteur_cm,'cm'):metricCard('Hauteur',a.hauteur_cm,'cm')}
-    ${editing?metricEditCard('Volume','volume_m3',a.volume_m3,'m³'):metricCard('Volume',a.volume_m3,'m³')}
-    ${editing?metricEditCard('Surface','surface_m2',a.surface_m2,'m²'):metricCard('Surface',a.surface_m2,'m²')}
+    ${editing?metricAutoEditCard('Volume','articleAutoVolume',a.volume_m3,'m³'):metricCard('Volume',a.volume_m3,'m³')}
+    ${editing?metricAutoEditCard('Surface','articleAutoSurface',a.surface_m2,'m²'):metricCard('Surface',a.surface_m2,'m²')}
     ${editing?metricEditCard('Poids','poids_kg',a.poids_kg,'kg'):metricCard('Poids',a.poids_kg,'kg')}
   </div></div>`;
+
+  if(!isContainer){
+    html+=`<div class="identity-section"><div class="identity-section-title">Informations de l’œuvre <span class="identity-section-sub">Données complémentaires</span></div><div class="identity-fields">
+      ${editing?articleEditField('N° réf œuvre','oeuvre_reference',a.oeuvre_reference):identityField('N° réf œuvre',a.oeuvre_reference)}
+      ${editing?articleEditField('Nom de l’artiste','artiste',a.artiste):identityField('Nom de l’artiste',a.artiste)}
+      ${editing?articleEditField('Titre de l’œuvre','oeuvre_titre',a.oeuvre_titre):identityField('Titre de l’œuvre',a.oeuvre_titre)}
+      ${editing?articleEditField('Technique de l’œuvre','oeuvre_technique',a.oeuvre_technique):identityField('Technique de l’œuvre',a.oeuvre_technique)}
+    </div><div class="metric-grid" style="margin-top:12px">
+      ${editing?metricEditCard('Longueur de l’œuvre','oeuvre_longueur_cm',a.oeuvre_longueur_cm,'cm'):metricCard('Longueur de l’œuvre',a.oeuvre_longueur_cm,'cm')}
+      ${editing?metricEditCard('Largeur de l’œuvre','oeuvre_largeur_cm',a.oeuvre_largeur_cm,'cm'):metricCard('Largeur de l’œuvre',a.oeuvre_largeur_cm,'cm')}
+      ${editing?metricEditCard('Hauteur de l’œuvre','oeuvre_hauteur_cm',a.oeuvre_hauteur_cm,'cm'):metricCard('Hauteur de l’œuvre',a.oeuvre_hauteur_cm,'cm')}
+      ${editing?metricAutoEditCard('Volume de l’œuvre','articleAutoOeuvreVolume',a.oeuvre_volume_m3,'m³'):metricCard('Volume de l’œuvre',a.oeuvre_volume_m3,'m³')}
+      ${editing?metricAutoEditCard('Surface au sol de l’œuvre','articleAutoOeuvreSurface',a.oeuvre_surface_m2,'m²'):metricCard('Surface au sol de l’œuvre',a.oeuvre_surface_m2,'m²')}
+      ${editing?metricEditCard('Poids de l’œuvre','oeuvre_poids_kg',a.oeuvre_poids_kg,'kg'):metricCard('Poids de l’œuvre',a.oeuvre_poids_kg,'kg')}
+    </div><div class="identity-fields" style="margin-top:12px">
+      ${editing?articleSelectEditField('Statut douanier','statut_douanier',a.statut_douanier,['','Libre','Sous douane']):identityField('Statut douanier',a.statut_douanier)}
+      ${editing?articleEditField('N° IMA','ima_numero',a.ima_numero):identityField('N° IMA',a.ima_numero)}
+      ${editing?articleDateEditField('Date de l’IMA','ima_date',a.ima_date):identityField('Date de l’IMA',a.ima_date)}
+    </div></div>`;
+  }
 
   if(isContainer){
     html+=`<div class="identity-section"><div class="identity-section-title">Suivi du contenant</div><div class="logistics-grid">
@@ -473,7 +517,7 @@ function renderArticleDetail(d,editing=false){
   if(editBtn)editBtn.onclick=()=>{resetArticlePhotoDraft();articleDetailState.editing=true;renderArticleDetail(articleDetailState.detail,true)};
   if(cancelBtn)cancelBtn.onclick=()=>{resetArticlePhotoDraft();articleDetailState.editing=false;renderArticleDetail(articleDetailState.detail,false)};
   if(saveEditBtn)saveEditBtn.onclick=saveArticleDetailEdits;
-  if(editing)setupArticlePhotoEditor(a);
+  if(editing){setupArticlePhotoEditor(a);setupArticleMetricAutocalc();setupArticleDossierAutofill();}
   if(!isContainer)setupArticleColisEditor(a,dossier,editing);
 }
 async function saveArticleDetailEdits(){
@@ -503,7 +547,7 @@ async function openArticleDetail(esi){
 
 function selectedEsiIds(){return [...document.querySelectorAll('.row-check:checked')].map(cb=>cb.dataset.esi).filter(Boolean)}
 function updateSelectionActions(){const ids=selectedEsiIds(),bar=document.getElementById('selectionActions');document.getElementById('selectionCount').textContent=`${ids.length} élément${ids.length>1?'s':''} sélectionné${ids.length>1?'s':''}`;bar.classList.toggle('show',ids.length>0)}
-const editableFields=[['type_objet','Type'],['reference','Référence'],['description','Description'],['dossier','Dossier'],['client','Client'],['projet','Projet / expo'],['ref_caisse','Réf. caisse'],['transporteur_ref','Réf. transporteur'],['longueur_cm','Longueur (cm)'],['largeur_cm','Largeur (cm)'],['hauteur_cm','Hauteur (cm)'],['volume_m3','Volume (m³)'],['surface_m2','Surface (m²)'],['poids_kg','Poids (kg)'],['lieu_stockage','Lieu de stockage'],['statut_logistique','Statut logistique'],['dernier_colis','N° colis']];
+const editableFields=[['type_objet','Type'],['reference','Référence'],['description','Description'],['dossier','Dossier'],['client','Client'],['charge_projet','Chargé de projet'],['projet','Projet / expo'],['ref_caisse','Réf. caisse'],['transporteur_ref','Réf. transporteur'],['longueur_cm','Longueur (cm)'],['largeur_cm','Largeur (cm)'],['hauteur_cm','Hauteur (cm)'],['poids_kg','Poids (kg)'],['lieu_stockage','Lieu de stockage'],['statut_logistique','Statut logistique'],['dernier_colis','N° colis'],['oeuvre_reference','N° réf œuvre'],['artiste','Nom de l’artiste'],['oeuvre_titre','Titre de l’œuvre'],['oeuvre_technique','Technique de l’œuvre'],['oeuvre_longueur_cm','Longueur œuvre (cm)'],['oeuvre_largeur_cm','Largeur œuvre (cm)'],['oeuvre_hauteur_cm','Hauteur œuvre (cm)'],['oeuvre_poids_kg','Poids œuvre (kg)'],['statut_douanier','Statut douanier'],['ima_numero','N° IMA'],['ima_date','Date de l’IMA']];
 function closeEditModal(){const b=document.getElementById('editModalBackdrop');b.classList.remove('open');b.setAttribute('aria-hidden','true')}
 function openEditModal(){
   const ids=selectedEsiIds();if(!ids.length)return;const single=ids.length===1,article=single?currentRows.find(x=>String(x.esi_id)===ids[0]):null;
