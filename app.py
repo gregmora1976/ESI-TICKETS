@@ -2594,6 +2594,38 @@ def _article_import_norm(value):
     return text
 
 
+def _article_import_date(value):
+    """Normalise une date Excel/texte au format YYYY-MM-DD pour la fiche article."""
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    text = _article_import_text(value)
+    if not text:
+        return ""
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text, fmt).date().isoformat()
+        except Exception:
+            pass
+    # Une cellule Excel peut parfois ressortir avec une heure à minuit.
+    try:
+        return datetime.fromisoformat(text).date().isoformat()
+    except Exception:
+        return text
+
+
+def _article_import_customs_status(value):
+    """Uniformise le statut douanier tout en conservant une valeur inhabituelle saisie par l'utilisateur."""
+    text = _article_import_text(value)
+    norm = re.sub(r"\s+", " ", text.casefold()).strip()
+    if norm == "libre":
+        return "Libre"
+    if norm in {"sous douane", "sous-douane", "sousdouane"}:
+        return "Sous douane"
+    return text
+
+
 def _article_import_signature(values):
     """Signature métier d'un article importé pour éviter les créations en double."""
     return "|".join([
@@ -2613,9 +2645,24 @@ def _article_import_headers(ws):
         "longueur_cm": {"LONGUEUR_CM", "LONGUEUR (CM)", "LONGUEUR"},
         "largeur_cm": {"LARGEUR_CM", "LARGEUR (CM)", "LARGEUR"},
         "hauteur_cm": {"HAUTEUR_CM", "HAUTEUR (CM)", "HAUTEUR"},
+        "volume_m3": {"VOLUME_M3", "VOLUME (M3)", "VOLUME (M³)", "VOLUME"},
+        "surface_m2": {"SURFACE_M2", "SURFACE (M2)", "SURFACE (M²)", "SURFACE AU SOL"},
         "poids_kg": {"POIDS_BRUT_KG", "POIDS_KG", "POIDS (KG)", "POIDS"},
         "reference": {"REFERENCE_PINTO", "REFERENCE", "REF", "REF ARTICLE"},
         "description": {"DESIGNATION", "DESCRIPTION"},
+        "oeuvre_reference": {"OEUVRE_REFERENCE", "REFERENCE_OEUVRE", "REF_OEUVRE", "N° REF OEUVRE", "N° RÉF ŒUVRE"},
+        "artiste": {"ARTISTE", "NOM_ARTISTE", "NOM DE L'ARTISTE", "NOM DE L’ARTISTE"},
+        "oeuvre_titre": {"OEUVRE_TITRE", "TITRE_OEUVRE", "TITRE DE L'OEUVRE", "TITRE DE L’ŒUVRE"},
+        "oeuvre_technique": {"OEUVRE_TECHNIQUE", "TECHNIQUE_OEUVRE", "TECHNIQUE DE L'OEUVRE", "TECHNIQUE DE L’ŒUVRE"},
+        "oeuvre_longueur_cm": {"OEUVRE_LONGUEUR_CM", "LONGUEUR_OEUVRE_CM", "LONGUEUR OEUVRE (CM)"},
+        "oeuvre_largeur_cm": {"OEUVRE_LARGEUR_CM", "LARGEUR_OEUVRE_CM", "LARGEUR OEUVRE (CM)"},
+        "oeuvre_hauteur_cm": {"OEUVRE_HAUTEUR_CM", "HAUTEUR_OEUVRE_CM", "HAUTEUR OEUVRE (CM)"},
+        "oeuvre_volume_m3": {"OEUVRE_VOLUME_M3", "VOLUME_OEUVRE_M3", "VOLUME OEUVRE (M3)", "VOLUME OEUVRE (M³)"},
+        "oeuvre_surface_m2": {"OEUVRE_SURFACE_M2", "SURFACE_OEUVRE_M2", "SURFACE OEUVRE (M2)", "SURFACE OEUVRE (M²)"},
+        "oeuvre_poids_kg": {"OEUVRE_POIDS_KG", "POIDS_OEUVRE_KG", "POIDS OEUVRE (KG)"},
+        "statut_douanier": {"STATUT_DOUANIER", "STATUT DOUANIER", "DOUANE"},
+        "ima_numero": {"IMA_NUMERO", "NUMERO_IMA", "N° IMA", "NO IMA"},
+        "ima_date": {"IMA_DATE", "DATE_IMA", "DATE IMA"},
     }
 
     found = {}
@@ -2654,7 +2701,9 @@ def api_articles_import_excel():
     - 1 unité physique = 1 numéro ESI unique ;
     - la colonne QUANTITE peut donc créer plusieurs ESI pour une même ligne ;
     - les doublons sont contrôlés par référence + désignation + dimensions + poids ;
-    - les photos sont volontairement ignorées pour le moment.
+    - les champs œuvre / douane / IMA de la trame sont enregistrés dans la fiche article ;
+    - volumes et surfaces sont recalculés automatiquement à partir des dimensions en cm ;
+    - les photos restent ajoutées directement depuis la fiche article dans ESI TICKETS.
     """
     fs = request.files.get('file')
     if not fs or not fs.filename:
@@ -2722,8 +2771,41 @@ def api_articles_import_excel():
                 'longueur_cm': _article_import_text(cell('longueur_cm')),
                 'largeur_cm': _article_import_text(cell('largeur_cm')),
                 'hauteur_cm': _article_import_text(cell('hauteur_cm')),
+                'volume_m3': _article_import_text(cell('volume_m3')),
+                'surface_m2': _article_import_text(cell('surface_m2')),
                 'poids_kg': _article_import_text(cell('poids_kg')),
+                'oeuvre_reference': _article_import_text(cell('oeuvre_reference')),
+                'artiste': _article_import_text(cell('artiste')),
+                'oeuvre_titre': _article_import_text(cell('oeuvre_titre')),
+                'oeuvre_technique': _article_import_text(cell('oeuvre_technique')),
+                'oeuvre_longueur_cm': _article_import_text(cell('oeuvre_longueur_cm')),
+                'oeuvre_largeur_cm': _article_import_text(cell('oeuvre_largeur_cm')),
+                'oeuvre_hauteur_cm': _article_import_text(cell('oeuvre_hauteur_cm')),
+                'oeuvre_volume_m3': _article_import_text(cell('oeuvre_volume_m3')),
+                'oeuvre_surface_m2': _article_import_text(cell('oeuvre_surface_m2')),
+                'oeuvre_poids_kg': _article_import_text(cell('oeuvre_poids_kg')),
+                'statut_douanier': _article_import_customs_status(cell('statut_douanier')),
+                'ima_numero': _article_import_text(cell('ima_numero')),
+                'ima_date': _article_import_date(cell('ima_date')),
             }
+
+            # Les valeurs calculées sont recalculées côté ESI TICKETS à l'import.
+            # Cela rend la trame fiable même si Excel n'a pas encore enregistré le cache des formules.
+            volume_calc, surface_calc = _article_calculated_metrics(
+                values['longueur_cm'], values['largeur_cm'], values['hauteur_cm']
+            )
+            if volume_calc:
+                values['volume_m3'] = volume_calc
+            if surface_calc:
+                values['surface_m2'] = surface_calc
+
+            oeuvre_volume_calc, oeuvre_surface_calc = _article_calculated_metrics(
+                values['oeuvre_longueur_cm'], values['oeuvre_largeur_cm'], values['oeuvre_hauteur_cm']
+            )
+            if oeuvre_volume_calc:
+                values['oeuvre_volume_m3'] = oeuvre_volume_calc
+            if oeuvre_surface_calc:
+                values['oeuvre_surface_m2'] = oeuvre_surface_calc
 
             # Une ligne totalement vide n'est pas une erreur.
             if not any(values.values()) and not _article_import_text(cell('quantite')):
@@ -2770,8 +2852,8 @@ def api_articles_import_excel():
                     'longueur_cm': values['longueur_cm'],
                     'largeur_cm': values['largeur_cm'],
                     'hauteur_cm': values['hauteur_cm'],
-                    'volume_m3': '',
-                    'surface_m2': '',
+                    'volume_m3': values['volume_m3'],
+                    'surface_m2': values['surface_m2'],
                     'poids_kg': values['poids_kg'],
                     'lieu_stockage': '',
                     'statut_logistique': 'Créé',
@@ -2786,6 +2868,19 @@ def api_articles_import_excel():
                         'unit_index': unit_index,
                         'article_fields': {
                             'charge_projet': _as_text(dossier_identity.get('charge_projet')).strip(),
+                            'oeuvre_reference': values['oeuvre_reference'],
+                            'artiste': values['artiste'],
+                            'oeuvre_titre': values['oeuvre_titre'],
+                            'oeuvre_technique': values['oeuvre_technique'],
+                            'oeuvre_longueur_cm': values['oeuvre_longueur_cm'],
+                            'oeuvre_largeur_cm': values['oeuvre_largeur_cm'],
+                            'oeuvre_hauteur_cm': values['oeuvre_hauteur_cm'],
+                            'oeuvre_volume_m3': values['oeuvre_volume_m3'],
+                            'oeuvre_surface_m2': values['oeuvre_surface_m2'],
+                            'oeuvre_poids_kg': values['oeuvre_poids_kg'],
+                            'statut_douanier': values['statut_douanier'],
+                            'ima_numero': values['ima_numero'],
+                            'ima_date': values['ima_date'],
                         },
                     },
                 }
