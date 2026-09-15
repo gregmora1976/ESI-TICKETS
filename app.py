@@ -1144,7 +1144,7 @@ def _expand_selected_items_with_parts(selected_items, raw_part_specs):
     return expanded_ids, parent_ids
 
 
-def _build_article_labels_from_selected(selected_items, dossier, client, lieu):
+def _build_article_labels_from_selected(selected_items, dossier, client, lieu, charge_projet=""):
     labels = []
     for item in selected_items:
         part_map = item.get("partie_par_esi") if isinstance(item.get("partie_par_esi"), dict) else {}
@@ -1156,6 +1156,7 @@ def _build_article_labels_from_selected(selected_items, dossier, client, lieu):
                 "esi_id": esi_id,
                 "dossier": dossier,
                 "client": client,
+                "charge_projet": _as_text(charge_projet).strip(),
                 "reference": _as_text(item.get("reference")).strip(),
                 "designation": _as_text(item.get("designation") or item.get("description")).strip(),
                 "partie": _as_text(part_map.get(esi_id)).strip(),
@@ -8240,7 +8241,14 @@ def api_reception_avis_arrivee(ticket_id):
             return jsonify({'ok': False, 'error': str(e)}), 400
         except Exception as e:
             return jsonify({'ok': False, 'error': f"Impossible de créer les parties de l'article : {e}"}), 500
-        article_labels = _build_article_labels_from_selected(selected, numero_dossier, avis.get('client') or ticket.get('dossier') or '', lieu_stockage)
+        charge_projet = _as_text(avis.get('coordinateur') or ticket.get('chargeProjet') or '').strip()
+        article_labels = _build_article_labels_from_selected(
+            selected,
+            numero_dossier,
+            avis.get('client') or ticket.get('dossier') or '',
+            lieu_stockage,
+            charge_projet,
+        )
         try:
             colis_by_esi = _resolve_colis_repartition(selected, colis_repartition, colis_refs)
         except ValueError as e:
@@ -8260,6 +8268,7 @@ def api_reception_avis_arrivee(ticket_id):
             'principal': _colis_display(colis_ref, colis_types.get(colis_ref)),
             'dossier': numero_dossier,
             'client': avis.get('client') or ticket.get('dossier') or '',
+            'charge_projet': charge_projet,
             'colis': colis_ref,
             'type_colis': colis_types.get(colis_ref, ''),
             'lieu': lieu_stockage,
@@ -8920,13 +8929,14 @@ def _build_labels_pdf_bytes(labels, kind="article"):
             ]
             y -= 20
 
-            for key in ("dossier", "client", "reference", "designation", "partie", "article_principal", "quantite", "colis", "lieu", "bon"):
+            for key in ("dossier", "client", "charge_projet", "reference", "designation", "partie", "article_principal", "quantite", "colis", "lieu", "bon"):
                 value = _as_text(label.get(key)).strip()
                 if not value:
                     continue
                 label_name = {
                     "dossier": "Dossier",
                     "client": "Client",
+                    "charge_projet": "Charge de projet",
                     "reference": "Article",
                     "designation": "Designation",
                     "partie": "Partie",
@@ -9161,6 +9171,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
             ('type_colis', 'Type de colis'),
             ('dossier', 'Dossier'),
             ('client', 'Client'),
+            ('charge_projet', 'Charge de projet'),
             ('lieu', 'Stockage'),
             ('bon', 'N° Bon reception'),
         ]
@@ -9521,7 +9532,14 @@ def api_create_bon_livraison(ticket_id):
             return jsonify({'ok': False, 'error': str(e)}), 400
         except Exception as e:
             return jsonify({'ok': False, 'error': f"Impossible de créer les parties de l'article : {e}"}), 500
-        article_labels = _build_article_labels_from_selected(selected, numero_dossier, enl.get('client') or ticket.get('dossier') or '', lieu_stockage)
+        charge_projet = _as_text(enl.get('coordinateur') or ticket.get('chargeProjet') or '').strip()
+        article_labels = _build_article_labels_from_selected(
+            selected,
+            numero_dossier,
+            enl.get('client') or ticket.get('dossier') or '',
+            lieu_stockage,
+            charge_projet,
+        )
         try:
             colis_by_esi = _resolve_colis_repartition(selected, colis_repartition, colis_refs)
         except ValueError as e:
@@ -9565,6 +9583,7 @@ def api_create_bon_livraison(ticket_id):
             'principal': _colis_display(colis_ref, colis_types.get(colis_ref)),
             'dossier': numero_dossier,
             'client': enl.get('client') or ticket.get('dossier') or '',
+            'charge_projet': charge_projet,
             'colis': colis_ref,
             'type_colis': colis_types.get(colis_ref, ''),
             'lieu': lieu_stockage,
