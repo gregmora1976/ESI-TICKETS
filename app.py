@@ -2638,8 +2638,13 @@ def _article_import_signature(values):
     ])
 
 
-def _article_import_headers(ws):
-    """Repère les colonnes du format Excel normalisé ESI TICKETS."""
+def _article_import_headers(header_values):
+    """Repère les colonnes du format Excel normalisé ESI TICKETS à partir de la première ligne.
+
+    Les index retournés sont basés sur 0 afin d'être utilisés directement sur les tuples
+    produits par ``iter_rows(values_only=True)``. Cela évite les appels répétés à ``ws.cell``
+    qui sont très coûteux avec une feuille OpenPyXL ouverte en mode read_only.
+    """
     aliases = {
         "quantite": {"QUANTITE", "QTE", "QTY"},
         "longueur_cm": {"LONGUEUR_CM", "LONGUEUR (CM)", "LONGUEUR"},
@@ -2666,14 +2671,14 @@ def _article_import_headers(ws):
     }
 
     found = {}
-    for col in range(1, ws.max_column + 1):
-        raw = _article_import_text(ws.cell(row=1, column=col).value)
+    for index, value in enumerate(header_values or ()):
+        raw = _article_import_text(value)
         header = re.sub(r"\s+", " ", raw.upper()).strip()
         if not header:
             continue
         for field, names in aliases.items():
             if header in names and field not in found:
-                found[field] = col
+                found[field] = index
                 break
     return found
 
@@ -2728,8 +2733,26 @@ def api_articles_import_excel():
     except Exception as e:
         return jsonify({'ok': False, 'error': f'Fichier Excel illisible : {e}'}), 400
 
-    headers = _article_import_headers(ws)
+    # Lecture séquentielle de la feuille : indispensable en mode read_only.
+    # Un accès répété avec ws.cell(...) force OpenPyXL à reparcourir le flux XML et peut
+    # provoquer des délais très importants sur Render, même avec une trame de quelques
+    # centaines de lignes préformatées.
+    row_iter = ws.iter_rows(values_only=True)
+    try:
+        header_values = next(row_iter)
+    except StopIteration:
+        try:
+            wb.close()
+        except Exception:
+            pass
+        return jsonify({'ok': False, 'error': 'Le fichier Excel ne contient aucune ligne.'}), 400
+
+    headers = _article_import_headers(header_values)
     if 'reference' not in headers and 'description' not in headers:
+        try:
+            wb.close()
+        except Exception:
+            pass
         return jsonify({
             'ok': False,
             'error': "Colonnes non reconnues. Le fichier doit contenir au minimum REFERENCE_PINTO/REFERENCE ou DESIGNATION/DESCRIPTION."
@@ -2760,10 +2783,12 @@ def api_articles_import_excel():
         return jsonify({'ok': False, 'error': f'Impossible de lire les informations du dossier : {e}'}), 500
 
     with _ARTICLE_LOCK:
-        for row_num in range(2, ws.max_row + 1):
+        for row_num, row_values in enumerate(row_iter, start=2):
             def cell(field):
-                col = headers.get(field)
-                return ws.cell(row=row_num, column=col).value if col else None
+                index = headers.get(field)
+                if index is None or index >= len(row_values):
+                    return None
+                return row_values[index]
 
             values = {
                 'reference': _article_import_text(cell('reference')),
