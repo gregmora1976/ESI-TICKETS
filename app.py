@@ -376,6 +376,57 @@ def _as_text(value, default=''):
 
 
 # -----------------------------------------------------------------------------
+# Type de colis - données métier distinctes du N° de colis
+# -----------------------------------------------------------------------------
+_COLIS_TYPE_LABELS = {
+    "softpack": "Softpack",
+    "carton": "Carton",
+    "caisse bois": "Caisse bois",
+    "caisse_bois": "Caisse bois",
+    "caisse-bois": "Caisse bois",
+}
+
+
+def _normalise_colis_type(value):
+    raw = _as_text(value).strip()
+    if not raw:
+        return ""
+    key = raw.lower().replace("é", "e").replace("_", " ").replace("-", " ")
+    key = " ".join(key.split())
+    if key in ("softpack", "soft pack"):
+        return "Softpack"
+    if key == "carton":
+        return "Carton"
+    if key in ("caisse bois", "caisse en bois", "bois"):
+        return "Caisse bois"
+    return ""
+
+
+def _resolve_colis_types(raw_types, colis_refs):
+    """Retourne {numero_colis: type}. Accepte une liste ordonnée ou un mapping."""
+    refs = [_as_text(x).strip() for x in (colis_refs or []) if _as_text(x).strip()]
+    result = {ref: "" for ref in refs}
+    if isinstance(raw_types, dict):
+        for ref in refs:
+            result[ref] = _normalise_colis_type(raw_types.get(ref))
+        return result
+    if isinstance(raw_types, list):
+        for i, ref in enumerate(refs):
+            if i < len(raw_types):
+                result[ref] = _normalise_colis_type(raw_types[i])
+        return result
+    return result
+
+
+def _colis_display(colis_ref, colis_type=""):
+    ref = _as_text(colis_ref).strip()
+    typ = _normalise_colis_type(colis_type)
+    if ref and typ:
+        return f"{ref} - {typ.upper()}"
+    return ref or typ
+
+
+# -----------------------------------------------------------------------------
 # QR code colis - accès mobile en lecture seule
 # -----------------------------------------------------------------------------
 def _colis_qr_secret():
@@ -454,7 +505,7 @@ def _colis_articles(colis_ref):
         'articles',
         'select=esi_id,dossier,reference,description,client,projet,longueur_cm,largeur_cm,'
         'hauteur_cm,poids_kg,lieu_stockage,statut_logistique,dernier_colis,'
-        'derniere_reception_ref,article_no'
+        'derniere_reception_ref,raw_json,article_no'
         f'&dernier_colis=eq.{safe_colis}&order=article_no.asc&limit=5000'
     ) or []
     return [_article_row_to_public(row) for row in rows]
@@ -488,6 +539,7 @@ def colis_public_page(colis_ref):
     projet = first.get('projet') or ''
     lieu = first.get('lieu_stockage') or ''
     bon = first.get('derniere_reception_ref') or ''
+    type_colis = first.get('type_colis') or ''
 
     cards = []
     for article in articles:
@@ -520,7 +572,7 @@ def colis_public_page(colis_ref):
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Colis {esc(colis_ref)} - ESI Tickets</title>
+<title>Colis {esc(_colis_display(colis_ref, type_colis))} - ESI Tickets</title>
 <style>
 :root{{--blue:#0f2f4f;--light:#eef8fd;--line:#cfe3ee;--text:#17324a;--muted:#60758a}}
 *{{box-sizing:border-box}}
@@ -555,13 +607,14 @@ h1{{font-size:31px;line-height:1.05;margin:9px 0 5px}}
 <div class="wrap">
   <header class="hero">
     <div class="brand">ESI TICKETS · COLIS</div>
-    <h1>{esc(colis_ref)}</h1>
+    <h1>{esc(_colis_display(colis_ref, type_colis))}</h1>
     <div class="sub">Informations en temps réel issues de la base Articles</div>
   </header>
 
   <section class="grid">
     <div class="field"><b>N° dossier</b><div>{esc(dossier)}</div></div>
     <div class="field"><b>Bon de réception</b><div>{esc(bon)}</div></div>
+    <div class="field"><b>Type de colis</b><div>{esc(type_colis)}</div></div>
     <div class="field"><b>Client</b><div>{esc(client)}</div></div>
     <div class="field"><b>Projet / exposition</b><div>{esc(projet)}</div></div>
     <div class="field" style="grid-column:1/-1"><b>Stockage actuel</b><div>{esc(lieu)}</div></div>
@@ -702,7 +755,7 @@ def _article_payload_from_item(ticket, item, source_module=None, source_index=No
 
 
 _ARTICLE_EXTRA_FIELDS = {
-    "charge_projet",
+    "charge_projet", "type_colis",
     "oeuvre_reference", "artiste", "oeuvre_titre", "oeuvre_technique",
     "oeuvre_longueur_cm", "oeuvre_largeur_cm", "oeuvre_hauteur_cm",
     "oeuvre_volume_m3", "oeuvre_surface_m2", "oeuvre_poids_kg",
@@ -1117,15 +1170,18 @@ def _ensure_articles_for_ticket(ticket, save=True):
 
 
 def _update_article_logistics(esi_ids, lieu_stockage="", statut_logistique="Réceptionné",
-                              colis=None, colis_by_esi=None, reception_ref="", receptionne_par=""):
-    """Met à jour la fiche globale des articles après une réception, avec un colis précis par ESI."""
+                              colis=None, colis_by_esi=None, colis_type_by_esi=None,
+                              reception_ref="", receptionne_par=""):
+    """Met à jour la fiche globale des articles après une réception, avec colis et type précis par ESI."""
     colis_by_esi = dict(colis_by_esi or {})
+    colis_type_by_esi = dict(colis_type_by_esi or {})
     fallback = list(colis or [])
     for esi_id in esi_ids or []:
         esi_id = _as_text(esi_id).strip()
         if not esi_id:
             continue
         article_colis = _as_text(colis_by_esi.get(esi_id)).strip()
+        article_type_colis = _normalise_colis_type(colis_type_by_esi.get(esi_id))
         article_colis_list = [article_colis] if article_colis else fallback
         safe_esi = urllib.parse.quote(esi_id, safe='-')
         rows = supabase_rest_request("GET", "articles", f"select=*&esi_id=eq.{safe_esi}&limit=1") or []
@@ -1136,10 +1192,15 @@ def _update_article_logistics(esi_ids, lieu_stockage="", statut_logistique="Réc
         raw = dict(raw or {})
         history = list(raw.get("receptions") or [])
         history.append({"date": datetime.now().isoformat(), "lieu_stockage": lieu_stockage,
-                        "colis": article_colis_list, "reception_ref": reception_ref,
-                        "receptionne_par": receptionne_par})
+                        "colis": article_colis_list, "type_colis": article_type_colis,
+                        "reception_ref": reception_ref, "receptionne_par": receptionne_par})
         raw["receptions"] = history
         raw["colis_actuel"] = article_colis or (article_colis_list[0] if len(article_colis_list)==1 else "")
+        raw["type_colis_actuel"] = article_type_colis
+        extra = raw.get("article_fields") if isinstance(raw.get("article_fields"), dict) else {}
+        extra = dict(extra or {})
+        extra["type_colis"] = article_type_colis
+        raw["article_fields"] = extra
         patch = {"lieu_stockage": _as_text(lieu_stockage).strip(),
                  "statut_logistique": _as_text(statut_logistique).strip(),
                  "dernier_colis": article_colis or ", ".join(article_colis_list),
@@ -1683,6 +1744,17 @@ def _article_reception_history_from_ticket(ticket, article):
                 "url": f"/api/tickets/{urllib.parse.quote(ticket.get('id') or '', safe='')}/download-sheet/{urllib.parse.quote(filename, safe='')}",
             })
 
+        colis_values = reception.get("colis") or linked_item.get("colis") or []
+        if not isinstance(colis_values, list):
+            colis_values = [colis_values] if colis_values else []
+        colis_map = linked_item.get("colis_par_esi") if isinstance(linked_item.get("colis_par_esi"), dict) else {}
+        article_colis = _as_text(colis_map.get(esi_id)).strip()
+        type_map = linked_item.get("type_colis_par_esi") if isinstance(linked_item.get("type_colis_par_esi"), dict) else {}
+        article_type_colis = _normalise_colis_type(type_map.get(esi_id))
+        if not article_type_colis:
+            rec_types = reception.get("colis_types") if isinstance(reception.get("colis_types"), dict) else {}
+            article_type_colis = _normalise_colis_type(rec_types.get(article_colis))
+
         history.append({
             "type": "Réception",
             "reference": reception.get("reference") or "",
@@ -1692,7 +1764,8 @@ def _article_reception_history_from_ticket(ticket, article):
             "lieu_stockage": reception.get("lieu_stockage") or linked_item.get("lieu_stockage") or "",
             "numero_dossier": reception.get("numero_dossier") or article.get("dossier") or "",
             "nombre_colis": reception.get("nombre_colis") or "",
-            "colis": reception.get("colis") or linked_item.get("colis") or [],
+            "colis": colis_values,
+            "type_colis": article_type_colis,
             "quantite": linked_item.get("quantite") or "",
             "files": files,
         })
@@ -2374,6 +2447,7 @@ def api_article_detail(esi_id):
                 "numero_dossier": article.get("dossier") or "",
                 "nombre_colis": "",
                 "colis": r.get("colis") or [],
+                "type_colis": _normalise_colis_type(r.get("type_colis")),
                 "quantite": "1",
                 "files": [],
             })
@@ -2451,6 +2525,7 @@ def article_public_page(esi_id):
             'date': _as_text(entry.get('date')).strip(),
             'lieu': _as_text(entry.get('lieu_stockage')).strip(),
             'colis': ', '.join(_as_text(x).strip() for x in (entry.get('colis') or []) if _as_text(x).strip()),
+            'type_colis': _normalise_colis_type(entry.get('type_colis')),
             'par': _as_text(entry.get('receptionne_par')).strip(),
         })
 
@@ -2466,7 +2541,7 @@ def article_public_page(esi_id):
           <div class="history-item">
             <strong>{esc(entry['reference'] or 'Réception')}</strong>
             <div>{esc(date_txt)}</div>
-            <div>Stockage : {esc(entry['lieu'])} · Colis : {esc(entry['colis'])}</div>
+            <div>Stockage : {esc(entry['lieu'])} · Colis : {esc(_colis_display(entry['colis'], entry['type_colis']))}</div>
             {f'<div>Réceptionné par : {esc(entry["par"])}</div>' if entry['par'] else ''}
           </div>
         """
@@ -2534,6 +2609,7 @@ h1{{font-size:30px;line-height:1.05;margin:16px 0 5px;overflow-wrap:anywhere}}
       <div class="field"><b>Stockage actuel</b><div>{esc(article.get('lieu_stockage'))}</div></div>
       <div class="field"><b>Statut logistique</b><div>{esc(article.get('statut_logistique'))}</div></div>
       <div class="field"><b>N° colis</b><div>{esc(article.get('dernier_colis'))}</div></div>
+      <div class="field"><b>Type de colis</b><div>{esc(article.get('type_colis'))}</div></div>
       <div class="field"><b>Dernière réception</b><div>{esc(article.get('derniere_reception_ref'))}</div></div>
     </section>
     <aside class="photo">{photo_html}</aside>
@@ -5291,10 +5367,10 @@ async function openLinkedArticleDetail(esi){
     const a=d.article||{},dims=[a.longueur_cm,a.largeur_cm,a.hauteur_cm].filter(x=>String(x??'').trim()).join(' × '),photo=String(a.photo_url||'').trim();
     sub.textContent=(a.esi_id||esi)+' • Fiche détaillée et historique';
     let html=`<div class="caisse-article-hero"><div><div class="ref">${escapeHtml(a.reference||a.esi_id||esi)}</div>${a.description?`<div class="desc">${escapeHtml(a.description)}</div>`:''}</div><div class="esi">${escapeHtml(a.esi_id||esi)}</div></div>`;
-    html+=`<div class="caisse-article-detail-layout"><div class="caisse-article-fields">${detailField('N° ESI',a.esi_id)}${detailField('N° dossier',a.dossier)}${detailField('Référence / inventaire',a.reference)}${detailField('Client',a.client)}${detailField('Projet / exposition',a.projet,true)}${detailField('Description / désignation',a.description,true)}${detailField('Dimensions',dims?dims+' cm':'-')}${detailField('Poids',a.poids_kg?String(a.poids_kg)+' kg':'-')}${detailField('Stockage actuel',a.lieu_stockage)}${detailField('Statut logistique',a.statut_logistique)}${detailField('N° colis',a.dernier_colis)}${detailField('Dernière réception',a.derniere_reception_ref)}</div><div class="caisse-article-photo">${photo?`<img src="${escapeHtml(photo)}" alt="Photo article">`:'<div class="caisse-article-no-photo">Aucune photo enregistrée</div>'}</div></div>`;
+    html+=`<div class="caisse-article-detail-layout"><div class="caisse-article-fields">${detailField('N° ESI',a.esi_id)}${detailField('N° dossier',a.dossier)}${detailField('Référence / inventaire',a.reference)}${detailField('Client',a.client)}${detailField('Projet / exposition',a.projet,true)}${detailField('Description / désignation',a.description,true)}${detailField('Dimensions',dims?dims+' cm':'-')}${detailField('Poids',a.poids_kg?String(a.poids_kg)+' kg':'-')}${detailField('Stockage actuel',a.lieu_stockage)}${detailField('Statut logistique',a.statut_logistique)}${detailField('N° colis',a.dernier_colis)}${detailField('Type de colis',a.type_colis)}${detailField('Dernière réception',a.derniere_reception_ref)}</div><div class="caisse-article-photo">${photo?`<img src="${escapeHtml(photo)}" alt="Photo article">`:'<div class="caisse-article-no-photo">Aucune photo enregistrée</div>'}</div></div>`;
     html+='<div class="caisse-article-section"><div class="caisse-article-section-title">Historique des réceptions</div>';
     if((d.receptions||[]).length){
-      html+='<div class="caisse-article-history">'+d.receptions.map(x=>`<div class="caisse-article-history-item"><strong>${escapeHtml(x.reference||'Réception')}</strong> · ${escapeHtml(x.date_affichee||dateText(x.date))}<br>Stockage : ${escapeHtml(x.lieu_stockage||'-')} · Colis : ${escapeHtml((x.colis||[]).join(', ')||'-')}</div>`).join('')+'</div>';
+      html+='<div class="caisse-article-history">'+d.receptions.map(x=>`<div class="caisse-article-history-item"><strong>${escapeHtml(x.reference||'Réception')}</strong> · ${escapeHtml(x.date_affichee||dateText(x.date))}<br>Stockage : ${escapeHtml(x.lieu_stockage||'-')} · Colis : ${escapeHtml((x.colis||[]).join(', ')||'-')} · Type : ${escapeHtml(x.type_colis||'-')}</div>`).join('')+'</div>';
     }else html+='<div class="small">Aucune réception enregistrée.</div>';
     html+='</div>';body.innerHTML=html;
   }catch(e){body.innerHTML='<div class="small">'+escapeHtml(e.message||'Impossible de charger la fiche article')+'</div>'}
@@ -7328,7 +7404,13 @@ def _active_reception_for_esi(ticket, esi_id, is_avis):
             ids = [_as_text(x).strip() for x in (rec_item.get('esi_ids') or [])]
             if esi_id in ids:
                 colis_map = rec_item.get('colis_par_esi') if isinstance(rec_item.get('colis_par_esi'), dict) else {}
-                found = (rec, _as_text(colis_map.get(esi_id)).strip())
+                colis = _as_text(colis_map.get(esi_id)).strip()
+                type_map = rec_item.get('type_colis_par_esi') if isinstance(rec_item.get('type_colis_par_esi'), dict) else {}
+                type_colis = _normalise_colis_type(type_map.get(esi_id))
+                if not type_colis:
+                    rec_types = rec.get('colis_types') if isinstance(rec.get('colis_types'), dict) else {}
+                    type_colis = _normalise_colis_type(rec_types.get(colis))
+                found = (rec, colis, type_colis)
     return found
 
 
@@ -7367,9 +7449,14 @@ def _sync_articles_after_reception_cancel(ticket, cancelled, is_avis):
             raw['receptions_annulees'] = cancelled_history
 
             latest = _active_reception_for_esi(ticket, esi_id, is_avis)
+            extra = raw.get('article_fields') if isinstance(raw.get('article_fields'), dict) else {}
+            extra = dict(extra or {})
             if latest:
-                rec, colis = latest
+                rec, colis, type_colis = latest
                 raw['colis_actuel'] = colis
+                raw['type_colis_actuel'] = type_colis
+                extra['type_colis'] = type_colis
+                raw['article_fields'] = extra
                 patch = {
                     'lieu_stockage': _as_text(rec.get('lieu_stockage')).strip(),
                     'statut_logistique': 'Réceptionné',
@@ -7380,6 +7467,9 @@ def _sync_articles_after_reception_cancel(ticket, cancelled, is_avis):
                 }
             else:
                 raw['colis_actuel'] = ''
+                raw['type_colis_actuel'] = ''
+                extra['type_colis'] = ''
+                raw['article_fields'] = extra
                 patch = {
                     'lieu_stockage': '',
                     'statut_logistique': 'Créé',
@@ -7724,13 +7814,18 @@ def api_reception_avis_arrivee(ticket_id):
 
         reception_ref = f"RAR-{(max(existing_refs) if existing_refs else 0) + 1:04d}"
         colis_refs = _allocate_colis_numbers(numero_dossier, nombre_colis)
+        colis_types = _resolve_colis_types(data.get('colis_types'), colis_refs)
+        if any(not colis_types.get(ref) for ref in colis_refs):
+            return jsonify({'ok': False, 'error': 'Le type de chaque colis est obligatoire : Softpack, Carton ou Caisse bois.'}), 400
         try:
             colis_by_esi = _resolve_colis_repartition(selected, colis_repartition, colis_refs)
         except ValueError as e:
             return jsonify({'ok': False, 'error': str(e)}), 400
-        _apply_colis_to_selected_items(selected, colis_by_esi, reception_ref, lieu_stockage)
+        colis_type_by_esi = {esi: colis_types.get(ref, '') for esi, ref in colis_by_esi.items()}
+        _apply_colis_to_selected_items(selected, colis_by_esi, reception_ref, lieu_stockage, colis_type_by_esi)
         for label in article_labels:
             label['colis'] = colis_by_esi.get(label.get('esi_id'), '')
+            label['type_colis'] = colis_type_by_esi.get(label.get('esi_id'), '')
 
         article_labels_bytes = _build_labels_pdf_bytes(article_labels, kind="article")
         article_labels_filename = f"{reception_ref}_etiquettes_articles.pdf"
@@ -7738,10 +7833,11 @@ def api_reception_avis_arrivee(ticket_id):
 
         colis_labels = [{
             'titre': 'COLIS',
-            'principal': colis_ref,
+            'principal': _colis_display(colis_ref, colis_types.get(colis_ref)),
             'dossier': numero_dossier,
             'client': avis.get('client') or ticket.get('dossier') or '',
             'colis': colis_ref,
+            'type_colis': colis_types.get(colis_ref, ''),
             'lieu': lieu_stockage,
             'bon': reception_ref,
             'qr_url': _colis_qr_url(colis_ref),
@@ -7760,6 +7856,7 @@ def api_reception_avis_arrivee(ticket_id):
             'date_reception': now.strftime("%d/%m/%Y %H:%M"),
             'nombre_colis': nombre_colis,
             'colis': colis_refs,
+            'colis_types': colis_types,
             'article_esi_ids': list(reception_esi_ids),
             'commentaire': commentaire,
             'items': selected,
@@ -7790,6 +7887,7 @@ def api_reception_avis_arrivee(ticket_id):
             'numero_dossier': numero_dossier,
             'nombre_colis': nombre_colis,
             'colis': colis_refs,
+            'colis_types': colis_types,
             'commentaire': commentaire,
             'items': selected,
             'bon_reception_filename': reception_pdf_filename,
@@ -7825,6 +7923,7 @@ def api_reception_avis_arrivee(ticket_id):
                 lieu_stockage=lieu_stockage,
                 statut_logistique="Réceptionné",
                 colis_by_esi=colis_by_esi,
+                colis_type_by_esi=colis_type_by_esi,
                 reception_ref=reception_ref,
                 receptionne_par=receptionne_par,
             )
@@ -7837,6 +7936,7 @@ def api_reception_avis_arrivee(ticket_id):
         'reference': reception_ref,
         'reception': reception,
         'colis': colis_refs,
+        'colis_types': colis_types,
         'bon_reception_filename': reception_pdf_filename,
         'etiquettes_articles_filename': article_labels_filename,
         'etiquettes_colis_filename': colis_labels_filename,
@@ -7993,6 +8093,7 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
         row = dict(source_row or {})
         esi_ids = [str(v).strip() for v in (row.get('esi_ids') or []) if str(v).strip()]
         colis_par_esi = row.get('colis_par_esi') if isinstance(row.get('colis_par_esi'), dict) else {}
+        type_colis_par_esi = row.get('type_colis_par_esi') if isinstance(row.get('type_colis_par_esi'), dict) else {}
 
         if esi_ids:
             for esi_id in esi_ids:
@@ -8000,7 +8101,7 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
                     'esi_id': esi_id,
                     'reference': row.get('reference'),
                     'designation': row.get('designation') or row.get('description'),
-                    'colis': _as_text(colis_par_esi.get(esi_id)).strip(),
+                    'colis': _colis_display(colis_par_esi.get(esi_id), type_colis_par_esi.get(esi_id)),
                     'dimensions': row.get('dimensions'),
                     'quantite': '1',
                     'lieu_stockage': row.get('lieu_stockage') or bon.get('lieu_stockage'),
@@ -8599,7 +8700,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
 
         # Le N° COLIS reste l'information principale en grand.
         # Le N° BON DE RECEPTION est affiché plus bas à la place de l'ancien champ Bon.
-        principal = _as_text(label.get('colis') or label.get('principal')).strip()
+        principal = _as_text(label.get('principal') or label.get('colis')).strip()
         y = page_height - 88
         if principal:
             stream_lines += [
@@ -8623,6 +8724,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
         y -= 22
 
         fields = [
+            ('type_colis', 'Type de colis'),
             ('dossier', 'Dossier'),
             ('client', 'Client'),
             ('lieu', 'Stockage'),
@@ -8751,11 +8853,15 @@ def _resolve_colis_repartition(selected_items, raw_assignments, colis_refs):
     if used != set(range(len(colis_refs))): raise ValueError("Chaque colis créé doit contenir au moins un article.")
     return {expected[k]:colis_refs[ci] for k,ci in assignments.items()}
 
-def _apply_colis_to_selected_items(selected_items, colis_by_esi, reception_ref, lieu_stockage):
+def _apply_colis_to_selected_items(selected_items, colis_by_esi, reception_ref, lieu_stockage, colis_type_by_esi=None):
+    colis_type_by_esi = dict(colis_type_by_esi or {})
     for item in selected_items:
         mapping={esi:colis_by_esi.get(esi,'') for esi in item.get('esi_ids') or []}
+        type_mapping={esi:_normalise_colis_type(colis_type_by_esi.get(esi)) for esi in item.get('esi_ids') or []}
         item['colis_par_esi']=mapping
+        item['type_colis_par_esi']=type_mapping
         item['colis']=list(dict.fromkeys(x for x in mapping.values() if x))
+        item['types_colis']=list(dict.fromkeys(x for x in type_mapping.values() if x))
         item['reception_ref']=reception_ref; item['lieu_stockage']=lieu_stockage
 
 def _allocate_colis_numbers(numero_dossier, count):
@@ -8955,13 +9061,18 @@ def api_create_bon_livraison(ticket_id):
     with _BLR_LOCK:
         blr_ref = _next_blr_reference()
         colis_refs = _allocate_colis_numbers(numero_dossier, nombre_colis)
+        colis_types = _resolve_colis_types(data.get('colis_types'), colis_refs)
+        if any(not colis_types.get(ref) for ref in colis_refs):
+            return jsonify({'ok': False, 'error': 'Le type de chaque colis est obligatoire : Softpack, Carton ou Caisse bois.'}), 400
         try:
             colis_by_esi = _resolve_colis_repartition(selected, colis_repartition, colis_refs)
         except ValueError as e:
             return jsonify({'ok': False, 'error': str(e)}), 400
-        _apply_colis_to_selected_items(selected, colis_by_esi, blr_ref, lieu_stockage)
+        colis_type_by_esi = {esi: colis_types.get(ref, '') for esi, ref in colis_by_esi.items()}
+        _apply_colis_to_selected_items(selected, colis_by_esi, blr_ref, lieu_stockage, colis_type_by_esi)
         for label in article_labels:
             label['colis'] = colis_by_esi.get(label.get('esi_id'), '')
+            label['type_colis'] = colis_type_by_esi.get(label.get('esi_id'), '')
 
         bon = {
             'reference': blr_ref,
@@ -8975,6 +9086,7 @@ def api_create_bon_livraison(ticket_id):
             'created_at': now.isoformat(),
             'nombre_colis': nombre_colis,
             'colis': colis_refs,
+            'colis_types': colis_types,
             'article_esi_ids': list(reception_esi_ids),
             'items': selected,
         }
@@ -8992,10 +9104,11 @@ def api_create_bon_livraison(ticket_id):
         # Étiquettes colis
         colis_labels = [{
             'titre': 'COLIS',
-            'principal': colis_ref,
+            'principal': _colis_display(colis_ref, colis_types.get(colis_ref)),
             'dossier': numero_dossier,
             'client': enl.get('client') or ticket.get('dossier') or '',
             'colis': colis_ref,
+            'type_colis': colis_types.get(colis_ref, ''),
             'lieu': lieu_stockage,
             'bon': blr_ref,
             'qr_url': _colis_qr_url(colis_ref),
@@ -9046,6 +9159,7 @@ def api_create_bon_livraison(ticket_id):
                 lieu_stockage=lieu_stockage,
                 statut_logistique="Réceptionné",
                 colis_by_esi=colis_by_esi,
+                colis_type_by_esi=colis_type_by_esi,
                 reception_ref=blr_ref,
                 receptionne_par=receptionne_par,
             )
