@@ -1314,5 +1314,56 @@ document.addEventListener('keydown', (e)=>{
 loadTickets();
 setInterval(loadTickets, 30000);
 </script>
+<style id="esiColisTypeStyle">
+.esi-colis-type-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:20px;z-index:99999}.esi-colis-type-modal{width:min(560px,96vw);max-height:88vh;overflow:auto;background:#fff;border-radius:18px;border:1px solid #dbe7f0;box-shadow:0 24px 70px rgba(15,23,42,.28);padding:20px}.esi-colis-type-modal h3{margin:0 0 6px;font:900 20px Arial;color:#0f172a}.esi-colis-type-modal p{margin:0 0 16px;color:#64748b;font:13px Arial}.esi-colis-type-row{display:grid;grid-template-columns:120px 1fr;gap:12px;align-items:center;margin:9px 0}.esi-colis-type-row label{font:800 13px Arial;color:#334155}.esi-colis-type-row select{width:100%;border:1px solid #bfd4e3;background:#eaf6ff;border-radius:10px;padding:10px 12px;font:800 14px Arial;color:#0f2f4f}.esi-colis-type-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:18px}.esi-colis-type-actions button{border:1px solid #dbe7f0;border-radius:10px;padding:10px 14px;font:800 13px Arial;cursor:pointer;background:#fff}.esi-colis-type-actions .primary{background:#0ea5e9;border-color:#0ea5e9;color:#fff}
+</style>
+<script id="esiColisTypeScript">
+(function(){
+  if(window.__esiColisTypeFetchInstalled)return;
+  window.__esiColisTypeFetchInstalled=true;
+  const nativeFetch=window.fetch.bind(window);
+  const allowed=['Softpack','Carton','Caisse bois'];
+  function validTypes(v,n){return Array.isArray(v)&&v.length===n&&v.every(x=>allowed.includes(String(x||'').trim()))}
+  function chooseTypes(count,existing){
+    return new Promise(resolve=>{
+      const bg=document.createElement('div');bg.className='esi-colis-type-backdrop';
+      const box=document.createElement('div');box.className='esi-colis-type-modal';
+      box.innerHTML='<h3>Type des colis</h3><p>Indique le type de chaque colis avant de valider la réception. Le N° de colis reste généré automatiquement.</p>';
+      const selects=[];
+      for(let i=0;i<count;i++){
+        const row=document.createElement('div');row.className='esi-colis-type-row';
+        const lab=document.createElement('label');lab.textContent='Colis '+(i+1);
+        const sel=document.createElement('select');
+        sel.innerHTML='<option value="">Choisir...</option>'+allowed.map(x=>'<option value="'+x+'">'+x+'</option>').join('');
+        if(existing&&allowed.includes(existing[i]))sel.value=existing[i];
+        row.append(lab,sel);box.appendChild(row);selects.push(sel);
+      }
+      const actions=document.createElement('div');actions.className='esi-colis-type-actions';
+      const cancel=document.createElement('button');cancel.type='button';cancel.textContent='Annuler';
+      const ok=document.createElement('button');ok.type='button';ok.className='primary';ok.textContent='Continuer la réception';
+      actions.append(cancel,ok);box.appendChild(actions);bg.appendChild(box);document.body.appendChild(bg);
+      function close(value){bg.remove();resolve(value)}
+      cancel.onclick=()=>close(null);bg.addEventListener('click',e=>{if(e.target===bg)close(null)});
+      ok.onclick=()=>{const values=selects.map(s=>s.value);if(values.some(v=>!v)){alert('Choisis le type de chaque colis.');return}close(values)};
+    });
+  }
+  window.fetch=async function(input,init){
+    const url=typeof input==='string'?input:(input&&input.url)||'';
+    const cfg=init||{};const method=String(cfg.method||'GET').toUpperCase();
+    const isReception=/\/api\/tickets\/[^/]+\/(reception-avis-arrivee|bon-livraison)(?:\?|$)/.test(url);
+    if(!isReception||method!=='POST'||typeof cfg.body!=='string')return nativeFetch(input,init);
+    let payload;try{payload=JSON.parse(cfg.body)}catch(e){return nativeFetch(input,init)}
+    const count=Number(payload&&payload.nombre_colis||0);
+    if(!Number.isInteger(count)||count<1)return nativeFetch(input,init);
+    if(!validTypes(payload.colis_types,count)){
+      const chosen=await chooseTypes(count,Array.isArray(payload.colis_types)?payload.colis_types:[]);
+      if(!chosen)throw new Error('Réception annulée : type de colis non renseigné.');
+      payload.colis_types=chosen;
+    }
+    const next={...cfg,body:JSON.stringify(payload)};
+    return nativeFetch(input,next);
+  };
+})();
+</script>
 </body>
 </html>

@@ -69,7 +69,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .form-row{margin-top:12px}.form-row label{display:block;font-size:13px;font-weight:900;color:var(--muted);margin-bottom:5px}
 .form-row input{width:100%;border:1px solid #cbd5e1;border-radius:9px;padding:10px;font:inherit}
 
-.colis-repartition{margin-top:12px;border:1px solid var(--line);border-radius:12px;padding:12px;background:#fff}.colis-repartition-title{font-size:13px;font-weight:900;margin-bottom:8px}.colis-unit{display:grid;grid-template-columns:1fr minmax(160px,220px);gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid #eef2f7}.colis-unit:last-child{border-bottom:none}.colis-unit select{width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:7px;background:#fff;font-weight:800}
+.colis-repartition{margin-top:12px;border:1px solid var(--line);border-radius:12px;padding:12px;background:#fff}.colis-repartition-title{font-size:13px;font-weight:900;margin-bottom:8px}.colis-type-title{font-size:11px;font-weight:900;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 7px}.colis-type-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin-bottom:12px}.colis-type-card{border:1px solid #bae6fd;background:#f0f9ff;border-radius:10px;padding:9px}.colis-type-card label{display:block;font-size:11px;font-weight:900;color:#075985;margin-bottom:6px}.colis-type-card select{width:100%;border:1px solid #7dd3fc;border-radius:8px;padding:8px;background:#fff;font-weight:800;color:#0f2f4f}.colis-type-card select:invalid{color:#64748b}.colis-unit{display:grid;grid-template-columns:1fr minmax(160px,220px);gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid #eef2f7}.colis-unit:last-child{border-bottom:none}.colis-unit select{width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:7px;background:#fff;font-weight:800}
 @media(max-width:600px){.detail-grid{grid-template-columns:1fr;gap:4px}.detail-value{margin-bottom:8px}}
 @media(max-width:900px){.month-grid,.week-head{grid-template-columns:1fr}.week-head{display:none}.day{height:auto;min-height:130px;border-right:none}.day-events{max-height:220px}}
 </style>
@@ -387,7 +387,7 @@ function renderTicketModal(editing=false){
         html+=` — ${esc(r.date_reception||'')} — ${esc(r.receptionne_par||'')} — ${esc(r.lieu_stockage||'')} <button class="btn danger" type="button" style="padding:5px 8px;margin-left:8px" onclick="cancelSpecificReception('${esc(r.reference||'')}')">Annuler cette réception</button></div>`;
 
         if(r.colis&&r.colis.length){
-          html+=`<div class="delivery-meta">Colis : ${esc(r.colis.join(', '))}</div>`;
+          html+=`<div class="delivery-meta">Colis : ${esc(colisDisplayList(r.colis,r.colis_types))}</div>`;
         }
 
         if(articlesFilename||colisFilename){
@@ -496,6 +496,9 @@ function renderTicketModal(editing=false){
           — ${esc(b.date_reception||'')} — ${esc(b.receptionne_par||'')} — ${esc(b.lieu_stockage||'')} <button class="btn danger" type="button" style="padding:5px 8px;margin-left:8px" onclick="cancelSpecificReception('${esc(b.reference||'')}')">Annuler cette réception</button>
         </div>`;
 
+      if(b.colis&&b.colis.length){
+        html+=`<div class="delivery-meta">Colis : ${esc(colisDisplayList(b.colis,b.colis_types))}</div>`;
+      }
       if(articlesFilename||colisFilename){
         html+=`<div class="generated-links">`;
         if(articlesFilename){
@@ -605,9 +608,27 @@ async function saveTicketEdits(){
 
 
 
+function colisTypeOptions(selected=''){
+  const values=['Softpack','Carton','Caisse bois'];
+  return `<option value="">Choisir le type...</option>`+values.map(v=>`<option value="${v}" ${selected===v?'selected':''}>${v}</option>`).join('');
+}
+function readColisTypes(prefix){
+  return [...document.querySelectorAll('.'+prefix+'-colis-type')]
+    .sort((a,b)=>Number(a.dataset.colisIndex)-Number(b.dataset.colisIndex))
+    .map(x=>String(x.value||'').trim());
+}
+function colisDisplayList(colis,types){
+  const refs=Array.isArray(colis)?colis:[];
+  const map=(types&&typeof types==='object'&&!Array.isArray(types))?types:{};
+  return refs.map(ref=>{
+    const type=String(map[ref]||'').trim();
+    return type?`${ref} - ${type.toUpperCase()}`:ref;
+  }).join(', ');
+}
 function buildColisRepartition(prefix, checkClass, qtyClass, packageInputId){
   const box=document.getElementById(prefix+'ColisRepartition'); if(!box) return;
   const count=Math.max(1,Number(document.getElementById(packageInputId)?.value||1));
+  const previousTypes=readColisTypes(prefix);
   const units=[];
   document.querySelectorAll('.'+checkClass+':checked:not(:disabled)').forEach(cb=>{
     const index=Number(cb.dataset.index), qty=Math.max(0,Math.floor(Number(document.querySelector('.'+qtyClass+'[data-index="'+index+'"]')?.value||0)));
@@ -625,11 +646,11 @@ function buildColisRepartition(prefix, checkClass, qtyClass, packageInputId){
   });
   if(!units.length){box.innerHTML='<div class="muted">Sélectionne les articles à réceptionner.</div>';return;}
   const opts=Array.from({length:count},(_,i)=>`<option value="${i}">Colis ${i+1}</option>`).join('');
-  box.innerHTML=`<div class="colis-repartition-title">Répartition des articles dans les colis</div>`+units.map((u,i)=>`<div class="colis-unit"><div><strong>${esc(u.reference)} — ${esc(u.designation)} — ${esc(u.esi)}</strong></div><select class="${prefix}-colis-select" data-index="${u.index}" data-unit-offset="${u.unit_offset}">${opts}</select></div>`).join('');
-  box.querySelectorAll('select').forEach((sel,i)=>sel.value=String(i%count));
+  const typeCards=Array.from({length:count},(_,i)=>`<div class="colis-type-card"><label for="${prefix}ColisType${i}">Colis ${i+1} - Type de colis</label><select id="${prefix}ColisType${i}" class="${prefix}-colis-type" data-colis-index="${i}" required>${colisTypeOptions(previousTypes[i]||'')}</select></div>`).join('');
+  box.innerHTML=`<div class="colis-repartition-title">Constitution des colis</div><div class="colis-type-title">Type de chaque colis</div><div class="colis-type-grid">${typeCards}</div><div class="colis-type-title">Répartition des articles dans les colis</div>`+units.map((u,i)=>`<div class="colis-unit"><div><strong>${esc(u.reference)} - ${esc(u.designation)} - ${esc(u.esi)}</strong></div><select class="${prefix}-colis-select" data-index="${u.index}" data-unit-offset="${u.unit_offset}">${opts}</select></div>`).join('');
+  box.querySelectorAll('.'+prefix+'-colis-select').forEach((sel,i)=>sel.value=String(i%count));
 }
 function readColisRepartition(prefix){return [...document.querySelectorAll('.'+prefix+'-colis-select')].map(x=>({index:Number(x.dataset.index),unit_offset:Number(x.dataset.unitOffset),colis_index:Number(x.value)}));}
-
 function closeReceptionModal(){
   const b=document.getElementById('receptionModalBackdrop');
   b.classList.remove('open');b.setAttribute('aria-hidden','true');
@@ -703,7 +724,7 @@ function openReceptionModal(){
         <div><strong>${esc(r.reference||'Réception')}</strong>
         — ${esc(r.date_reception||'')} — ${esc(r.receptionne_par||'')} — ${esc(r.lieu_stockage||'')}</div>`;
       if(r.colis&&r.colis.length){
-        html+=`<div class="delivery-meta">Colis : ${esc(r.colis.join(', '))}</div>`;
+        html+=`<div class="delivery-meta">Colis : ${esc(colisDisplayList(r.colis,r.colis_types))}</div>`;
       }
       html+=`<div class="generated-links">`;
       if(r.bon_reception_filename){
@@ -804,6 +825,11 @@ async function validateArrivalReception(){
     alert("Chaque colis créé doit contenir au moins un article.");
     return;
   }
+  const colisTypes=readColisTypes('arrival');
+  if(colisTypes.length!==packageCount || colisTypes.some(type=>!type)){
+    alert("Choisis le type de chaque colis : Softpack, Carton ou Caisse bois.");
+    return;
+  }
 
   const btn=document.getElementById('receptionValidateBtn');
   btn.disabled=true;btn.textContent='Génération des étiquettes...';
@@ -821,7 +847,8 @@ async function validateArrivalReception(){
         commentaire:comment,
         items_reception:selected,
         selected_indexes:selected.map(x=>x.index),
-        colis_repartition:repartition
+        colis_repartition:repartition,
+        colis_types:colisTypes
       })
     });
 
@@ -836,7 +863,7 @@ async function validateArrivalReception(){
     }
     closeReceptionModal();
 
-    const colis=(data.colis||[]).join(', ');
+    const colis=colisDisplayList(data.colis||[],data.colis_types||{});
     alert(`Réception validée.\nRéférence : ${data.reference||'-'}\nColis : ${colis||'-'}\nLes PDF d'étiquettes sont disponibles dans le ticket.`);
   }catch(e){
     alert(e.message||"Impossible de valider la réception");
@@ -959,6 +986,9 @@ function openDeliveryModal(){
       html+=`<div style="margin:8px 0">
         <div><a class="file-link" target="_blank" href="${href}"><strong>${esc(b.reference||filename)}</strong></a>
         — ${esc(b.date_reception||'')} — ${esc(b.receptionne_par||'')} — ${esc(b.lieu_stockage||'')}</div>`;
+      if(b.colis&&b.colis.length){
+        html+=`<div class="delivery-meta">Colis : ${esc(colisDisplayList(b.colis,b.colis_types))}</div>`;
+      }
       const links=[];
       if(b.etiquettes_articles_filename){
         links.push(`<a class="file-link" target="_blank" href="/api/tickets/${encodeURIComponent(openedTicket.id)}/download-sheet/${encodeURIComponent(b.etiquettes_articles_filename)}">Étiquettes articles</a>`);
@@ -1045,6 +1075,11 @@ async function validateDelivery(){
     alert("Chaque colis créé doit contenir au moins un article.");
     return;
   }
+  const colisTypes=readColisTypes('delivery');
+  if(colisTypes.length!==packageCount || colisTypes.some(type=>!type)){
+    alert("Choisis le type de chaque colis : Softpack, Carton ou Caisse bois.");
+    return;
+  }
 
   const btn=document.getElementById('deliveryValidateBtn');
   btn.disabled=true;btn.textContent='Génération du bon et des étiquettes...';
@@ -1060,7 +1095,8 @@ async function validateDelivery(){
         nombre_colis:packageCount,
         items_reception:selected,
         selected_indexes:selected.map(x=>x.index),
-        colis_repartition:repartition
+        colis_repartition:repartition,
+        colis_types:colisTypes
       })
     });
     const data=await res.json().catch(()=>({}));
@@ -1074,7 +1110,7 @@ async function validateDelivery(){
     }
     closeDeliveryModal();
 
-    const colis=(data.colis||[]).join(', ');
+    const colis=colisDisplayList(data.colis||[],data.colis_types||{});
     alert(`Réception validée.\nBon généré : ${data.reference}\nColis : ${colis||'-'}\nLes PDF d'étiquettes sont disponibles dans le ticket.`);
   }catch(e){
     alert(e.message||"Impossible de valider la réception");
