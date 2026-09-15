@@ -634,6 +634,7 @@ def _article_payload_from_item(ticket, item, source_module=None, source_index=No
         surface = item.get("surface_m2") or ""
         ref_caisse = item.get("ref_caisse") or ""
         transporteur_ref = ((avis.get("transporteur") or {}).get("reference") or "")
+        charge_projet = avis.get("coordinateur") or ticket.get("chargeProjet") or ""
     else:
         dossier = (
             enl.get("numero_dossier")
@@ -660,6 +661,7 @@ def _article_payload_from_item(ticket, item, source_module=None, source_index=No
         surface = item.get("surface_m2") or ""
         ref_caisse = item.get("ref_caisse") or ""
         transporteur_ref = enl.get("numero_bon") or ticket.get("ref") or ""
+        charge_projet = enl.get("coordinateur") or ticket.get("chargeProjet") or ""
 
     created_at = ticket.get("createdAt") or datetime.now().isoformat()
     payload = {
@@ -690,18 +692,65 @@ def _article_payload_from_item(ticket, item, source_module=None, source_index=No
             "source_index": source_index,
             "unit_index": unit_index,
             "item": item,
+            "article_fields": {
+                "charge_projet": _as_text(charge_projet).strip(),
+            },
         },
     }
     payload["search_text"] = _article_search_text(payload)
     return payload
 
 
+_ARTICLE_EXTRA_FIELDS = {
+    "charge_projet",
+    "oeuvre_reference", "artiste", "oeuvre_titre", "oeuvre_technique",
+    "oeuvre_longueur_cm", "oeuvre_largeur_cm", "oeuvre_hauteur_cm",
+    "oeuvre_volume_m3", "oeuvre_surface_m2", "oeuvre_poids_kg",
+    "statut_douanier", "ima_numero", "ima_date",
+}
+
+
 def _article_row_to_public(row):
+    """Expose aussi les champs métier stockés dans raw_json sans modifier le schéma Supabase."""
     row = dict(row or {})
     article_no = row.get("article_no")
     if not row.get("esi_id") and article_no is not None:
         row["esi_id"] = f"ESI-{article_no}"
+
+    raw = row.get("raw_json") if isinstance(row.get("raw_json"), dict) else {}
+    extra = raw.get("article_fields") if isinstance(raw.get("article_fields"), dict) else {}
+    for field in _ARTICLE_EXTRA_FIELDS:
+        value = extra.get(field)
+        if value is None:
+            value = raw.get(field)
+        if value is None and field == "charge_projet":
+            value = raw.get("chargeProjet")
+        row[field] = _as_text(value).strip()
     return row
+
+
+def _article_number(value):
+    try:
+        text = _as_text(value).strip().replace(" ", "").replace(",", ".")
+        return float(text) if text else None
+    except Exception:
+        return None
+
+
+def _article_metric_text(value):
+    if value is None:
+        return ""
+    return (f"{value:.6f}").rstrip("0").rstrip(".")
+
+
+def _article_calculated_metrics(longueur, largeur, hauteur):
+    """Calcule volume (m³) et surface au sol (m²) à partir de dimensions en cm."""
+    l = _article_number(longueur)
+    w = _article_number(largeur)
+    h = _article_number(hauteur)
+    surface = _article_metric_text((l * w / 10000.0) if l is not None and w is not None else None)
+    volume = _article_metric_text((l * w * h / 1000000.0) if l is not None and w is not None and h is not None else None)
+    return volume, surface
 
 
 def _create_article_record(payload):
@@ -1111,8 +1160,6 @@ def _article_ids_for_received_units(item, previous_qty, qty_received):
 ARTICLES_MANUAL_CREATE_JS = r"""(function(){
 'use strict';
 
-function escManual(v){return String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#039;'}[c]))}
-
 function ensureManualCreateUI(){
   const actions=document.querySelector('.actions');
   if(!actions || document.getElementById('manualArticleCreateBtn')) return;
@@ -1129,121 +1176,102 @@ function ensureManualCreateUI(){
   bg.className='modal-backdrop';
   bg.id='manualArticleModalBackdrop';
   bg.setAttribute('aria-hidden','true');
-  bg.innerHTML=`<div class="modal" role="dialog" aria-modal="true" style="width:min(940px,96vw)">
+  bg.innerHTML=`<div class="modal" role="dialog" aria-modal="true" style="width:min(1040px,96vw)">
     <div class="modal-head">
-      <div>
-        <div class="modal-title">Créer un article manuellement</div>
-        <div class="modal-sub">Le N° ESI sera généré automatiquement.</div>
-      </div>
+      <div><div class="modal-title">Créer un article manuellement</div><div class="modal-sub">Le N° ESI sera généré automatiquement. Les volumes et surfaces sont calculés à partir des dimensions en cm.</div></div>
       <button class="modal-close" id="manualArticleModalClose" type="button">×</button>
     </div>
     <div class="modal-body">
+      <div class="section-title">Informations existantes</div>
       <div class="edit-grid" id="manualArticleGrid">
         <div class="edit-field"><label>Type</label><select id="manualType"><option value="PRODUIT">PRODUIT</option><option value="CONTENANT">CONTENANT</option></select></div>
         <div class="edit-field"><label>N° dossier *</label><input id="manualDossier" autocomplete="off" placeholder="Ex. 101129"></div>
-        <div class="edit-field"><label>Référence / N° inventaire</label><input id="manualReference" autocomplete="off"></div>
         <div class="edit-field"><label>Client</label><input id="manualClient" autocomplete="off"></div>
+        <div class="edit-field"><label>Chargé de projet</label><input id="manualChargeProjet" autocomplete="off"></div>
         <div class="edit-field"><label>Projet / exposition</label><input id="manualProjet" autocomplete="off"></div>
+        <div class="edit-field"><label>Référence / N° inventaire</label><input id="manualReference" autocomplete="off"></div>
         <div class="edit-field"><label>Réf. caisse</label><input id="manualRefCaisse" autocomplete="off" placeholder="Ex. 101129-01"></div>
         <div class="edit-field"><label>Réf. transporteur</label><input id="manualTransporteurRef" autocomplete="off"></div>
         <div class="edit-field"><label>Lieu de stockage</label><input id="manualLieuStockage" autocomplete="off"></div>
+        <div class="edit-field"><label>Statut logistique</label><input id="manualStatut" value="Créé"></div>
         <div class="edit-field" style="grid-column:1/-1"><label>Description / désignation</label><textarea id="manualDescription"></textarea></div>
         <div class="edit-field"><label>Longueur (cm)</label><input id="manualLongueur" inputmode="decimal"></div>
         <div class="edit-field"><label>Largeur (cm)</label><input id="manualLargeur" inputmode="decimal"></div>
         <div class="edit-field"><label>Hauteur (cm)</label><input id="manualHauteur" inputmode="decimal"></div>
         <div class="edit-field"><label>Poids (kg)</label><input id="manualPoids" inputmode="decimal"></div>
-        <div class="edit-field"><label>Volume (m³)</label><input id="manualVolume" inputmode="decimal"></div>
-        <div class="edit-field"><label>Surface (m²)</label><input id="manualSurface" inputmode="decimal"></div>
-        <div class="edit-field"><label>Statut logistique</label><input id="manualStatut" value="Créé"></div>
+        <div class="edit-field"><label>Volume (m³) — automatique</label><input id="manualVolume" readonly></div>
+        <div class="edit-field"><label>Surface (m²) — automatique</label><input id="manualSurface" readonly></div>
       </div>
-      <div id="manualArticleHint" class="muted" style="margin-top:12px;font-size:12px">Si ce N° de dossier existe déjà, Client et Projet seront repris automatiquement depuis la base.</div>
-      <div class="modal-actions">
-        <button class="btn" id="manualArticleCancel" type="button">Annuler</button>
-        <button class="btn primary" id="manualArticleSave" type="button">Créer l'article</button>
+
+      <div class="section-title" style="margin-top:20px">Informations œuvre</div>
+      <div class="edit-grid">
+        <div class="edit-field"><label>N° réf œuvre</label><input id="manualOeuvreReference" autocomplete="off"></div>
+        <div class="edit-field"><label>Nom de l’artiste</label><input id="manualArtiste" autocomplete="off"></div>
+        <div class="edit-field"><label>Titre de l’œuvre</label><input id="manualOeuvreTitre" autocomplete="off"></div>
+        <div class="edit-field"><label>Technique de l’œuvre</label><input id="manualOeuvreTechnique" autocomplete="off"></div>
+        <div class="edit-field"><label>Longueur de l’œuvre (cm)</label><input id="manualOeuvreLongueur" inputmode="decimal"></div>
+        <div class="edit-field"><label>Largeur de l’œuvre (cm)</label><input id="manualOeuvreLargeur" inputmode="decimal"></div>
+        <div class="edit-field"><label>Hauteur de l’œuvre (cm)</label><input id="manualOeuvreHauteur" inputmode="decimal"></div>
+        <div class="edit-field"><label>Poids de l’œuvre (kg)</label><input id="manualOeuvrePoids" inputmode="decimal"></div>
+        <div class="edit-field"><label>Volume œuvre (m³) — automatique</label><input id="manualOeuvreVolume" readonly></div>
+        <div class="edit-field"><label>Surface au sol œuvre (m²) — automatique</label><input id="manualOeuvreSurface" readonly></div>
+        <div class="edit-field"><label>Statut douanier</label><select id="manualStatutDouanier"><option value="">Non renseigné</option><option value="Libre">Libre</option><option value="Sous douane">Sous douane</option></select></div>
+        <div class="edit-field"><label>N° IMA</label><input id="manualImaNumero" autocomplete="off"></div>
+        <div class="edit-field"><label>Date de l’IMA</label><input id="manualImaDate" type="date"></div>
       </div>
+      <div id="manualArticleHint" class="muted" style="margin-top:12px;font-size:12px">Si ce N° de dossier existe déjà, Client, Projet et Chargé de projet seront repris automatiquement.</div>
+      <div class="modal-actions"><button class="btn" id="manualArticleCancel" type="button">Annuler</button><button class="btn primary" id="manualArticleSave" type="button">Créer l'article</button></div>
     </div>
   </div>`;
   document.body.appendChild(bg);
 
-  const ids=['manualType','manualDossier','manualReference','manualClient','manualProjet','manualRefCaisse','manualTransporteurRef','manualLieuStockage','manualDescription','manualLongueur','manualLargeur','manualHauteur','manualPoids','manualVolume','manualSurface','manualStatut'];
+  const ids=['manualType','manualDossier','manualClient','manualChargeProjet','manualProjet','manualReference','manualRefCaisse','manualTransporteurRef','manualLieuStockage','manualStatut','manualDescription','manualLongueur','manualLargeur','manualHauteur','manualPoids','manualVolume','manualSurface','manualOeuvreReference','manualArtiste','manualOeuvreTitre','manualOeuvreTechnique','manualOeuvreLongueur','manualOeuvreLargeur','manualOeuvreHauteur','manualOeuvrePoids','manualOeuvreVolume','manualOeuvreSurface','manualStatutDouanier','manualImaNumero','manualImaDate'];
   function el(id){return document.getElementById(id)}
-  function clearForm(){
-    ids.forEach(id=>{const node=el(id); if(!node)return; if(id==='manualType')node.value='PRODUIT'; else if(id==='manualStatut')node.value='Créé'; else node.value='';});
-    el('manualArticleHint').textContent='Si ce N° de dossier existe déjà, Client et Projet seront repris automatiquement depuis la base.';
-  }
+  function num(id){const n=Number(String(el(id).value||'').replace(',','.'));return Number.isFinite(n)?n:null}
+  function metric(v){if(v===null||!Number.isFinite(v))return '';return v.toFixed(6).replace(/0+$/,'').replace(/\.$/,'')}
+  function recalcStandard(){const l=num('manualLongueur'),w=num('manualLargeur'),h=num('manualHauteur');el('manualSurface').value=(l!==null&&w!==null)?metric(l*w/10000):'';el('manualVolume').value=(l!==null&&w!==null&&h!==null)?metric(l*w*h/1000000):''}
+  function recalcOeuvre(){const l=num('manualOeuvreLongueur'),w=num('manualOeuvreLargeur'),h=num('manualOeuvreHauteur');el('manualOeuvreSurface').value=(l!==null&&w!==null)?metric(l*w/10000):'';el('manualOeuvreVolume').value=(l!==null&&w!==null&&h!==null)?metric(l*w*h/1000000):''}
+  function clearForm(){ids.forEach(id=>{const node=el(id);if(!node)return;if(id==='manualType')node.value='PRODUIT';else if(id==='manualStatut')node.value='Créé';else node.value='';});el('manualArticleHint').textContent='Si ce N° de dossier existe déjà, Client, Projet et Chargé de projet seront repris automatiquement.'}
   function openModal(){clearForm();bg.classList.add('open');bg.setAttribute('aria-hidden','false');setTimeout(()=>el('manualDossier').focus(),50)}
   function closeModal(){bg.classList.remove('open');bg.setAttribute('aria-hidden','true')}
 
-  btn.onclick=openModal;
-  el('manualArticleModalClose').onclick=closeModal;
-  el('manualArticleCancel').onclick=closeModal;
-  bg.addEventListener('click',e=>{if(e.target===bg)closeModal()});
+  ['manualLongueur','manualLargeur','manualHauteur'].forEach(id=>el(id).addEventListener('input',recalcStandard));
+  ['manualOeuvreLongueur','manualOeuvreLargeur','manualOeuvreHauteur'].forEach(id=>el(id).addEventListener('input',recalcOeuvre));
+  btn.onclick=openModal;el('manualArticleModalClose').onclick=closeModal;el('manualArticleCancel').onclick=closeModal;bg.addEventListener('click',e=>{if(e.target===bg)closeModal()});
 
   let identitySeq=0;
   async function autofillDossier(){
-    const dossier=String(el('manualDossier').value||'').trim();
-    const seq=++identitySeq;
-    if(!dossier)return;
+    const dossier=String(el('manualDossier').value||'').trim();const seq=++identitySeq;if(!dossier)return;
     try{
-      const r=await fetch('/api/articles/by-dossier?dossier='+encodeURIComponent(dossier),{cache:'no-store'});
-      const d=await r.json();
-      if(seq!==identitySeq||!r.ok)return;
-      const rows=d.articles||[];
-      const first=rows.find(x=>String(x.client||'').trim()||String(x.projet||'').trim());
-      if(first){
-        if(String(first.client||'').trim())el('manualClient').value=first.client;
-        if(String(first.projet||'').trim())el('manualProjet').value=first.projet;
-        el('manualArticleHint').textContent='Dossier existant : Client et Projet ont été repris automatiquement.';
-      }else{
-        el('manualArticleHint').textContent='Nouveau dossier ou dossier sans identité connue : renseigne Client et Projet si nécessaire.';
-      }
+      const r=await fetch('/api/dossiers/lookup?dossier='+encodeURIComponent(dossier),{cache:'no-store'});const d=await r.json();if(seq!==identitySeq||!r.ok)return;
+      if(String(d.client||'').trim())el('manualClient').value=d.client;
+      if(String(d.projet||'').trim())el('manualProjet').value=d.projet;
+      if(String(d.charge_projet||'').trim())el('manualChargeProjet').value=d.charge_projet;
+      el('manualArticleHint').textContent=d.found?'Dossier existant : Client, Projet et Chargé de projet ont été repris automatiquement.':'Nouveau dossier : renseigne les informations de dossier nécessaires.';
     }catch(e){}
   }
-  el('manualDossier').addEventListener('change',autofillDossier);
-  el('manualDossier').addEventListener('blur',autofillDossier);
+  el('manualDossier').addEventListener('change',autofillDossier);el('manualDossier').addEventListener('blur',autofillDossier);
 
   el('manualArticleSave').onclick=async()=>{
-    const dossier=String(el('manualDossier').value||'').trim();
-    const reference=String(el('manualReference').value||'').trim();
-    const description=String(el('manualDescription').value||'').trim();
+    const dossier=String(el('manualDossier').value||'').trim(),reference=String(el('manualReference').value||'').trim(),description=String(el('manualDescription').value||'').trim();
     if(!dossier){alert('Le N° de dossier est obligatoire.');el('manualDossier').focus();return}
     if(!reference&&!description){alert('Renseigne au minimum une référence ou une description.');el('manualReference').focus();return}
-
+    recalcStandard();recalcOeuvre();
     const payload={
-      type_objet:el('manualType').value,
-      dossier,
-      reference,
-      description,
-      client:String(el('manualClient').value||'').trim(),
-      projet:String(el('manualProjet').value||'').trim(),
-      ref_caisse:String(el('manualRefCaisse').value||'').trim(),
-      transporteur_ref:String(el('manualTransporteurRef').value||'').trim(),
-      lieu_stockage:String(el('manualLieuStockage').value||'').trim(),
-      longueur_cm:String(el('manualLongueur').value||'').trim(),
-      largeur_cm:String(el('manualLargeur').value||'').trim(),
-      hauteur_cm:String(el('manualHauteur').value||'').trim(),
-      poids_kg:String(el('manualPoids').value||'').trim(),
-      volume_m3:String(el('manualVolume').value||'').trim(),
-      surface_m2:String(el('manualSurface').value||'').trim(),
-      statut_logistique:String(el('manualStatut').value||'').trim()||'Créé'
+      type_objet:el('manualType').value,dossier,reference,description,
+      client:String(el('manualClient').value||'').trim(),charge_projet:String(el('manualChargeProjet').value||'').trim(),projet:String(el('manualProjet').value||'').trim(),
+      ref_caisse:String(el('manualRefCaisse').value||'').trim(),transporteur_ref:String(el('manualTransporteurRef').value||'').trim(),lieu_stockage:String(el('manualLieuStockage').value||'').trim(),
+      longueur_cm:String(el('manualLongueur').value||'').trim(),largeur_cm:String(el('manualLargeur').value||'').trim(),hauteur_cm:String(el('manualHauteur').value||'').trim(),poids_kg:String(el('manualPoids').value||'').trim(),
+      statut_logistique:String(el('manualStatut').value||'').trim()||'Créé',
+      oeuvre_reference:String(el('manualOeuvreReference').value||'').trim(),artiste:String(el('manualArtiste').value||'').trim(),oeuvre_titre:String(el('manualOeuvreTitre').value||'').trim(),oeuvre_technique:String(el('manualOeuvreTechnique').value||'').trim(),
+      oeuvre_longueur_cm:String(el('manualOeuvreLongueur').value||'').trim(),oeuvre_largeur_cm:String(el('manualOeuvreLargeur').value||'').trim(),oeuvre_hauteur_cm:String(el('manualOeuvreHauteur').value||'').trim(),oeuvre_poids_kg:String(el('manualOeuvrePoids').value||'').trim(),
+      statut_douanier:String(el('manualStatutDouanier').value||'').trim(),ima_numero:String(el('manualImaNumero').value||'').trim(),ima_date:String(el('manualImaDate').value||'').trim()
     };
-
-    const save=el('manualArticleSave');
-    save.disabled=true;save.textContent='Création…';
-    try{
-      const r=await fetch('/api/articles/manual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-      const text=await r.text();let d={};try{d=text?JSON.parse(text):{}}catch(e){}
-      if(!r.ok)throw new Error(d.error||'Impossible de créer l’article');
-      const esi=(d.article&&d.article.esi_id)||d.esi_id||'';
-      closeModal();
-      if(typeof load==='function')await load();
-      if(esi&&typeof openArticleDetail==='function')await openArticleDetail(esi);
-      else alert('Article créé'+(esi?' : '+esi:''));
-    }catch(e){alert(e.message||'Impossible de créer l’article')}
-    finally{save.disabled=false;save.textContent="Créer l'article"}
+    const save=el('manualArticleSave');save.disabled=true;save.textContent='Création…';
+    try{const r=await fetch('/api/articles/manual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const text=await r.text();let d={};try{d=text?JSON.parse(text):{}}catch(e){}if(!r.ok)throw new Error(d.error||'Impossible de créer l’article');const esi=(d.article&&d.article.esi_id)||d.esi_id||'';closeModal();if(typeof load==='function')await load();if(esi&&typeof openArticleDetail==='function')await openArticleDetail(esi);else alert('Article créé'+(esi?' : '+esi:''));}
+    catch(e){alert(e.message||'Impossible de créer l’article')}finally{save.disabled=false;save.textContent="Créer l'article"}
   };
 }
-
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',ensureManualCreateUI);else ensureManualCreateUI();
 })();"""
 
@@ -1306,7 +1334,31 @@ def api_article_create_manual():
     # d'éviter des Client / Projet différents pour un même N° de dossier.
     client = _as_text(identity.get('client')).strip() or _as_text(data.get('client')).strip()
     projet = _as_text(identity.get('projet')).strip() or _as_text(data.get('projet')).strip()
+    charge_projet = _as_text(identity.get('charge_projet')).strip() or _as_text(data.get('charge_projet')).strip()
     now = datetime.now().isoformat()
+
+    volume_m3, surface_m2 = _article_calculated_metrics(
+        data.get('longueur_cm'), data.get('largeur_cm'), data.get('hauteur_cm')
+    )
+    oeuvre_volume_m3, oeuvre_surface_m2 = _article_calculated_metrics(
+        data.get('oeuvre_longueur_cm'), data.get('oeuvre_largeur_cm'), data.get('oeuvre_hauteur_cm')
+    )
+    article_fields = {
+        'charge_projet': charge_projet,
+        'oeuvre_reference': _as_text(data.get('oeuvre_reference')).strip(),
+        'artiste': _as_text(data.get('artiste')).strip(),
+        'oeuvre_titre': _as_text(data.get('oeuvre_titre')).strip(),
+        'oeuvre_technique': _as_text(data.get('oeuvre_technique')).strip(),
+        'oeuvre_longueur_cm': _as_text(data.get('oeuvre_longueur_cm')).strip(),
+        'oeuvre_largeur_cm': _as_text(data.get('oeuvre_largeur_cm')).strip(),
+        'oeuvre_hauteur_cm': _as_text(data.get('oeuvre_hauteur_cm')).strip(),
+        'oeuvre_volume_m3': oeuvre_volume_m3,
+        'oeuvre_surface_m2': oeuvre_surface_m2,
+        'oeuvre_poids_kg': _as_text(data.get('oeuvre_poids_kg')).strip(),
+        'statut_douanier': _as_text(data.get('statut_douanier')).strip(),
+        'ima_numero': _as_text(data.get('ima_numero')).strip(),
+        'ima_date': _as_text(data.get('ima_date')).strip(),
+    }
 
     payload = {
         'ticket_id': None,
@@ -1324,8 +1376,8 @@ def api_article_create_manual():
         'longueur_cm': _as_text(data.get('longueur_cm')).strip(),
         'largeur_cm': _as_text(data.get('largeur_cm')).strip(),
         'hauteur_cm': _as_text(data.get('hauteur_cm')).strip(),
-        'volume_m3': _as_text(data.get('volume_m3')).strip(),
-        'surface_m2': _as_text(data.get('surface_m2')).strip(),
+        'volume_m3': volume_m3,
+        'surface_m2': surface_m2,
         'poids_kg': _as_text(data.get('poids_kg')).strip(),
         'lieu_stockage': _as_text(data.get('lieu_stockage')).strip(),
         'statut_logistique': _as_text(data.get('statut_logistique')).strip() or 'Créé',
@@ -1335,6 +1387,7 @@ def api_article_create_manual():
             'source': 'creation_manuelle',
             'dossier': dossier,
             'created_at': now,
+            'article_fields': article_fields,
         },
     }
     payload['search_text'] = _article_search_text(payload)
@@ -1527,6 +1580,7 @@ def api_dossier_lookup():
         identity = _article_dossier_identity(dossier)
         client = _as_text(identity.get('client')).strip()
         projet = _as_text(identity.get('projet')).strip()
+        charge_projet = _as_text(identity.get('charge_projet')).strip()
         safe_dossier = urllib.parse.quote(dossier, safe='')
         count_rows = supabase_rest_request(
             'GET', 'articles', f'select=esi_id&dossier=eq.{safe_dossier}&limit=5000'
@@ -1648,13 +1702,14 @@ def _article_reception_history_from_ticket(ticket, article):
 
 
 
-_ARTICLE_EDITABLE_FIELDS = {
+_ARTICLE_DB_EDITABLE_FIELDS = {
     "type_objet", "reference", "description", "dossier", "client", "projet",
     "ref_caisse", "transporteur_ref",
     "longueur_cm", "largeur_cm", "hauteur_cm",
     "volume_m3", "surface_m2", "poids_kg",
     "lieu_stockage", "statut_logistique", "dernier_colis",
 }
+_ARTICLE_EDITABLE_FIELDS = _ARTICLE_DB_EDITABLE_FIELDS | _ARTICLE_EXTRA_FIELDS
 
 
 def _article_has_history(article):
@@ -1672,45 +1727,74 @@ def _article_has_history(article):
 
 
 def _article_dossier_identity(dossier):
-    """Retourne le couple Client / Projet le plus fréquent pour un N° de dossier existant."""
+    """Retourne Client / Projet / Chargé de projet connus pour un N° de dossier."""
     dossier = _as_text(dossier).strip()
     if not dossier:
-        return {"client": "", "projet": ""}
+        return {"client": "", "projet": "", "charge_projet": ""}
 
     safe_dossier = urllib.parse.quote(dossier, safe='')
     rows = supabase_rest_request(
         "GET", "articles",
-        f"select=client,projet&dossier=eq.{safe_dossier}&limit=10000"
+        f"select=client,projet,raw_json&dossier=eq.{safe_dossier}&limit=10000"
     ) or []
 
     counts = {}
+    charge_counts = {}
     for row in rows:
         client = _as_text(row.get("client")).strip()
         projet = _as_text(row.get("projet")).strip()
-        if not client and not projet:
-            continue
-        key = (client, projet)
-        counts[key] = counts.get(key, 0) + 1
+        raw = row.get("raw_json") if isinstance(row.get("raw_json"), dict) else {}
+        extra = raw.get("article_fields") if isinstance(raw.get("article_fields"), dict) else {}
+        charge = _as_text(extra.get("charge_projet") or raw.get("charge_projet") or raw.get("chargeProjet")).strip()
+        if client or projet:
+            key = (client, projet)
+            counts[key] = counts.get(key, 0) + 1
+        if charge:
+            charge_counts[charge] = charge_counts.get(charge, 0) + 1
 
-    if not counts:
-        return {"client": "", "projet": ""}
+    if counts:
+        client, projet = max(counts.items(), key=lambda kv: (kv[1], bool(kv[0][0]), bool(kv[0][1])))[0]
+    else:
+        client, projet = "", ""
+    charge = max(charge_counts.items(), key=lambda kv: kv[1])[0] if charge_counts else ""
 
-    client, projet = max(counts.items(), key=lambda kv: (kv[1], bool(kv[0][0]), bool(kv[0][1])))[0]
-    return {"client": client, "projet": projet}
+    # Complète les informations manquantes depuis les tickets existants du dossier.
+    if not client or not projet or not charge:
+        try:
+            ticket_rows = supabase_rest_request(
+                "GET", "tickets",
+                "select=module,dossier,preteur,expo,objet,charge_projet,raw_json,created_at"
+                f"&dossier=eq.{safe_dossier}&order=created_at.desc&limit=100"
+            ) or []
+            for ticket_row in ticket_rows:
+                values = _dossier_ticket_values(ticket_row)
+                if not client and values.get("client"):
+                    client = values["client"]
+                if not projet and values.get("projet"):
+                    projet = values["projet"]
+                if not charge and values.get("charge_projet"):
+                    charge = values["charge_projet"]
+                if client and projet and charge:
+                    break
+        except Exception as e:
+            print(f"[ARTICLE DOSSIER] Tickets indisponibles pour {dossier}: {e}")
+
+    return {"client": client, "projet": projet, "charge_projet": charge}
 
 
-def _article_sync_dossier_identity(dossier, client=None, projet=None):
-    """Uniformise Client / Projet sur tous les articles portant le même N° de dossier."""
+def _article_sync_dossier_identity(dossier, client=None, projet=None, charge_projet=None):
+    """Uniformise Client / Projet / Chargé de projet sur les articles du même dossier."""
     dossier = _as_text(dossier).strip()
     if not dossier:
-        return {"updated_count": 0, "client": "", "projet": ""}
+        return {"updated_count": 0, "client": "", "projet": "", "charge_projet": ""}
 
     identity = _article_dossier_identity(dossier)
     final_client = _as_text(client).strip() if client is not None else identity.get("client", "")
     final_projet = _as_text(projet).strip() if projet is not None else identity.get("projet", "")
+    final_charge = _as_text(charge_projet).strip() if charge_projet is not None else identity.get("charge_projet", "")
 
-    if not final_client and not final_projet:
-        return {"updated_count": 0, "client": "", "projet": ""}
+    if not final_client and not final_projet and not final_charge:
+        return {"updated_count": 0, "client": "", "projet": "", "charge_projet": ""}
 
     safe_dossier = urllib.parse.quote(dossier, safe='')
     rows = supabase_rest_request(
@@ -1725,6 +1809,16 @@ def _article_sync_dossier_identity(dossier, client=None, projet=None):
             patch["client"] = final_client
         if final_projet and _as_text(row.get("projet")).strip() != final_projet:
             patch["projet"] = final_projet
+
+        raw = row.get("raw_json") if isinstance(row.get("raw_json"), dict) else {}
+        raw = dict(raw or {})
+        extra = raw.get("article_fields") if isinstance(raw.get("article_fields"), dict) else {}
+        extra = dict(extra or {})
+        if final_charge and _as_text(extra.get("charge_projet")).strip() != final_charge:
+            extra["charge_projet"] = final_charge
+            raw["article_fields"] = extra
+            patch["raw_json"] = raw
+
         if not patch:
             continue
 
@@ -1738,7 +1832,12 @@ def _article_sync_dossier_identity(dossier, client=None, projet=None):
         )
         updated += 1
 
-    return {"updated_count": updated, "client": final_client, "projet": final_projet}
+    return {
+        "updated_count": updated,
+        "client": final_client,
+        "projet": final_projet,
+        "charge_projet": final_charge,
+    }
 
 
 def _article_duplicate_key(article):
@@ -1786,16 +1885,14 @@ def api_articles_bulk_update():
     if not isinstance(changes, dict) or not changes:
         return jsonify({'ok': False, 'error': 'Aucune modification demandée'}), 400
 
-    clean_changes = {}
-    for field, value in changes.items():
-        if field not in _ARTICLE_EDITABLE_FIELDS:
-            continue
-        clean_changes[field] = _as_text(value).strip()
-
+    clean_changes = {
+        field: _as_text(value).strip()
+        for field, value in changes.items()
+        if field in _ARTICLE_EDITABLE_FIELDS
+    }
     if not clean_changes:
         return jsonify({'ok': False, 'error': 'Aucun champ modifiable fourni'}), 400
 
-    # Si le dossier existe déjà dans la base, Client et Projet sont repris automatiquement.
     target_dossier = _as_text(clean_changes.get('dossier')).strip() if 'dossier' in clean_changes else ''
     if target_dossier:
         identity = _article_dossier_identity(target_dossier)
@@ -1803,6 +1900,8 @@ def api_articles_bulk_update():
             clean_changes['client'] = identity['client']
         if 'projet' not in clean_changes and identity.get('projet'):
             clean_changes['projet'] = identity['projet']
+        if 'charge_projet' not in clean_changes and identity.get('charge_projet'):
+            clean_changes['charge_projet'] = identity['charge_projet']
 
     updated = []
     errors = []
@@ -1821,7 +1920,42 @@ def api_articles_bulk_update():
                     continue
 
                 current = dict(rows[0])
-                patch = dict(clean_changes)
+                current_public = _article_row_to_public(current)
+                patch = {k: v for k, v in clean_changes.items() if k in _ARTICLE_DB_EDITABLE_FIELDS}
+
+                raw = current.get('raw_json') if isinstance(current.get('raw_json'), dict) else {}
+                raw = dict(raw or {})
+                extra = raw.get('article_fields') if isinstance(raw.get('article_fields'), dict) else {}
+                extra = dict(extra or {})
+                for field, value in clean_changes.items():
+                    if field in _ARTICLE_EXTRA_FIELDS:
+                        extra[field] = value
+
+                # Les volumes et surfaces sont toujours dérivés des dimensions en cm.
+                dims_changed = any(k in clean_changes for k in ('longueur_cm', 'largeur_cm', 'hauteur_cm'))
+                if dims_changed:
+                    l = patch.get('longueur_cm', current.get('longueur_cm'))
+                    w = patch.get('largeur_cm', current.get('largeur_cm'))
+                    h = patch.get('hauteur_cm', current.get('hauteur_cm'))
+                    volume, surface = _article_calculated_metrics(l, w, h)
+                    patch['volume_m3'] = volume
+                    patch['surface_m2'] = surface
+
+                oeuvre_dims_changed = any(k in clean_changes for k in (
+                    'oeuvre_longueur_cm', 'oeuvre_largeur_cm', 'oeuvre_hauteur_cm'
+                ))
+                if oeuvre_dims_changed:
+                    l = extra.get('oeuvre_longueur_cm', current_public.get('oeuvre_longueur_cm'))
+                    w = extra.get('oeuvre_largeur_cm', current_public.get('oeuvre_largeur_cm'))
+                    h = extra.get('oeuvre_hauteur_cm', current_public.get('oeuvre_hauteur_cm'))
+                    volume, surface = _article_calculated_metrics(l, w, h)
+                    extra['oeuvre_volume_m3'] = volume
+                    extra['oeuvre_surface_m2'] = surface
+
+                if any(field in clean_changes for field in _ARTICLE_EXTRA_FIELDS) or oeuvre_dims_changed:
+                    raw['article_fields'] = extra
+                    patch['raw_json'] = raw
+
                 patch['updated_at'] = now
                 merged = dict(current)
                 merged.update(patch)
@@ -1838,16 +1972,16 @@ def api_articles_bulk_update():
             except Exception as e:
                 errors.append({'esi_id': esi_id, 'error': str(e)})
 
-        # Tous les articles d'un même dossier héritent du même Client / Projet.
         dossier_sync = []
         for dossier in sorted(affected_dossiers):
             try:
                 sync_client = clean_changes.get('client') if 'client' in clean_changes else None
                 sync_projet = clean_changes.get('projet') if 'projet' in clean_changes else None
-                result = _article_sync_dossier_identity(dossier, sync_client, sync_projet)
+                sync_charge = clean_changes.get('charge_projet') if 'charge_projet' in clean_changes else None
+                result = _article_sync_dossier_identity(dossier, sync_client, sync_projet, sync_charge)
                 dossier_sync.append({'dossier': dossier, **result})
             except Exception as e:
-                errors.append({'dossier': dossier, 'error': f'Synchronisation Client/Projet : {e}'})
+                errors.append({'dossier': dossier, 'error': f'Synchronisation identité dossier : {e}'})
 
     return jsonify({
         'ok': not errors,
@@ -2287,6 +2421,19 @@ def article_public_page(esi_id):
     poids = _as_text(article.get('poids_kg')).strip()
     poids = (poids + ' kg') if poids else '-'
 
+    oeuvre_dims = ' × '.join(
+        _as_text(article.get(k)).strip()
+        for k in ('oeuvre_longueur_cm', 'oeuvre_largeur_cm', 'oeuvre_hauteur_cm')
+        if _as_text(article.get(k)).strip()
+    )
+    oeuvre_dims = (oeuvre_dims + ' cm') if oeuvre_dims else '-'
+    oeuvre_poids = _as_text(article.get('oeuvre_poids_kg')).strip()
+    oeuvre_poids = (oeuvre_poids + ' kg') if oeuvre_poids else '-'
+    oeuvre_volume = _as_text(article.get('oeuvre_volume_m3')).strip()
+    oeuvre_volume = (oeuvre_volume + ' m³') if oeuvre_volume else '-'
+    oeuvre_surface = _as_text(article.get('oeuvre_surface_m2')).strip()
+    oeuvre_surface = (oeuvre_surface + ' m²') if oeuvre_surface else '-'
+
     photo_html = '<div class="no-photo">Aucune photo enregistrée</div>'
     if _as_text(raw.get('photo_storage_path')).strip():
         photo_version = _as_text(raw.get('photo_updated_at') or article.get('updated_at')).strip()
@@ -2379,6 +2526,7 @@ h1{{font-size:30px;line-height:1.05;margin:16px 0 5px;overflow-wrap:anywhere}}
       <div class="field"><b>N° dossier</b><div>{esc(article.get('dossier'))}</div></div>
       <div class="field"><b>Référence / inventaire</b><div>{esc(article.get('reference'))}</div></div>
       <div class="field"><b>Client</b><div>{esc(article.get('client'))}</div></div>
+      <div class="field"><b>Chargé de projet</b><div>{esc(article.get('charge_projet'))}</div></div>
       <div class="field wide"><b>Projet / exposition</b><div>{esc(article.get('projet'))}</div></div>
       <div class="field wide"><b>Description / désignation</b><div>{esc(article.get('description'))}</div></div>
       <div class="field"><b>Dimensions</b><div>{esc(dims)}</div></div>
@@ -2390,6 +2538,23 @@ h1{{font-size:30px;line-height:1.05;margin:16px 0 5px;overflow-wrap:anywhere}}
     </section>
     <aside class="photo">{photo_html}</aside>
   </div>
+
+  <section class="section">
+    <div class="section-title">Informations de l’œuvre</div>
+    <div class="grid">
+      <div class="field"><b>N° réf œuvre</b><div>{esc(article.get('oeuvre_reference'))}</div></div>
+      <div class="field"><b>Nom de l’artiste</b><div>{esc(article.get('artiste'))}</div></div>
+      <div class="field"><b>Titre de l’œuvre</b><div>{esc(article.get('oeuvre_titre'))}</div></div>
+      <div class="field"><b>Technique de l’œuvre</b><div>{esc(article.get('oeuvre_technique'))}</div></div>
+      <div class="field"><b>Dimensions de l’œuvre</b><div>{esc(oeuvre_dims)}</div></div>
+      <div class="field"><b>Poids de l’œuvre</b><div>{esc(oeuvre_poids)}</div></div>
+      <div class="field"><b>Volume</b><div>{esc(oeuvre_volume)}</div></div>
+      <div class="field"><b>Surface au sol</b><div>{esc(oeuvre_surface)}</div></div>
+      <div class="field"><b>Statut douanier</b><div>{esc(article.get('statut_douanier'))}</div></div>
+      <div class="field"><b>N° IMA</b><div>{esc(article.get('ima_numero'))}</div></div>
+      <div class="field"><b>Date de l’IMA</b><div>{esc(article.get('ima_date'))}</div></div>
+    </div>
+  </section>
 
   <section class="section">
     <div class="section-title">Historique des réceptions</div>
@@ -2619,6 +2784,9 @@ def api_articles_import_excel():
                         'excel_row': row_num,
                         'quantity_source': qty,
                         'unit_index': unit_index,
+                        'article_fields': {
+                            'charge_projet': _as_text(dossier_identity.get('charge_projet')).strip(),
+                        },
                     },
                 }
                 payload['search_text'] = _article_search_text(payload)
