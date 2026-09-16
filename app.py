@@ -762,7 +762,7 @@ def _article_payload_from_item(ticket, item, source_module=None, source_index=No
 
 
 _ARTICLE_EXTRA_FIELDS = {
-    "charge_projet", "type_colis",
+    "charge_projet", "type_colis", "numero_colis", "colis_esi", "articles_lies",
     "parent_esi", "partie_label", "partie_index", "partie_total", "article_en_plusieurs_parties",
     "oeuvre_reference", "artiste", "oeuvre_titre", "oeuvre_technique",
     "oeuvre_longueur_cm", "oeuvre_largeur_cm", "oeuvre_hauteur_cm",
@@ -828,6 +828,174 @@ def _create_article_record(payload):
     return _article_row_to_public(rows[0])
 
 
+def _colis_member_summaries(selected_items, colis_by_esi):
+    """Construit les liens Colis -> articles a partir de la repartition validee."""
+    summaries = {}
+    for item in selected_items or []:
+        part_map = item.get('partie_par_esi') if isinstance(item.get('partie_par_esi'), dict) else {}
+        parent_map = item.get('parent_esi_par_esi') if isinstance(item.get('parent_esi_par_esi'), dict) else {}
+        for esi_id in item.get('esi_ids') or []:
+            esi_id = _as_text(esi_id).strip()
+            colis_ref = _as_text((colis_by_esi or {}).get(esi_id)).strip()
+            if not esi_id or not colis_ref:
+                continue
+            summaries.setdefault(colis_ref, []).append({
+                'esi_id': esi_id,
+                'reference': _as_text(item.get('reference')).strip(),
+                'description': _as_text(item.get('designation') or item.get('description')).strip(),
+                'partie_label': _as_text(part_map.get(esi_id)).strip(),
+                'parent_esi': _as_text(parent_map.get(esi_id)).strip(),
+            })
+    return summaries
+
+
+def _find_colis_record(colis_ref, dossier=''):
+    """Retrouve la ligne COLIS (stockee historiquement comme CONTENANT) dans la base Articles."""
+    colis_ref = _as_text(colis_ref).strip()
+    dossier = _as_text(dossier).strip()
+    if not colis_ref:
+        return None
+    query = (
+        'select=*'
+        '&type_objet=eq.CONTENANT'
+        '&reference=eq.' + urllib.parse.quote(colis_ref, safe='-_')
+    )
+    if dossier:
+        query += '&dossier=eq.' + urllib.parse.quote(dossier, safe='')
+    query += '&order=article_no.desc&limit=1'
+    rows = supabase_rest_request('GET', 'articles', query) or []
+    return dict(rows[0]) if rows else None
+
+
+def _ensure_colis_article_records(ticket_id, numero_dossier, colis_refs, colis_types, colis_by_esi,
+                                  selected_items, client='', projet='', charge_projet='',
+                                  lieu_stockage='', reception_ref=''):
+    """
+    Cree/met a jour une ligne COLIS dans la table Articles pour chaque colis physique.
+
+    Compatibilite schema : la valeur technique type_objet reste CONTENANT pour ne pas
+    imposer de migration SQL, mais l'interface l'affiche partout comme COLIS.
+    Chaque ligne colis conserve la liste des N ESI contenus et chaque article recoit
+    en retour le N ESI de son colis via article_fields.colis_esi.
+    """
+    numero_dossier = _as_text(numero_dossier).strip()
+    now = datetime.now().isoformat()
+    members_by_colis = _colis_member_summaries(selected_items, colis_by_esi)
+    colis_esi_by_ref = {}
+    records = []
+
+    for idx, colis_ref in enumerate(colis_refs or [], start=1):
+        colis_ref = _as_text(colis_ref).strip()
+        if not colis_ref:
+            continue
+        colis_type = _normalise_colis_type((colis_types or {}).get(colis_ref))
+        members = members_by_colis.get(colis_ref, [])
+        member_ids = [_as_text(x.get('esi_id')).strip() for x in members if _as_text(x.get('esi_id')).strip()]
+        description = f"{colis_type or 'Colis'} - {len(member_ids)} article{'s' if len(member_ids) != 1 else ''}"
+
+        existing = _find_colis_record(colis_ref, numero_dossier)
+        if existing:
+            raw = existing.get('raw_json') if isinstance(existing.get('raw_json'), dict) else {}
+            raw = dict(raw or {})
+            extra = raw.get('article_fields') if isinstance(raw.get('article_fields'), dict) else {}
+            extra = dict(extra or {})
+            extra.update({
+                'charge_projet': _as_text(charge_projet).strip(),
+                'type_colis': colis_type,
+                'numero_colis': colis_ref,
+                'articles_lies': ', '.join(member_ids),
+            })
+            raw.update({
+                'source': 'colis_reception',
+                'ticket_id': _as_text(ticket_id).strip(),
+                'reception_ref': _as_text(reception_ref).strip(),
+                'colis_ref': colis_ref,
+                'colis_type': colis_type,
+                'article_esi_ids': member_ids,
+                'articles_lies': members,
+                'updated_at': now,
+                'article_fields': extra,
+            })
+            patch = {
+                'ticket_id': _as_text(ticket_id).strip() or existing.get('ticket_id'),
+                'source_module': 'Colis réception',
+                'unit_index': idx,
+                'type_objet': 'CONTENANT',
+                'reference': colis_ref,
+                'description': description,
+                'dossier': numero_dossier,
+                'client': _as_text(client).strip(),
+                'projet': _as_text(projet).strip(),
+                'transporteur_ref': _as_text(reception_ref).strip(),
+                'lieu_stockage': _as_text(lieu_stockage).strip(),
+                'statut_logistique': 'Réceptionné',
+                'derniere_reception_ref': _as_text(reception_ref).strip(),
+                # Un colis ne doit pas se contenir lui-meme : dernier_colis reste vide.
+                'dernier_colis': '',
+                'updated_at': now,
+                'raw_json': raw,
+            }
+            merged = dict(existing)
+            merged.update(patch)
+            patch['search_text'] = _article_search_text(merged)
+            safe_esi = urllib.parse.quote(_as_text(existing.get('esi_id')).strip(), safe='-')
+            rows = supabase_rest_request(
+                'PATCH', 'articles', f'esi_id=eq.{safe_esi}', patch, prefer='return=representation'
+            ) or []
+            record = _article_row_to_public(rows[0] if rows else merged)
+        else:
+            article_fields = {
+                'charge_projet': _as_text(charge_projet).strip(),
+                'type_colis': colis_type,
+                'numero_colis': colis_ref,
+                'articles_lies': ', '.join(member_ids),
+            }
+            payload = {
+                'ticket_id': _as_text(ticket_id).strip(),
+                'source_module': 'Colis réception',
+                'source_index': None,
+                'unit_index': idx,
+                'type_objet': 'CONTENANT',
+                'reference': colis_ref,
+                'description': description,
+                'dossier': numero_dossier,
+                'client': _as_text(client).strip(),
+                'projet': _as_text(projet).strip(),
+                'ref_caisse': '',
+                'transporteur_ref': _as_text(reception_ref).strip(),
+                'longueur_cm': '',
+                'largeur_cm': '',
+                'hauteur_cm': '',
+                'volume_m3': '',
+                'surface_m2': '',
+                'poids_kg': '',
+                'lieu_stockage': _as_text(lieu_stockage).strip(),
+                'statut_logistique': 'Réceptionné',
+                'dernier_colis': '',
+                'derniere_reception_ref': _as_text(reception_ref).strip(),
+                'created_at': now,
+                'updated_at': now,
+                'raw_json': {
+                    'source': 'colis_reception',
+                    'ticket_id': _as_text(ticket_id).strip(),
+                    'reception_ref': _as_text(reception_ref).strip(),
+                    'colis_ref': colis_ref,
+                    'colis_type': colis_type,
+                    'article_esi_ids': member_ids,
+                    'articles_lies': members,
+                    'created_at': now,
+                    'article_fields': article_fields,
+                },
+            }
+            payload['search_text'] = _article_search_text(payload)
+            record = _create_article_record(payload)
+
+        esi_colis = _as_text(record.get('esi_id')).strip()
+        if esi_colis:
+            colis_esi_by_ref[colis_ref] = esi_colis
+        records.append(record)
+
+    return records, colis_esi_by_ref
 
 
 def _article_part_meta(row):
@@ -1518,10 +1686,11 @@ def _ensure_articles_for_ticket(ticket, save=True):
 
 def _update_article_logistics(esi_ids, lieu_stockage="", statut_logistique="Réceptionné",
                               colis=None, colis_by_esi=None, colis_type_by_esi=None,
-                              reception_ref="", receptionne_par=""):
+                              colis_esi_by_ref=None, reception_ref="", receptionne_par=""):
     """Met à jour la fiche globale des articles après une réception, avec colis et type précis par ESI."""
     colis_by_esi = dict(colis_by_esi or {})
     colis_type_by_esi = dict(colis_type_by_esi or {})
+    colis_esi_by_ref = dict(colis_esi_by_ref or {})
     fallback = list(colis or [])
     parent_ids_to_sync = set()
     for esi_id in esi_ids or []:
@@ -1551,6 +1720,8 @@ def _update_article_logistics(esi_ids, lieu_stockage="", statut_logistique="Réc
         extra = raw.get("article_fields") if isinstance(raw.get("article_fields"), dict) else {}
         extra = dict(extra or {})
         extra["type_colis"] = article_type_colis
+        extra["numero_colis"] = article_colis or (article_colis_list[0] if len(article_colis_list) == 1 else "")
+        extra["colis_esi"] = _as_text(colis_esi_by_ref.get(extra["numero_colis"])).strip()
         raw["article_fields"] = extra
         patch = {"lieu_stockage": _as_text(lieu_stockage).strip(),
                  "statut_logistique": _as_text(statut_logistique).strip(),
@@ -1578,6 +1749,40 @@ def _article_ids_for_received_units(item, previous_qty, qty_received):
 ARTICLES_MANUAL_CREATE_JS = r"""(function(){
 'use strict';
 
+// Affichage uniquement : l'ancien libelle CONTENANT devient COLIS,
+// sans modifier les valeurs techniques historiques utilisees par la base.
+function replaceContenantWording(root){
+  const scope=root&&root.nodeType===1?root:document.body;
+  if(!scope)return;
+  const walker=document.createTreeWalker(scope,NodeFilter.SHOW_TEXT);
+  const nodes=[];let n;
+  while((n=walker.nextNode())){
+    const tag=n.parentElement&&n.parentElement.tagName;
+    if(tag&&['SCRIPT','STYLE','TEXTAREA'].includes(tag))continue;
+    if(/contenant/i.test(n.nodeValue||''))nodes.push(n);
+  }
+  nodes.forEach(node=>{
+    node.nodeValue=(node.nodeValue||'')
+      .replace(/CONTENANTS?/g,'COLIS')
+      .replace(/Contenants?/g,'Colis')
+      .replace(/contenants?/g,'colis');
+  });
+}
+function installColisWording(){
+  replaceContenantWording(document.body);
+  const obs=new MutationObserver(muts=>{
+    muts.forEach(m=>m.addedNodes.forEach(node=>{
+      if(node.nodeType===1)replaceContenantWording(node);
+      else if(node.nodeType===3&&/contenant/i.test(node.nodeValue||'')){
+        const t=node.nodeValue||'';
+        node.nodeValue=t.replace(/CONTENANTS?/g,'COLIS').replace(/Contenants?/g,'Colis').replace(/contenants?/g,'colis');
+      }
+    }));
+  });
+  obs.observe(document.body,{childList:true,subtree:true});
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',installColisWording);else installColisWording();
+
 function ensureManualCreateUI(){
   const actions=document.querySelector('.actions');
   if(!actions || document.getElementById('manualArticleCreateBtn')) return;
@@ -1602,7 +1807,7 @@ function ensureManualCreateUI(){
     <div class="modal-body">
       <div class="section-title">Informations existantes</div>
       <div class="edit-grid" id="manualArticleGrid">
-        <div class="edit-field"><label>Type</label><select id="manualType"><option value="PRODUIT">PRODUIT</option><option value="CONTENANT">CONTENANT</option></select></div>
+        <div class="edit-field"><label>Type</label><select id="manualType"><option value="PRODUIT">PRODUIT</option><option value="CONTENANT">COLIS</option></select></div>
         <div class="edit-field"><label>N° dossier *</label><input id="manualDossier" autocomplete="off" placeholder="Ex. 101129"></div>
         <div class="edit-field"><label>Client</label><input id="manualClient" autocomplete="off"></div>
         <div class="edit-field"><label>Chargé de projet</label><input id="manualChargeProjet" autocomplete="off"></div>
@@ -1712,6 +1917,10 @@ def api_articles():
     type_objet = _as_text(request.args.get("type_objet")).strip().upper()
     limit = min(max(int(request.args.get("limit") or 100), 1), 500)
 
+    # Compatibilite : l'ancien type DB CONTENANT est desormais presente comme COLIS.
+    if type_objet == "COLIS":
+        type_objet = "CONTENANT"
+
     query = "select=*&order=article_no.desc&limit=" + str(limit)
 
     if type_objet in ("PRODUIT", "CONTENANT"):
@@ -1727,12 +1936,14 @@ def api_articles():
 
 @app.route('/api/articles/manual', methods=['POST'])
 def api_article_create_manual():
-    """Crée un article ou un contenant directement depuis la base Articles."""
+    """Crée un article ou un colis directement depuis la base Articles. Le stockage DB historique reste CONTENANT."""
     data = request.get_json(silent=True) or {}
 
     type_objet = _as_text(data.get('type_objet') or 'PRODUIT').strip().upper()
+    if type_objet == 'COLIS':
+        type_objet = 'CONTENANT'
     if type_objet not in ('PRODUIT', 'CONTENANT'):
-        return jsonify({'ok': False, 'error': 'Type invalide : PRODUIT ou CONTENANT attendu'}), 400
+        return jsonify({'ok': False, 'error': 'Type invalide : PRODUIT ou COLIS attendu'}), 400
 
     dossier = _as_text(data.get('dossier')).strip()
     reference = _as_text(data.get('reference')).strip()
@@ -1832,7 +2043,7 @@ def api_articles_link_search():
     l'article : N ESI, dossier, reference, description, client/preteur, projet,
     dimensions, poids, stockage, caisse/colis, statut, raw_json, etc.
 
-    Les CONTENANTS restent exclus de la liaison a une fiche de caisse.
+    Les COLIS restent exclus de la liaison a une fiche de caisse.
     """
     q = _as_text(request.args.get('q')).strip()
     if not q:
@@ -2322,6 +2533,8 @@ def api_articles_bulk_update():
         for field, value in changes.items()
         if field in _ARTICLE_EDITABLE_FIELDS
     }
+    if _as_text(clean_changes.get('type_objet')).strip().upper() == 'COLIS':
+        clean_changes['type_objet'] = 'CONTENANT'
     if not clean_changes:
         return jsonify({'ok': False, 'error': 'Aucun champ modifiable fourni'}), 400
 
@@ -7866,6 +8079,9 @@ def _sync_articles_after_reception_cancel(ticket, cancelled, is_avis):
                 raw['colis_actuel'] = colis
                 raw['type_colis_actuel'] = type_colis
                 extra['type_colis'] = type_colis
+                extra['numero_colis'] = colis
+                colis_record = _find_colis_record(colis, article.get('dossier')) if colis else None
+                extra['colis_esi'] = _as_text((colis_record or {}).get('esi_id')).strip()
                 raw['article_fields'] = extra
                 patch = {
                     'lieu_stockage': _as_text(rec.get('lieu_stockage')).strip(),
@@ -7879,6 +8095,8 @@ def _sync_articles_after_reception_cancel(ticket, cancelled, is_avis):
                 raw['colis_actuel'] = ''
                 raw['type_colis_actuel'] = ''
                 extra['type_colis'] = ''
+                extra['numero_colis'] = ''
+                extra['colis_esi'] = ''
                 raw['article_fields'] = extra
                 patch = {
                     'lieu_stockage': '',
@@ -7900,6 +8118,48 @@ def _sync_articles_after_reception_cancel(ticket, cancelled, is_avis):
             _sync_parent_parts_logistics(parent_esi)
         except Exception as e:
             print(f'[ANNULATION RECEPTION] Synchronisation article principal {parent_esi}: {e}')
+
+
+def _mark_colis_records_cancelled(cancelled):
+    """Conserve la trace du colis mais retire ses liens actifs si la réception est annulée."""
+    cancelled_ref = _as_text((cancelled or {}).get('reference')).strip()
+    dossier = _as_text((cancelled or {}).get('numero_dossier')).strip()
+    now = datetime.now().isoformat()
+    for colis_ref in (cancelled or {}).get('colis') or []:
+        colis_ref = _as_text(colis_ref).strip()
+        if not colis_ref:
+            continue
+        try:
+            row = _find_colis_record(colis_ref, dossier)
+            if not row:
+                continue
+            raw = row.get('raw_json') if isinstance(row.get('raw_json'), dict) else {}
+            raw = dict(raw or {})
+            # Ne désactive que la fiche issue de la réception annulée.
+            if cancelled_ref and _as_text(raw.get('reception_ref')).strip() not in ('', cancelled_ref):
+                continue
+            extra = raw.get('article_fields') if isinstance(raw.get('article_fields'), dict) else {}
+            extra = dict(extra or {})
+            extra['articles_lies'] = ''
+            raw['article_fields'] = extra
+            raw['article_esi_ids'] = []
+            raw['articles_lies'] = []
+            raw['reception_annulee'] = cancelled_ref
+            raw['annulee_le'] = (cancelled or {}).get('annulee_le') or now
+            patch = {
+                'statut_logistique': 'Réception annulée',
+                'lieu_stockage': '',
+                'derniere_reception_ref': '',
+                'updated_at': now,
+                'raw_json': raw,
+            }
+            merged = dict(row)
+            merged.update(patch)
+            patch['search_text'] = _article_search_text(merged)
+            safe_esi = urllib.parse.quote(_as_text(row.get('esi_id')).strip(), safe='-')
+            supabase_rest_request('PATCH', 'articles', f'esi_id=eq.{safe_esi}', patch, prefer='return=minimal')
+        except Exception as e:
+            print(f'[ANNULATION RECEPTION] Colis {colis_ref}: {e}')
 
 
 def _cancel_specific_reception(ticket, reference):
@@ -7969,6 +8229,7 @@ def _cancel_specific_reception(ticket, reference):
 
     # La base Articles est synchronisée seulement après validation de la sauvegarde du ticket.
     _sync_articles_after_reception_cancel(checked, cancelled, is_avis)
+    _mark_colis_records_cancelled(cancelled)
     return checked
 
 
@@ -8255,6 +8516,7 @@ def api_reception_avis_arrivee(ticket_id):
             return jsonify({'ok': False, 'error': str(e)}), 400
         colis_type_by_esi = {esi: colis_types.get(ref, '') for esi, ref in colis_by_esi.items()}
         _apply_colis_to_selected_items(selected, colis_by_esi, reception_ref, lieu_stockage, colis_type_by_esi)
+
         for label in article_labels:
             label['colis'] = colis_by_esi.get(label.get('esi_id'), '')
             label['type_colis'] = colis_type_by_esi.get(label.get('esi_id'), '')
@@ -8305,6 +8567,25 @@ def api_reception_avis_arrivee(ticket_id):
         except Exception as e:
             print(f"[RAR] Erreur upload étiquettes: {e}")
             return jsonify({'ok': False, 'error': f'Impossible d’enregistrer les PDF d’étiquettes : {e}'}), 500
+
+        # Une fois les documents générés, crée les fiches COLIS dans la base Articles.
+        try:
+            colis_records, colis_esi_by_ref = _ensure_colis_article_records(
+                ticket_id=ticket_id,
+                numero_dossier=numero_dossier,
+                colis_refs=colis_refs,
+                colis_types=colis_types,
+                colis_by_esi=colis_by_esi,
+                selected_items=selected,
+                client=avis.get('client') or ticket.get('dossier') or '',
+                projet=avis.get('projet') or ticket.get('expo') or ticket.get('objet') or '',
+                charge_projet=charge_projet,
+                lieu_stockage=lieu_stockage,
+                reception_ref=reception_ref,
+            )
+        except Exception as e:
+            print(f"[COLIS ARTICLES] Creation impossible pour {reception_ref}: {e}")
+            return jsonify({'ok': False, 'error': f'Impossible de créer les colis dans la base Articles : {e}'}), 500
 
         avis['items'] = items
         ticket['avisArrivee'] = avis
@@ -8357,6 +8638,7 @@ def api_reception_avis_arrivee(ticket_id):
                 statut_logistique="Réceptionné",
                 colis_by_esi=colis_by_esi,
                 colis_type_by_esi=colis_type_by_esi,
+                colis_esi_by_ref=colis_esi_by_ref,
                 reception_ref=reception_ref,
                 receptionne_par=receptionne_par,
             )
@@ -8370,6 +8652,7 @@ def api_reception_avis_arrivee(ticket_id):
         'reception': reception,
         'colis': colis_refs,
         'colis_types': colis_types,
+        'colis_esi': colis_esi_by_ref,
         'bon_reception_filename': reception_pdf_filename,
         'etiquettes_articles_filename': article_labels_filename,
         'etiquettes_colis_filename': colis_labels_filename,
@@ -8519,9 +8802,11 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
         right_block = [clean(enl.get('adresse_destination')), '-', '-', clean(enl.get('numero_bon') or ticket.get('ref'))]
 
     # Une ligne du bon = un article physique = un N° ESI.
-    # Les références ayant une quantité > 1 sont donc éclatées en plusieurs lignes.
+    # Le bon est ensuite regroupe visuellement par colis pour eviter de repeter
+    # le meme N° de colis sur chaque ligne.
     source_rows = bon.get('items') or []
     unit_rows = []
+    bon_colis_types = bon.get('colis_types') if isinstance(bon.get('colis_types'), dict) else {}
     for source_row in source_rows:
         row = dict(source_row or {})
         esi_ids = [str(v).strip() for v in (row.get('esi_ids') or []) if str(v).strip()]
@@ -8536,20 +8821,23 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
                 designation = _as_text(row.get('designation') or row.get('description')).strip()
                 if part_label:
                     designation = (designation + f" - Partie {part_label}").strip(" -")
+                colis_ref = _as_text(colis_par_esi.get(esi_id)).strip()
+                colis_type = _normalise_colis_type(type_colis_par_esi.get(esi_id) or bon_colis_types.get(colis_ref))
                 unit_rows.append({
                     'esi_id': esi_id,
                     'reference': row.get('reference'),
                     'designation': designation,
                     'partie': part_label,
                     'parent_esi': _as_text(parent_esi_par_esi.get(esi_id)).strip(),
-                    'colis': _colis_display(colis_par_esi.get(esi_id), type_colis_par_esi.get(esi_id)),
+                    'colis_ref': colis_ref,
+                    'colis_type': colis_type,
                     'dimensions': row.get('dimensions'),
                     'quantite': '1',
                     'lieu_stockage': row.get('lieu_stockage') or bon.get('lieu_stockage'),
                 })
             continue
 
-        # Compatibilité avec d'anciens bons qui n'auraient pas encore de N° ESI.
+        # Compatibilite avec d'anciens bons qui n'auraient pas encore de N° ESI.
         try:
             qty = max(1, int(float(str(row.get('quantite') or 1).replace(',', '.'))))
         except Exception:
@@ -8558,19 +8846,82 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
         if not isinstance(legacy_colis, list):
             legacy_colis = [legacy_colis] if legacy_colis else []
         for unit_index in range(qty):
+            legacy_ref = _as_text(legacy_colis[unit_index] if unit_index < len(legacy_colis) else '').strip()
             unit_rows.append({
                 'esi_id': '',
                 'reference': row.get('reference'),
                 'designation': row.get('designation') or row.get('description'),
-                'colis': legacy_colis[unit_index] if unit_index < len(legacy_colis) else '',
+                'colis_ref': legacy_ref,
+                'colis_type': _normalise_colis_type(bon_colis_types.get(legacy_ref)),
                 'dimensions': row.get('dimensions'),
                 'quantite': '1',
                 'lieu_stockage': row.get('lieu_stockage') or bon.get('lieu_stockage'),
             })
 
-    # Huit articles maximum par page pour conserver la présentation actuelle.
-    max_rows = 8
-    pages_rows = [unit_rows[i:i + max_rows] for i in range(0, len(unit_rows), max_rows)] or [[]]
+    # Regroupement des articles par colis dans l'ordre des colis du bon.
+    group_map = {}
+    for row in unit_rows:
+        ref = _as_text(row.get('colis_ref')).strip() or 'SANS-COLIS'
+        if ref not in group_map:
+            group_map[ref] = {
+                'colis_ref': ref,
+                'colis_type': _normalise_colis_type(row.get('colis_type') or bon_colis_types.get(ref)),
+                'rows': [],
+            }
+        group_map[ref]['rows'].append(row)
+
+    order = {_as_text(ref).strip(): i for i, ref in enumerate(bon.get('colis') or [])}
+    groups = sorted(
+        group_map.values(),
+        key=lambda g: (order.get(g['colis_ref'], 10**6), g['colis_ref'])
+    )
+
+    # Pagination par hauteur : un titre de colis + ses articles. On evite
+    # qu'un titre de colis reste seul en bas de page ; un gros colis peut
+    # continuer sur la page suivante avec la mention "suite".
+    BODY_CAPACITY = 235
+    COLIS_HEADER_H = 21
+    ARTICLE_ROW_H = 27
+    pages_rows = []
+    current_page = []
+    used_h = 0
+
+    def flush_page():
+        nonlocal current_page, used_h
+        if current_page:
+            pages_rows.append(current_page)
+        current_page = []
+        used_h = 0
+
+    for group in groups:
+        remaining = list(group.get('rows') or [])
+        first_chunk = True
+        while remaining:
+            min_needed = COLIS_HEADER_H + ARTICLE_ROW_H
+            if current_page and used_h + min_needed > BODY_CAPACITY:
+                flush_page()
+
+            current_page.append({
+                'kind': 'colis',
+                'colis_ref': group.get('colis_ref'),
+                'colis_type': group.get('colis_type'),
+                'count': len(group.get('rows') or []),
+                'suite': not first_chunk,
+            })
+            used_h += COLIS_HEADER_H
+            first_chunk = False
+
+            while remaining and used_h + ARTICLE_ROW_H <= BODY_CAPACITY:
+                current_page.append({'kind': 'article', 'row': remaining.pop(0)})
+                used_h += ARTICLE_ROW_H
+
+            if remaining:
+                flush_page()
+
+    flush_page()
+    if not pages_rows:
+        pages_rows = [[]]
+
     page_count = len(pages_rows)
     total_received = len(unit_rows)
 
@@ -8661,43 +9012,61 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
             rect(305, y-20*i, 62, 20, fill=PALE, stroke=LINE); txt(310, y+7-20*i, label, 6.2, True)
             rect(367, y-20*i, 198, 20, stroke=LINE); fit_txt(372, y+7-20*i, right_block[i], 188, 6.5, False, 1, 8)
 
-        # Tableau marchandises : une ligne = un N° ESI.
+        # Tableau marchandises groupe par colis.
         table_top = 517
-        widths = [58, 68, 145, 82, 64, 48, 70]
-        headers = ['N° ESI','Ref. item','Description de la marchandise','N° COLIS','Dimensions','Qte recue','Stockage']
+        widths = [60, 75, 180, 70, 50, 100]
+        headers = ['N° ESI','Ref. item','Description de la marchandise','Dimensions','Qte recue','Stockage']
         x = 30
         for w, header in zip(widths, headers):
-            rect(x, table_top-38, w, 38, fill=NAVY, stroke=WHITE, lw=0.4)
-            fit_txt(x+4, table_top-17, header, w-8, 6.4, True, 2, 8, WHITE)
+            rect(x, table_top-34, w, 34, fill=NAVY, stroke=WHITE, lw=0.4)
+            fit_txt(x+4, table_top-15, header, w-8, 6.4, True, 2, 8, WHITE)
             x += w
 
-        row_h = 29
-        for ridx in range(max_rows):
-            y0 = table_top - 38 - (ridx+1)*row_h
-            x = 30
-            fill = (0.99, 0.985, 0.955)
-            row = page_rows[ridx] if ridx < len(page_rows) else {}
+        y_cursor = table_top - 34
+        package_fill = (0.90, 0.96, 0.99)
+        article_fill = (0.99, 0.985, 0.955)
+
+        for entry in page_rows:
+            if entry.get('kind') == 'colis':
+                h = 21
+                y_cursor -= h
+                rect(30, y_cursor, 535, h, fill=package_fill, stroke=CYAN, lw=0.8)
+                ref = clean(entry.get('colis_ref'), 'SANS COLIS')
+                typ = _normalise_colis_type(entry.get('colis_type'))
+                label = f"COLIS {ref}"
+                if typ:
+                    label += f" - {typ.upper()}"
+                count = int(entry.get('count') or 0)
+                label += f" - {count} article{'s' if count != 1 else ''}"
+                if entry.get('suite'):
+                    label += " - SUITE"
+                fit_txt(38, y_cursor+7, label, 519, 7.2, True, 1, 8, NAVY)
+                continue
+
+            row = entry.get('row') if isinstance(entry.get('row'), dict) else {}
+            h = 27
+            y_cursor -= h
             vals = [
                 row.get('esi_id'),
                 row.get('reference'),
                 row.get('designation'),
-                row.get('colis'),
                 row.get('dimensions'),
                 row.get('quantite') if row else '',
                 row.get('lieu_stockage') if row else '',
             ]
+            x = 30
             for w, value in zip(widths, vals):
-                rect(x, y0, w, row_h, fill=fill, stroke=LINE)
-                fit_txt(x+4, y0+18, value, w-8, 6.3, False, 2, 8)
+                rect(x, y_cursor, w, h, fill=article_fill, stroke=LINE)
+                fit_txt(x+4, y_cursor+17, value, w-8, 6.3, False, 2, 8)
                 x += w
 
-        table_bottom = table_top - 38 - max_rows*row_h
+        table_bottom = y_cursor
         rect(30, table_bottom-22, 535, 22, fill=PALE, stroke=LINE)
         txt(338, table_bottom-14, 'TOTAL ARTICLES RECEPTIONNES', 7, True)
         txt(515, table_bottom-14, str(total_received), 8, True)
 
         # Commentaire et signature sont répétés afin que chaque page reste identifiable.
-        comment_y = table_bottom - 74
+        comment_y = 158
         rect(30, comment_y, 535, 46, stroke=LINE)
         rect(30, comment_y+30, 535, 16, fill=PALE, stroke=LINE)
         txt(38, comment_y+35, 'Commentaire :', 7.2, True)
@@ -9546,6 +9915,7 @@ def api_create_bon_livraison(ticket_id):
             return jsonify({'ok': False, 'error': str(e)}), 400
         colis_type_by_esi = {esi: colis_types.get(ref, '') for esi, ref in colis_by_esi.items()}
         _apply_colis_to_selected_items(selected, colis_by_esi, blr_ref, lieu_stockage, colis_type_by_esi)
+
         for label in article_labels:
             label['colis'] = colis_by_esi.get(label.get('esi_id'), '')
             label['type_colis'] = colis_type_by_esi.get(label.get('esi_id'), '')
@@ -9602,6 +9972,25 @@ def api_create_bon_livraison(ticket_id):
             print(f"[BLR] Erreur upload PDF: {e}")
             return jsonify({'ok': False, 'error': f'Impossible d’enregistrer les PDF : {e}'}), 500
 
+        # Une fois les documents générés, crée les fiches COLIS dans la base Articles.
+        try:
+            colis_records, colis_esi_by_ref = _ensure_colis_article_records(
+                ticket_id=ticket_id,
+                numero_dossier=numero_dossier,
+                colis_refs=colis_refs,
+                colis_types=colis_types,
+                colis_by_esi=colis_by_esi,
+                selected_items=selected,
+                client=enl.get('client') or ticket.get('dossier') or '',
+                projet=enl.get('exhibition') or ticket.get('expo') or ticket.get('objet') or '',
+                charge_projet=charge_projet,
+                lieu_stockage=lieu_stockage,
+                reception_ref=blr_ref,
+            )
+        except Exception as e:
+            print(f"[COLIS ARTICLES] Creation impossible pour {blr_ref}: {e}")
+            return jsonify({'ok': False, 'error': f'Impossible de créer les colis dans la base Articles : {e}'}), 500
+
         bon['filename'] = filename
         bon['storage_path'] = storage_path
         bon['etiquettes_articles_filename'] = article_labels_filename
@@ -9637,6 +10026,7 @@ def api_create_bon_livraison(ticket_id):
                 statut_logistique="Réceptionné",
                 colis_by_esi=colis_by_esi,
                 colis_type_by_esi=colis_type_by_esi,
+                colis_esi_by_ref=colis_esi_by_ref,
                 reception_ref=blr_ref,
                 receptionne_par=receptionne_par,
             )
@@ -9650,6 +10040,7 @@ def api_create_bon_livraison(ticket_id):
         'bon': bon,
         'colis': colis_refs,
         'colis_types': colis_types,
+        'colis_esi': colis_esi_by_ref,
         'etiquettes_articles_filename': article_labels_filename,
         'etiquettes_colis_filename': colis_labels_filename,
     })
@@ -10306,7 +10697,7 @@ def api_ticket_articles_lies(ticket_id):
         if missing:
             return jsonify({
                 'ok': False,
-                'error': 'Certains articles sont introuvables ou sont des CONTENANTS : ' + ', '.join(missing[:10])
+                'error': 'Certains articles sont introuvables ou sont des COLIS : ' + ', '.join(missing[:10])
             }), 400
 
         if conflicts:
