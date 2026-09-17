@@ -214,16 +214,19 @@ function dossierAuto(a){
 }
 async function load(){
   info.textContent='Recherche…';
-  let url='/api/articles?q='+encodeURIComponent(q.value.trim())+'&limit=500';
-  if(typeFilter.value)url+='&type_objet='+encodeURIComponent(typeFilter.value);
-  const r=await fetch(url);
-  const rows=await r.json();
-  body.innerHTML='';
-  empty.style.display=rows.length?'none':'block';
-  currentRows=rows;
-  document.getElementById('selectAll').checked=false;
-  updateSelectionActions();
-  rows.forEach(a=>{
+  try{
+    let url='/api/articles?q='+encodeURIComponent(q.value.trim())+'&limit=500';
+    if(typeFilter.value)url+='&type_objet='+encodeURIComponent(typeFilter.value);
+    const r=await fetch(url,{cache:'no-store'});
+    const rows=await apiJson(r);
+    if(!r.ok)throw new Error((rows&&rows.error)||'Impossible de charger la Base Articles');
+    if(!Array.isArray(rows))throw new Error('Réponse invalide de la Base Articles');
+    body.innerHTML='';
+    empty.style.display=rows.length?'none':'block';
+    currentRows=rows;
+    document.getElementById('selectAll').checked=false;
+    updateSelectionActions();
+    rows.forEach(a=>{
     const dims=[a.longueur_cm,a.largeur_cm,a.hauteur_cm].filter(Boolean).join(' x '),type=articleType(a);
     const tr=document.createElement('tr');
     if(type==='PRE-PACKING')tr.classList.add('container-row');
@@ -237,8 +240,16 @@ async function load(){
       <td>${esc(a.lieu_stockage||'-')}</td><td><strong>${esc(type==='PACKING'?'-':(a.dernier_colis||'-'))}</strong></td><td><strong>${esc(type==='PACKING'?'-':(prePackingTypeLabel(a.type_colis)||'-'))}</strong></td><td><strong>${esc(type==='PACKING'?(a.reference||'-'):packingReferenceDisplay(a.ref_caisse,dossierAuto(a)))}</strong></td>`;
     body.appendChild(tr);
   });
-  const label=typeFilter.value==='PRE-PACKING'?'Pre-Packing(s)':(typeFilter.value==='PACKING'?'Packing(s)':(typeFilter.value==='ARTICLE'?'Article(s)':'élément(s)'));
-  info.textContent=`${rows.length} ${label} affiché(s)`;
+    const label=typeFilter.value==='PRE-PACKING'?'Pre-Packing(s)':(typeFilter.value==='PACKING'?'Packing(s)':(typeFilter.value==='ARTICLE'?'Article(s)':'élément(s)'));
+    info.textContent=`${rows.length} ${label} affiché(s)`;
+  }catch(e){
+    console.error('Chargement Base Articles impossible',e);
+    body.innerHTML='';
+    currentRows=[];
+    empty.style.display='block';
+    empty.textContent='Impossible de charger la Base Articles : '+(e.message||e);
+    info.textContent='Erreur de chargement';
+  }
 }
 document.getElementById('searchBtn').onclick=load;
 document.getElementById('resetBtn').onclick=()=>{q.value='';typeFilter.value='';load()};
@@ -593,13 +604,26 @@ body.addEventListener('change',e=>{if(!e.target.classList.contains('row-check'))
 body.addEventListener('click',e=>{const link=e.target.closest('.esi-link');if(!link)return;e.preventDefault();openArticleDetail(link.dataset.esi)});
 document.getElementById('articleModalClose').onclick=closeArticleModal;document.getElementById('articleModalBackdrop').addEventListener('click',e=>{if(e.target.id==='articleModalBackdrop')closeArticleModal()});document.addEventListener('keydown',e=>{if(e.key==='Escape')closeArticleModal()});
 (async()=>{
-  try{
-    if(!sessionStorage.getItem('esi-packings-base-synced-v1')){
-      const r=await fetch('/api/articles/sync-packings',{method:'POST'});
-      if(r.ok)sessionStorage.setItem('esi-packings-base-synced-v1','1');
-    }
-  }catch(e){console.warn('Synchronisation Packings impossible',e)}
+  // Priorité absolue : afficher immédiatement les Articles / Pre-Packings déjà en base.
+  // La synchronisation des Packings historiques se fait ensuite et ne bloque jamais l'écran.
   await load();
+
+  if(!sessionStorage.getItem('esi-packings-base-synced-v2')){
+    setTimeout(async()=>{
+      try{
+        const r=await fetch('/api/articles/sync-packings',{method:'POST'});
+        const d=await apiJson(r);
+        if(r.ok || r.status===207){
+          sessionStorage.setItem('esi-packings-base-synced-v2','1');
+          await load();
+        }else{
+          console.warn('Synchronisation Packings impossible',d&&d.error?d.error:d);
+        }
+      }catch(e){
+        console.warn('Synchronisation Packings impossible',e);
+      }
+    },1500);
+  }
 })();
 </script>
 </body>
