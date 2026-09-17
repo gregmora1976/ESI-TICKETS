@@ -116,7 +116,7 @@ def get_caisse_fournisseur_status(caisse_ref):
         return {
             "success": False,
             "caisse": caisse_ref,
-            "error": "Format de caisse invalide"
+            "error": "Format de Packing invalide"
         }
 
     try:
@@ -127,7 +127,7 @@ def get_caisse_fournisseur_status(caisse_ref):
         return {
             "success": False,
             "caisse": caisse_ref,
-            "error": "Format de caisse invalide"
+            "error": "Format de Packing invalide"
         }
 
     try:
@@ -190,7 +190,7 @@ def get_caisse_fournisseur_status(caisse_ref):
     return {
         "success": False,
         "caisse": caisse_ref,
-        "error": "Caisse introuvable dans le suivi fournisseur"
+        "error": "Packing introuvable dans le suivi fournisseur"
     }
 
 def safe_filename(name):
@@ -375,8 +375,79 @@ def _as_text(value, default=''):
     return str(value)
 
 
+def _packing_reference(dossier, numero):
+    """Référence métier affichée d'un Packing : C-N°dossier-N°packing.
+
+    Les tickets historiques conservent leur champ technique ``ref`` tel quel
+    afin de ne pas casser les rapprochements existants.
+    """
+    dossier = _as_text(dossier).strip()
+    raw = _as_text(numero).strip()
+    if not raw:
+        return ''
+    if raw.upper().startswith('C-'):
+        return raw
+    if not dossier:
+        return raw
+    prefix = dossier + '-'
+    if raw.startswith(prefix):
+        raw = raw[len(prefix):]
+    try:
+        normalized = str(int(float(raw.replace(',', '.'))))
+    except Exception:
+        normalized = raw
+    if normalized.isdigit():
+        normalized = normalized.zfill(2)
+    return f"C-{dossier}-{normalized}"
+
+
+def _packing_local_number(dossier, numero):
+    """Numero local conserve dans ticket.ref pour compatibilite (ex. 01)."""
+    dossier = _as_text(dossier).strip()
+    raw = _as_text(numero).strip()
+    if not raw:
+        return ''
+    if raw.upper().startswith('C-') and dossier and raw.upper().startswith(('C-' + dossier + '-').upper()):
+        raw = raw[len(dossier) + 3:]
+    elif dossier and raw.startswith(dossier + '-'):
+        raw = raw[len(dossier) + 1:]
+    try:
+        normalized = str(int(float(raw.replace(',', '.'))))
+    except Exception:
+        normalized = raw
+    if normalized.isdigit():
+        normalized = normalized.zfill(2)
+    return normalized
+
+
+def _legacy_packing_reference(dossier, numero):
+    """Référence historique dossier-numéro, utilisée seulement par les intégrations existantes."""
+    dossier = _as_text(dossier).strip()
+    raw = _as_text(numero).strip()
+    if raw.upper().startswith('C-') and dossier and raw.upper().startswith(('C-' + dossier + '-').upper()):
+        raw = raw[len(dossier) + 3:]
+    elif dossier and raw.startswith(dossier + '-'):
+        raw = raw[len(dossier) + 1:]
+    try:
+        normalized = str(int(float(raw.replace(',', '.'))))
+    except Exception:
+        normalized = raw
+    if normalized.isdigit():
+        normalized = normalized.zfill(2)
+    return f"{dossier}-{normalized}" if dossier and normalized else (normalized or raw)
+
+
+def _module_display_label(module):
+    return 'Fiche de Packing' if _as_text(module).strip() == 'Fiche de caisse' else _as_text(module).strip()
+
+
+def _display_prepacking_type(value):
+    raw = _as_text(value).strip()
+    return 'Packing bois' if raw.lower() in ('caisse bois', 'caisse_bois', 'caisse-bois', 'packing bois') else raw
+
+
 # -----------------------------------------------------------------------------
-# Type de colis - données métier distinctes du N° de colis
+# Type de Pre-Packing - données métier distinctes du N° de Pre-Packing
 # -----------------------------------------------------------------------------
 _COLIS_TYPE_LABELS = {
     "softpack": "Softpack",
@@ -397,7 +468,7 @@ def _normalise_colis_type(value):
         return "Softpack"
     if key == "carton":
         return "Carton"
-    if key in ("caisse bois", "caisse en bois", "bois"):
+    if key in ("caisse bois", "caisse en bois", "packing bois", "packing en bois", "bois"):
         return "Caisse bois"
     return ""
 
@@ -420,7 +491,7 @@ def _resolve_colis_types(raw_types, colis_refs):
 
 def _colis_display(colis_ref, colis_type=""):
     ref = _as_text(colis_ref).strip()
-    typ = _normalise_colis_type(colis_type)
+    typ = _display_prepacking_type(_normalise_colis_type(colis_type))
     if ref and typ:
         return f"{ref} - {typ.upper()}"
     return ref or typ
@@ -456,7 +527,7 @@ def _colis_qr_url(colis_ref):
     try:
         # Les QR sont destinés à être scannés depuis un téléphone : HTTPS obligatoire.
         return url_for(
-            'colis_public_page',
+            'prepacking_public_page',
             colis_ref=colis_ref,
             k=token,
             _external=True,
@@ -464,7 +535,7 @@ def _colis_qr_url(colis_ref):
         )
     except Exception:
         base = _as_text(os.getenv('ESI_PUBLIC_URL') or 'https://esi-tickets.onrender.com').rstrip('/')
-        return f"{base}/colis/{urllib.parse.quote(colis_ref, safe='-')}?k={urllib.parse.quote(token, safe='')}"
+        return f"{base}/pre-packing/{urllib.parse.quote(colis_ref, safe='-')}?k={urllib.parse.quote(token, safe='')}"
 
 
 def _article_qr_token(esi_id):
@@ -512,6 +583,7 @@ def _colis_articles(colis_ref):
 
 
 @app.route('/colis/<path:colis_ref>')
+@app.route('/pre-packing/<path:colis_ref>', endpoint='prepacking_public_page')
 def colis_public_page(colis_ref):
     """Fiche colis mobile ouverte depuis le QR code de l'étiquette."""
     colis_ref = _as_text(colis_ref).strip()
@@ -526,8 +598,8 @@ def colis_public_page(colis_ref):
         print(f'[QR COLIS] Lecture impossible pour {colis_ref}: {e}')
         return (
             '<!doctype html><html lang="fr"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<body style="font-family:Arial,sans-serif;padding:24px"><h2>Colis indisponible</h2>'
-            '<p>Impossible de charger les informations du colis pour le moment.</p></body></html>',
+            '<body style="font-family:Arial,sans-serif;padding:24px"><h2>Pre-Packing indisponible</h2>'
+            '<p>Impossible de charger les informations du Pre-Packing pour le moment.</p></body></html>',
             503,
         )
 
@@ -569,7 +641,7 @@ def colis_public_page(colis_ref):
         ''')
 
     item_html = ''.join(cards) if cards else (
-        '<div class="empty">Aucun article n’est actuellement affecté à ce colis.</div>'
+        '<div class="empty">Aucun Article n’est actuellement affecté à ce Pre-Packing.</div>'
     )
     count = len(articles)
 
@@ -578,7 +650,7 @@ def colis_public_page(colis_ref):
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Colis {esc(_colis_display(colis_ref, type_colis))} - ESI Tickets</title>
+<title>Pre-Packing {esc(_colis_display(colis_ref, type_colis))} - ESI Tickets</title>
 <style>
 :root{{--blue:#0f2f4f;--light:#eef8fd;--line:#cfe3ee;--text:#17324a;--muted:#60758a}}
 *{{box-sizing:border-box}}
@@ -613,7 +685,7 @@ h1{{font-size:31px;line-height:1.05;margin:9px 0 5px}}
 <body>
 <div class="wrap">
   <header class="hero">
-    <div class="brand">ESI TICKETS · COLIS</div>
+    <div class="brand">ESI TICKETS · PRE-PACKING</div>
     <h1>{esc(_colis_display(colis_ref, type_colis))}</h1>
     <div class="sub">Informations en temps réel issues de la base Articles</div>
   </header>
@@ -621,13 +693,13 @@ h1{{font-size:31px;line-height:1.05;margin:9px 0 5px}}
   <section class="grid">
     <div class="field"><b>N° dossier</b><div>{esc(dossier)}</div></div>
     <div class="field"><b>Bon de réception</b><div>{esc(bon)}</div></div>
-    <div class="field"><b>Type de colis</b><div>{esc(type_colis)}</div></div>
+    <div class="field"><b>Type de Pre-Packing</b><div>{esc(_display_prepacking_type(type_colis))}</div></div>
     <div class="field"><b>Client</b><div>{esc(client)}</div></div>
     <div class="field"><b>Projet / exposition</b><div>{esc(projet)}</div></div>
     <div class="field" style="grid-column:1/-1"><b>Stockage actuel</b><div>{esc(lieu)}</div></div>
   </section>
 
-  <div class="section-title"><h2>Articles contenus dans le colis</h2><span class="badge">{count} article{'s' if count != 1 else ''}</span></div>
+  <div class="section-title"><h2>Articles contenus dans le Pre-Packing</h2><span class="badge">{count} article{'s' if count != 1 else ''}</span></div>
   <section class="items">{item_html}</section>
   <div class="foot">Page en lecture seule · ESI Tickets</div>
 </div>
@@ -891,7 +963,7 @@ def _ensure_colis_article_records(ticket_id, numero_dossier, colis_refs, colis_t
         colis_type = _normalise_colis_type((colis_types or {}).get(colis_ref))
         members = members_by_colis.get(colis_ref, [])
         member_ids = [_as_text(x.get('esi_id')).strip() for x in members if _as_text(x.get('esi_id')).strip()]
-        description = f"{colis_type or 'Colis'} - {len(member_ids)} article{'s' if len(member_ids) != 1 else ''}"
+        description = f"{_display_prepacking_type(colis_type) or 'Pre-Packing'} - {len(member_ids)} Article{'s' if len(member_ids) != 1 else ''}"
 
         existing = _find_colis_record(colis_ref, numero_dossier)
         if existing:
@@ -918,7 +990,7 @@ def _ensure_colis_article_records(ticket_id, numero_dossier, colis_refs, colis_t
             })
             patch = {
                 'ticket_id': _as_text(ticket_id).strip() or existing.get('ticket_id'),
-                'source_module': 'Colis réception',
+                'source_module': 'Pre-Packing réception',
                 'unit_index': idx,
                 'type_objet': 'CONTENANT',
                 'reference': colis_ref,
@@ -952,7 +1024,7 @@ def _ensure_colis_article_records(ticket_id, numero_dossier, colis_refs, colis_t
             }
             payload = {
                 'ticket_id': _as_text(ticket_id).strip(),
-                'source_module': 'Colis réception',
+                'source_module': 'Pre-Packing réception',
                 'source_index': None,
                 'unit_index': idx,
                 'type_objet': 'CONTENANT',
@@ -1262,11 +1334,11 @@ def _validate_colis_repartition_shape(selected_items, raw_assignments, colis_cou
             continue
         assignments[key] = ci
     if set(assignments) != expected:
-        raise ValueError("Chaque article ou partie physique doit être associé à un colis.")
+        raise ValueError("Chaque Article ou partie physique doit être associé à un Pre-Packing.")
     if int(colis_count) > len(expected):
-        raise ValueError("Le nombre de colis ne peut pas dépasser le nombre d'articles ou parties physiques réceptionnés.")
+        raise ValueError("Le nombre de Pre-Packings ne peut pas dépasser le nombre d'Articles ou parties physiques réceptionnés.")
     if set(assignments.values()) != set(range(int(colis_count))):
-        raise ValueError("Chaque colis créé doit contenir au moins un article ou une partie.")
+        raise ValueError("Chaque Pre-Packing créé doit contenir au moins un Article ou une partie.")
     return assignments
 
 
@@ -1749,8 +1821,8 @@ def _article_ids_for_received_units(item, previous_qty, qty_received):
 ARTICLES_MANUAL_CREATE_JS = r"""(function(){
 'use strict';
 
-// Affichage uniquement : l'ancien libelle CONTENANT devient COLIS,
-// sans modifier les valeurs techniques historiques utilisees par la base.
+// Affichage uniquement : les valeurs techniques historiques PRODUIT / CONTENANT
+// restent inchangées en base, mais l'interface affiche ARTICLE / PRE-PACKING.
 function replaceContenantWording(root){
   const scope=root&&root.nodeType===1?root:document.body;
   if(!scope)return;
@@ -1759,13 +1831,16 @@ function replaceContenantWording(root){
   while((n=walker.nextNode())){
     const tag=n.parentElement&&n.parentElement.tagName;
     if(tag&&['SCRIPT','STYLE','TEXTAREA'].includes(tag))continue;
-    if(/contenant/i.test(n.nodeValue||''))nodes.push(n);
+    if(/contenant|produit/i.test(n.nodeValue||''))nodes.push(n);
   }
   nodes.forEach(node=>{
     node.nodeValue=(node.nodeValue||'')
-      .replace(/CONTENANTS?/g,'COLIS')
-      .replace(/Contenants?/g,'Colis')
-      .replace(/contenants?/g,'colis');
+      .replace(/CONTENANTS?/g,'PRE-PACKING')
+      .replace(/Contenants?/g,'Pre-Packing')
+      .replace(/contenants?/g,'Pre-Packing')
+      .replace(/PRODUITS?/g,'ARTICLES')
+      .replace(/Produits?/g,'Articles')
+      .replace(/produits?/g,'articles');
   });
 }
 function installColisWording(){
@@ -1773,9 +1848,9 @@ function installColisWording(){
   const obs=new MutationObserver(muts=>{
     muts.forEach(m=>m.addedNodes.forEach(node=>{
       if(node.nodeType===1)replaceContenantWording(node);
-      else if(node.nodeType===3&&/contenant/i.test(node.nodeValue||'')){
+      else if(node.nodeType===3&&/contenant|produit/i.test(node.nodeValue||'')){
         const t=node.nodeValue||'';
-        node.nodeValue=t.replace(/CONTENANTS?/g,'COLIS').replace(/Contenants?/g,'Colis').replace(/contenants?/g,'colis');
+        node.nodeValue=t.replace(/CONTENANTS?/g,'PRE-PACKING').replace(/Contenants?/g,'Pre-Packing').replace(/contenants?/g,'Pre-Packing').replace(/PRODUITS?/g,'ARTICLES').replace(/Produits?/g,'Articles').replace(/produits?/g,'articles');
       }
     }));
   });
@@ -1807,13 +1882,13 @@ function ensureManualCreateUI(){
     <div class="modal-body">
       <div class="section-title">Informations existantes</div>
       <div class="edit-grid" id="manualArticleGrid">
-        <div class="edit-field"><label>Type</label><select id="manualType"><option value="PRODUIT">PRODUIT</option><option value="CONTENANT">COLIS</option></select></div>
+        <div class="edit-field"><label>Type</label><select id="manualType"><option value="PRODUIT">ARTICLE</option><option value="CONTENANT">PRE-PACKING</option></select></div>
         <div class="edit-field"><label>N° dossier *</label><input id="manualDossier" autocomplete="off" placeholder="Ex. 101129"></div>
         <div class="edit-field"><label>Client</label><input id="manualClient" autocomplete="off"></div>
         <div class="edit-field"><label>Chargé de projet</label><input id="manualChargeProjet" autocomplete="off"></div>
         <div class="edit-field"><label>Projet / exposition</label><input id="manualProjet" autocomplete="off"></div>
         <div class="edit-field"><label>Référence / N° inventaire</label><input id="manualReference" autocomplete="off"></div>
-        <div class="edit-field"><label>Réf. caisse</label><input id="manualRefCaisse" autocomplete="off" placeholder="Ex. 101129-01"></div>
+        <div class="edit-field"><label>Réf. Packing</label><input id="manualRefCaisse" autocomplete="off" placeholder="Ex. C-101129-01"></div>
         <div class="edit-field"><label>Réf. transporteur</label><input id="manualTransporteurRef" autocomplete="off"></div>
         <div class="edit-field"><label>Lieu de stockage</label><input id="manualLieuStockage" autocomplete="off"></div>
         <div class="edit-field"><label>Statut logistique</label><input id="manualStatut" value="Créé"></div>
@@ -1917,9 +1992,11 @@ def api_articles():
     type_objet = _as_text(request.args.get("type_objet")).strip().upper()
     limit = min(max(int(request.args.get("limit") or 100), 1), 500)
 
-    # Compatibilite : l'ancien type DB CONTENANT est desormais presente comme COLIS.
-    if type_objet == "COLIS":
+    # Compatibilité : l'interface parle désormais d'ARTICLE / PRE-PACKING.
+    if type_objet in ("PRE-PACKING", "PREPACKING", "COLIS"):
         type_objet = "CONTENANT"
+    elif type_objet == "ARTICLE":
+        type_objet = "PRODUIT"
 
     query = "select=*&order=article_no.desc&limit=" + str(limit)
 
@@ -1940,10 +2017,12 @@ def api_article_create_manual():
     data = request.get_json(silent=True) or {}
 
     type_objet = _as_text(data.get('type_objet') or 'PRODUIT').strip().upper()
-    if type_objet == 'COLIS':
+    if type_objet in ('PRE-PACKING', 'PREPACKING', 'COLIS'):
         type_objet = 'CONTENANT'
+    elif type_objet == 'ARTICLE':
+        type_objet = 'PRODUIT'
     if type_objet not in ('PRODUIT', 'CONTENANT'):
-        return jsonify({'ok': False, 'error': 'Type invalide : PRODUIT ou COLIS attendu'}), 400
+        return jsonify({'ok': False, 'error': 'Type invalide : ARTICLE ou PRE-PACKING attendu'}), 400
 
     dossier = _as_text(data.get('dossier')).strip()
     reference = _as_text(data.get('reference')).strip()
@@ -2911,7 +2990,7 @@ def api_article_update_colis(esi_id):
     colis=_as_text((request.get_json(silent=True) or {}).get('colis')).strip()
     if colis:
         allowed={f"{dossier}-{n:03d}" for n in _existing_colis_numbers(dossier)}
-        if colis not in allowed: return jsonify({'ok':False,'error':"Ce colis n'existe pas pour ce dossier"}),400
+        if colis not in allowed: return jsonify({'ok':False,'error':"Ce Pre-Packing n'existe pas pour ce dossier"}),400
     raw=article.get('raw_json') if isinstance(article.get('raw_json'),dict) else {}; raw=dict(raw or {})
     raw['colis_actuel']=colis; mods=list(raw.get('modifications_colis') or []); mods.append({'date':datetime.now().isoformat(),'colis':colis}); raw['modifications_colis']=mods
     patch={'dernier_colis':colis,'raw_json':raw,'updated_at':datetime.now().isoformat()}
@@ -2975,7 +3054,7 @@ def api_article_detail(esi_id):
             "created_at": ticket.get("createdAt"),
             "updated_at": ticket.get("updatedAt"),
             "dossier": ticket.get("dossier"),
-            "ref": ticket.get("ref"),
+            "ref": (_packing_reference(ticket.get("dossier"), ticket.get("ref")) if ticket.get("module") == "Fiche de caisse" else ticket.get("ref")),
             "client": ticket.get("dossier"),
             "projet": ticket.get("expo") or ticket.get("objet"),
             "charge_projet": ticket.get("chargeProjet"),
@@ -3134,7 +3213,7 @@ def article_public_page(esi_id):
           <div class="history-item">
             <strong>{esc(entry['reference'] or 'Réception')}</strong>
             <div>{esc(date_txt)}</div>
-            <div>Stockage : {esc(entry['lieu'])} · Colis : {esc(_colis_display(entry['colis'], entry['type_colis']))}</div>
+            <div>Stockage : {esc(entry['lieu'])} · Pre-Packing : {esc(_colis_display(entry['colis'], entry['type_colis']))}</div>
             {f'<div>Réceptionné par : {esc(entry["par"])}</div>' if entry['par'] else ''}
           </div>
         """
@@ -3158,7 +3237,7 @@ def article_public_page(esi_id):
                 f'<a class="part-card" href="{html.escape(child_url, quote=True)}">'
                 f'<strong>Partie {esc(part.get("partie_label"))}</strong>'
                 f'<span>{esc(child_esi)}</span>'
-                f'<span>Colis : {esc(part.get("dernier_colis"))} · {esc(part.get("type_colis"))}</span>'
+                f'<span>Pre-Packing : {esc(part.get("dernier_colis"))} · {esc(_display_prepacking_type(part.get("type_colis")))}</span>'
                 '</a>'
             )
         composition_html = '<section class="section"><div class="section-title">Composition de l’article</div><div class="parts-list">' + ''.join(part_cards) + '</div></section>'
@@ -3225,8 +3304,8 @@ h1{{font-size:30px;line-height:1.05;margin:16px 0 5px;overflow-wrap:anywhere}}
       <div class="field"><b>Poids</b><div>{esc(poids)}</div></div>
       <div class="field"><b>Stockage actuel</b><div>{esc(article.get('lieu_stockage'))}</div></div>
       <div class="field"><b>Statut logistique</b><div>{esc(article.get('statut_logistique'))}</div></div>
-      <div class="field"><b>N° colis</b><div>{esc(article.get('dernier_colis'))}</div></div>
-      <div class="field"><b>Type de colis</b><div>{esc(article.get('type_colis'))}</div></div>
+      <div class="field"><b>N° Pre-Packing</b><div>{esc(article.get('dernier_colis'))}</div></div>
+      <div class="field"><b>Type de Pre-Packing</b><div>{esc(_display_prepacking_type(article.get('type_colis')))}</div></div>
       <div class="field"><b>Dernière réception</b><div>{esc(article.get('derniere_reception_ref'))}</div></div>
     </section>
     <aside class="photo">{photo_html}</aside>
@@ -4208,7 +4287,11 @@ def _unlink_articles_from_deleted_caisse(ticket):
     except Exception:
         numero_norm = numero_brut
     numero_caisse = numero_norm.zfill(2) if _as_text(numero_norm).isdigit() else numero_brut
-    equivalent_refs = {f"{dossier}-{numero_caisse}", f"{dossier}-{numero_norm}"}
+    equivalent_refs = {
+        _packing_reference(dossier, numero_brut),
+        _legacy_packing_reference(dossier, numero_brut),
+        f"{dossier}-{numero_norm}",
+    }
 
     ids = []
     for item in ticket.get('articles_lies') or []:
@@ -4225,8 +4308,7 @@ def _unlink_articles_from_deleted_caisse(ticket):
         patch = {}
         if _as_text(current.get('ref_caisse')).strip() in equivalent_refs:
             patch['ref_caisse'] = ''
-        if _as_text(current.get('dernier_colis')).strip() in equivalent_refs:
-            patch['dernier_colis'] = ''
+        # Le Pre-Packing est indépendant du Packing : il n'est pas effacé avec la fiche Packing.
         if not patch:
             continue
         patch['updated_at'] = datetime.now().isoformat()
@@ -5396,7 +5478,7 @@ def _extract_reception_pdf(pdf_bytes):
 
     if not refs:
         raise ValueError(
-            "Aucune référence de caisse de type 'V/Cde : dossier/numéro' n'a été détectée, même après OCR."
+            "Aucune référence de Packing de type 'V/Cde : dossier/numéro' n'a été détectée, même après OCR."
         )
 
     return {
@@ -5409,7 +5491,7 @@ def _extract_reception_pdf(pdf_bytes):
 
 
 def _match_reception_refs_to_tickets(references):
-    """Rapproche les références du PDF avec les fiches de caisse ESI TICKETS."""
+    """Rapproche les références du PDF avec les fiches de Packing ESI TICKETS."""
     all_tickets = list_tickets()
     candidates = [
         t for t in all_tickets
@@ -5437,6 +5519,7 @@ def _match_reception_refs_to_tickets(references):
                 "ticket_id": t.get("id"),
                 "dossier": t.get("dossier") or "",
                 "ref": t.get("ref") or "",
+                "packing_ref": _packing_reference(t.get("dossier"), t.get("ref")),
                 "charge_projet": t.get("chargeProjet") or "",
                 "date_emballage": t.get("dateEmballage") or "",
                 "localisation": fiche.get("localisation") or "",
@@ -5685,8 +5768,8 @@ def _format_ticket_notification_subject(ticket):
     lieu_rdv = (ticket.get("lieuRdv") or "").strip()
 
     if module == "Fiche de caisse":
-        suffix = " ".join([x for x in [dossier, ref] if x]).strip()
-        return f"[ESI Tickets] Fiche de caisse terminée - {suffix}".strip()
+        suffix = _packing_reference(dossier, ref) or dossier or ref
+        return f"[ESI Tickets] Fiche de Packing terminée - {suffix}".strip()
 
     if module == "Demande de devis":
         suffix = " ".join([x for x in [dossier, projet] if x]).strip()
@@ -5777,9 +5860,9 @@ def envoyer_notification_fin_ticket(ticket):
 Le ticket suivant vient d'être terminé :
 
 Numéro ticket : {ticket_id}
-Type : {module}
+Type : {_module_display_label(module)}
 Dossier / Client : {dossier}
-Référence / N° caisse : {ref}
+Référence / N° Packing : {_packing_reference(dossier, ref) if module == "Fiche de caisse" else ref}
 Projet / Expo : {projet}
 Chargé de projet : {charge_projet}
 Lieu RDV : {lieu_rdv}
@@ -5878,7 +5961,7 @@ function ensurePanel(){
 
 function selectedHtml(editing){
   const values=[...linkedDraft.values()];
-  if(!values.length)return '<div class="caisse-articles-empty">Aucun article lié à cette caisse.</div>';
+  if(!values.length)return '<div class="caisse-articles-empty">Aucun Article lié à ce Packing.</div>';
   return values.map(a=>`<button type="button" class="caisse-article-chip" data-open-esi="${escapeHtml(a.esi_id)}" title="Ouvrir la fiche détaillée">${escapeHtml(refLabel(a))}${editing?`<span class="remove" data-remove-esi="${escapeHtml(a.esi_id)}" title="Retirer">×</span>`:''}</button>`).join('');
 }
 
@@ -5889,9 +5972,9 @@ function renderPanel(){
   panel.classList.add('show');
   const editing=!!state.editMode;
   panel.innerHTML=`
-    <div class="caisse-articles-title">Articles liés à cette caisse</div>
+    <div class="caisse-articles-title">Articles liés à ce Packing</div>
     <div class="caisse-articles-selected" id="caisseArticlesSelected">${selectedHtml(editing)}</div>
-    ${editing?`<div class="caisse-articles-search"><input id="caisseArticlesSearchInput" autocomplete="off" placeholder="Recherche globale : client / prêteur, description, référence, dossier, projet..."><button class="btn secondary" id="caisseArticlesSearchBtn" type="button">Rechercher</button></div><div class="caisse-articles-hint">Recherche dans toute la fiche article : client / prêteur, description, référence, N° ESI, dossier, projet, stockage, caisse / colis, dimensions, poids, etc.</div><div class="caisse-articles-results" id="caisseArticlesResults" style="display:none"></div>`:''}
+    ${editing?`<div class="caisse-articles-search"><input id="caisseArticlesSearchInput" autocomplete="off" placeholder="Recherche globale : client / prêteur, description, référence, dossier, projet..."><button class="btn secondary" id="caisseArticlesSearchBtn" type="button">Rechercher</button></div><div class="caisse-articles-hint">Recherche dans toute la fiche article : client / prêteur, description, référence, N° ESI, dossier, projet, stockage, Packing / Pre-Packing, dimensions, poids, etc.</div><div class="caisse-articles-results" id="caisseArticlesResults" style="display:none"></div>`:''}
   `;
   bindPanelEvents();
 }
@@ -5986,10 +6069,10 @@ async function openLinkedArticleDetail(esi){
     const a=d.article||{},dims=[a.longueur_cm,a.largeur_cm,a.hauteur_cm].filter(x=>String(x??'').trim()).join(' × '),photo=String(a.photo_url||'').trim();
     sub.textContent=(a.esi_id||esi)+' • Fiche détaillée et historique';
     let html=`<div class="caisse-article-hero"><div><div class="ref">${escapeHtml(a.reference||a.esi_id||esi)}</div>${a.description?`<div class="desc">${escapeHtml(a.description)}</div>`:''}</div><div class="esi">${escapeHtml(a.esi_id||esi)}</div></div>`;
-    html+=`<div class="caisse-article-detail-layout"><div class="caisse-article-fields">${detailField('N° ESI',a.esi_id)}${detailField('N° dossier',a.dossier)}${detailField('Référence / inventaire',a.reference)}${detailField('Client',a.client)}${detailField('Projet / exposition',a.projet,true)}${detailField('Description / désignation',a.description,true)}${detailField('Dimensions',dims?dims+' cm':'-')}${detailField('Poids',a.poids_kg?String(a.poids_kg)+' kg':'-')}${detailField('Stockage actuel',a.lieu_stockage)}${detailField('Statut logistique',a.statut_logistique)}${detailField('N° colis',a.dernier_colis)}${detailField('Type de colis',a.type_colis)}${detailField('Dernière réception',a.derniere_reception_ref)}</div><div class="caisse-article-photo">${photo?`<img src="${escapeHtml(photo)}" alt="Photo article">`:'<div class="caisse-article-no-photo">Aucune photo enregistrée</div>'}</div></div>`;
+    html+=`<div class="caisse-article-detail-layout"><div class="caisse-article-fields">${detailField('N° ESI',a.esi_id)}${detailField('N° dossier',a.dossier)}${detailField('Référence / inventaire',a.reference)}${detailField('Client',a.client)}${detailField('Projet / exposition',a.projet,true)}${detailField('Description / désignation',a.description,true)}${detailField('Dimensions',dims?dims+' cm':'-')}${detailField('Poids',a.poids_kg?String(a.poids_kg)+' kg':'-')}${detailField('Stockage actuel',a.lieu_stockage)}${detailField('Statut logistique',a.statut_logistique)}${detailField('N° Pre-Packing',a.dernier_colis)}${detailField('Type de Pre-Packing',a.type_colis==='Caisse bois'?'Packing bois':a.type_colis)}${detailField('Dernière réception',a.derniere_reception_ref)}</div><div class="caisse-article-photo">${photo?`<img src="${escapeHtml(photo)}" alt="Photo article">`:'<div class="caisse-article-no-photo">Aucune photo enregistrée</div>'}</div></div>`;
     html+='<div class="caisse-article-section"><div class="caisse-article-section-title">Historique des réceptions</div>';
     if((d.receptions||[]).length){
-      html+='<div class="caisse-article-history">'+d.receptions.map(x=>`<div class="caisse-article-history-item"><strong>${escapeHtml(x.reference||'Réception')}</strong> · ${escapeHtml(x.date_affichee||dateText(x.date))}<br>Stockage : ${escapeHtml(x.lieu_stockage||'-')} · Colis : ${escapeHtml((x.colis||[]).join(', ')||'-')} · Type : ${escapeHtml(x.type_colis||'-')}</div>`).join('')+'</div>';
+      html+='<div class="caisse-article-history">'+d.receptions.map(x=>`<div class="caisse-article-history-item"><strong>${escapeHtml(x.reference||'Réception')}</strong> · ${escapeHtml(x.date_affichee||dateText(x.date))}<br>Stockage : ${escapeHtml(x.lieu_stockage||'-')} · Pre-Packing : ${escapeHtml((x.colis||[]).join(', ')||'-')} · Type : ${escapeHtml(x.type_colis==='Caisse bois'?'Packing bois':(x.type_colis||'-'))}</div>`).join('')+'</div>';
     }else html+='<div class="small">Aucune réception enregistrée.</div>';
     html+='</div>';body.innerHTML=html;
   }catch(e){body.innerHTML='<div class="small">'+escapeHtml(e.message||'Impossible de charger la fiche article')+'</div>'}
@@ -6984,7 +7067,7 @@ def api_cleaner_validate_reception():
     if not localisation:
         return jsonify({'ok': False, 'error': 'La localisation est obligatoire.'}), 400
     if not isinstance(rows, list) or not rows:
-        return jsonify({'ok': False, 'error': 'Aucune caisse à réceptionner.'}), 400
+        return jsonify({'ok': False, 'error': 'Aucun Packing à réceptionner.'}), 400
 
     references = []
     seen = set()
@@ -6997,7 +7080,7 @@ def api_cleaner_validate_reception():
             seen.add(key)
             references.append({'dossier': dossier, 'numero': numero, 'numero_pdf': numero_pdf or numero})
     if not references:
-        return jsonify({'ok': False, 'error': 'Aucune référence dossier/caisse exploitable.'}), 400
+        return jsonify({'ok': False, 'error': 'Aucune référence dossier/Packing exploitable.'}), 400
 
     matches = _match_reception_refs_to_tickets(references)
     found = [x for x in matches if x.get('found') and x.get('ticket_id')]
@@ -7012,7 +7095,7 @@ def api_cleaner_validate_reception():
     if not confirm_validation:
         return jsonify(preview), (200 if found else 422)
     if not found:
-        return jsonify({**preview, 'ok': False, 'error': 'Aucune caisse ESI TICKETS correspondante.'}), 422
+        return jsonify({**preview, 'ok': False, 'error': 'Aucun Packing ESI TICKETS correspondant.'}), 422
 
     bl_numero = ''
     bl_date = ''
@@ -7046,11 +7129,11 @@ def api_cleaner_validate_reception():
         try:
             ticket = load_ticket(ticket_id)
             if not ticket or ticket.get('module') != 'Fiche de caisse':
-                errors.append({'ticket_id': ticket_id, 'error': 'Fiche de caisse introuvable'})
+                errors.append({'ticket_id': ticket_id, 'error': 'Fiche de Packing introuvable'})
                 continue
             fiche = dict(ticket.get('fiche') or {})
             if not fiche:
-                errors.append({'ticket_id': ticket_id, 'error': 'Fiche de caisse introuvable'})
+                errors.append({'ticket_id': ticket_id, 'error': 'Fiche de Packing introuvable'})
                 continue
             fiche['localisation'] = localisation
             ticket['fiche'] = fiche
@@ -7475,7 +7558,7 @@ def api_update_localisation(ticket_id):
 
     fiche = ticket.get('fiche') or {}
     if not fiche:
-        return jsonify({'ok': False, 'error': 'Fiche de caisse introuvable'}), 404
+        return jsonify({'ok': False, 'error': 'Fiche de Packing introuvable'}), 404
 
     data = request.get_json(silent=True) or {}
     localisation = _as_text(data.get('localisation')).strip()
@@ -7603,7 +7686,7 @@ def api_reception_valider_bl():
         }), 400
 
     if not isinstance(ticket_ids, list) or not ticket_ids:
-        return jsonify({'ok': False, 'error': 'Aucune caisse sélectionnée'}), 400
+        return jsonify({'ok': False, 'error': 'Aucun Packing sélectionné'}), 400
 
     if not bl_storage_path:
         return jsonify({'ok': False, 'error': 'Le PDF du BL analysé est manquant.'}), 400
@@ -7620,12 +7703,12 @@ def api_reception_valider_bl():
                 continue
 
             if ticket.get('module') != 'Fiche de caisse':
-                errors.append({'ticket_id': ticket_id, 'error': 'Ce ticket n’est pas une fiche de caisse'})
+                errors.append({'ticket_id': ticket_id, 'error': 'Ce ticket n’est pas une fiche de Packing'})
                 continue
 
             fiche = ticket.get('fiche') or {}
             if not fiche:
-                errors.append({'ticket_id': ticket_id, 'error': 'Fiche de caisse introuvable'})
+                errors.append({'ticket_id': ticket_id, 'error': 'Fiche de Packing introuvable'})
                 continue
 
             fiche['localisation'] = localisation
@@ -7784,13 +7867,18 @@ def api_create_ticket():
             }), 400
 
     ticket_id = next_id(prefix)
+    ticket_dossier = form.get('dossier','')
+    ticket_ref = form.get('ref','')
+    if module == 'Fiche de caisse':
+        ticket_ref = _packing_local_number(ticket_dossier, ticket_ref)
+
     ticket = {
         'id': ticket_id,
         'module': module,
         'status': 'Demande créée',
         'createdAt': datetime.now().isoformat(),
-        'dossier': form.get('dossier',''),
-        'ref': form.get('ref',''),
+        'dossier': ticket_dossier,
+        'ref': ticket_ref,
         'preteur': form.get('preteur','-') or '-',
         'expo': form.get('expo','-') or '-',
         'objet': form.get('objet','-') or '-',
@@ -8297,7 +8385,10 @@ def api_update_ticket(ticket_id):
 
     for field in editable_fields:
         if field in data:
-            ticket[field] = data.get(field, '')
+            value = data.get(field, '')
+            if field == 'ref' and _as_text(ticket.get('module')).strip() == 'Fiche de caisse':
+                value = _packing_local_number(data.get('dossier', ticket.get('dossier')), value)
+            ticket[field] = value
 
     if 'expo' in data and 'objet' not in data:
         ticket['objet'] = data.get('expo', '')
@@ -8339,9 +8430,9 @@ def api_reception_avis_arrivee(ticket_id):
     if not lieu_stockage:
         return jsonify({'ok': False, 'error': 'Lieu de stockage manquant'}), 400
     if not numero_dossier:
-        return jsonify({'ok': False, 'error': 'N° dossier obligatoire pour numéroter les colis'}), 400
+        return jsonify({'ok': False, 'error': 'N° dossier obligatoire pour numéroter les Pre-Packings'}), 400
     if nombre_colis < 1:
-        return jsonify({'ok': False, 'error': 'Le nombre total de colis doit être supérieur ou égal à 1'}), 400
+        return jsonify({'ok': False, 'error': 'Le nombre total de Pre-Packings doit être supérieur ou égal à 1'}), 400
 
     avis = dict(ticket.get('avisArrivee') or ticket.get('avis_arrivee') or {})
     items = list(avis.get('items') or [])
@@ -8494,7 +8585,7 @@ def api_reception_avis_arrivee(ticket_id):
         colis_refs = _allocate_colis_numbers(numero_dossier, nombre_colis)
         colis_types = _resolve_colis_types(data.get('colis_types'), colis_refs)
         if any(not colis_types.get(ref) for ref in colis_refs):
-            return jsonify({'ok': False, 'error': 'Le type de chaque colis est obligatoire : Softpack, Carton ou Caisse bois.'}), 400
+            return jsonify({'ok': False, 'error': 'Le type de chaque Pre-Packing est obligatoire : Softpack, Carton ou Packing bois.'}), 400
         try:
             _validate_colis_repartition_shape(selected, colis_repartition, len(colis_refs), article_parts)
             reception_esi_ids, parent_part_ids = _expand_selected_items_with_parts(selected, article_parts)
@@ -8526,7 +8617,7 @@ def api_reception_avis_arrivee(ticket_id):
         article_labels_path = f"{ticket_id}/receptions_avis/{now.strftime('%Y%m%d%H%M%S')}_{article_labels_filename}"
 
         colis_labels = [{
-            'titre': 'COLIS',
+            'titre': 'PRE-PACKING',
             'principal': _colis_display(colis_ref, colis_types.get(colis_ref)),
             'dossier': numero_dossier,
             'client': avis.get('client') or ticket.get('dossier') or '',
@@ -8539,7 +8630,7 @@ def api_reception_avis_arrivee(ticket_id):
         } for colis_ref in colis_refs]
 
         colis_labels_bytes = _build_labels_pdf_bytes(colis_labels, kind="colis")
-        colis_labels_filename = f"{reception_ref}_etiquettes_colis.pdf"
+        colis_labels_filename = f"{reception_ref}_etiquettes_pre_packing.pdf"
         colis_labels_path = f"{ticket_id}/receptions_avis/{now.strftime('%Y%m%d%H%M%S')}_{colis_labels_filename}"
 
         reception_pdf_data = {
@@ -8585,7 +8676,7 @@ def api_reception_avis_arrivee(ticket_id):
             )
         except Exception as e:
             print(f"[COLIS ARTICLES] Creation impossible pour {reception_ref}: {e}")
-            return jsonify({'ok': False, 'error': f'Impossible de créer les colis dans la base Articles : {e}'}), 500
+            return jsonify({'ok': False, 'error': f'Impossible de créer les Pre-Packings dans la base Articles : {e}'}), 500
 
         avis['items'] = items
         ticket['avisArrivee'] = avis
@@ -8861,7 +8952,7 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
     # Regroupement des articles par colis dans l'ordre des colis du bon.
     group_map = {}
     for row in unit_rows:
-        ref = _as_text(row.get('colis_ref')).strip() or 'SANS-COLIS'
+        ref = _as_text(row.get('colis_ref')).strip() or 'SANS-PRE-PACKING'
         if ref not in group_map:
             group_map[ref] = {
                 'colis_ref': ref,
@@ -9031,9 +9122,9 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
                 h = 21
                 y_cursor -= h
                 rect(30, y_cursor, 535, h, fill=package_fill, stroke=CYAN, lw=0.8)
-                ref = clean(entry.get('colis_ref'), 'SANS COLIS')
-                typ = _normalise_colis_type(entry.get('colis_type'))
-                label = f"COLIS {ref}"
+                ref = clean(entry.get('colis_ref'), 'SANS PRE-PACKING')
+                typ = _display_prepacking_type(_normalise_colis_type(entry.get('colis_type')))
+                label = f"PRE-PACKING {ref}"
                 if typ:
                     label += f" - {typ.upper()}"
                 count = int(entry.get('count') or 0)
@@ -9079,7 +9170,7 @@ def _build_reception_form_pdf_bytes(ticket, bon, source_type="enlevement"):
         txt(305, sig_y+15, 'Signature : __________________________', 8)
 
         nombre_colis_footer = len(bon.get('colis') or [])
-        txt(30, 35, f"Reference : {clean(bon.get('reference'))}  |  Nombre de colis : {nombre_colis_footer}", 7, False, (0.35,0.40,0.45))
+        txt(30, 35, f"Reference : {clean(bon.get('reference'))}  |  Nombre de Pre-Packings : {nombre_colis_footer}", 7, False, (0.35,0.40,0.45))
         txt(430, 35, f'Groupe ESI - Bon de reception - {page_index}/{page_count}', 7, False, (0.35,0.40,0.45))
 
         if logo_image_bytes and logo_w and logo_h:
@@ -9299,7 +9390,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
             y -= 20
 
             for key in ("dossier", "client", "charge_projet", "reference", "designation", "partie", "article_principal", "quantite", "colis", "lieu", "bon"):
-                value = _as_text(label.get(key)).strip()
+                value = _display_prepacking_type(label.get(key)) if key == 'type_colis' else _as_text(label.get(key)).strip()
                 if not value:
                     continue
                 label_name = {
@@ -9311,7 +9402,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
                     "partie": "Partie",
                     "article_principal": "Article principal",
                     "quantite": "Quantite",
-                    "colis": "Colis",
+                    "colis": "Pre-Packing",
                     "lieu": "Stockage",
                     "bon": "Bon",
                 }.get(key, key)
@@ -9467,7 +9558,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
 
     page_refs = []
 
-    for label in labels or [{"titre": "COLIS"}]:
+    for label in labels or [{"titre": "PRE-PACKING"}]:
         stream_lines = []
 
         # Un QR différent est embarqué sur chaque page car chaque colis a sa propre URL.
@@ -9505,7 +9596,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
             ]
 
         # Titre COLIS en haut à droite du logo.
-        title = _as_text(label.get('titre') or 'COLIS').strip()
+        title = _as_text(label.get('titre') or 'PRE-PACKING').strip()
         stream_lines += [
             'BT', '/F2 17 Tf', f'{page_width - 72:.2f} {page_height - 36:.2f} Td',
             f'({pdf_escape(title)}) Tj', 'ET'
@@ -9518,7 +9609,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
         if principal:
             stream_lines += [
                 'BT', '/F2 9 Tf', f'{margin} {y:.2f} Td',
-                '(N\260 COLIS) Tj', 'ET'
+                '(N\260 PRE-PACKING) Tj', 'ET'
             ]
             y -= 18
             principal_size = 23 if len(principal) <= 18 else 19
@@ -9537,7 +9628,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
         y -= 22
 
         fields = [
-            ('type_colis', 'Type de colis'),
+            ('type_colis', 'Type de Pre-Packing'),
             ('dossier', 'Dossier'),
             ('client', 'Client'),
             ('charge_projet', 'Charge de projet'),
@@ -9545,7 +9636,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
             ('bon', 'N° Bon reception'),
         ]
         for key, field_label in fields:
-            value = _as_text(label.get(key)).strip()
+            value = _display_prepacking_type(label.get(key)) if key == 'type_colis' else _as_text(label.get(key)).strip()
             if not value:
                 continue
             stream_lines += [
@@ -9574,7 +9665,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
                 '/Qr1 Do',
                 'Q',
                 'BT', '/F2 6 Tf', f'{qr_x + 1:.2f} 17 Td',
-                '(SCAN - CONTENU DU COLIS) Tj', 'ET',
+                '(SCAN - CONTENU PRE-PACKING) Tj', 'ET',
             ]
 
         stream = "\n".join(stream_lines).encode("latin-1", errors="replace")
@@ -9673,12 +9764,12 @@ def _resolve_colis_repartition(selected_items, raw_assignments, colis_refs):
             continue
         assignments[key] = ci
     if set(assignments) != set(expected):
-        raise ValueError("Chaque article ou partie physique doit être associé à un colis.")
+        raise ValueError("Chaque Article ou partie physique doit être associé à un Pre-Packing.")
     used = set(assignments.values())
     if len(colis_refs) > len(expected):
-        raise ValueError("Le nombre de colis ne peut pas dépasser le nombre d'articles ou parties physiques réceptionnés.")
+        raise ValueError("Le nombre de Pre-Packings ne peut pas dépasser le nombre d'Articles ou parties physiques réceptionnés.")
     if used != set(range(len(colis_refs))):
-        raise ValueError("Chaque colis créé doit contenir au moins un article ou une partie.")
+        raise ValueError("Chaque Pre-Packing créé doit contenir au moins un Article ou une partie.")
     return {expected[k]: colis_refs[ci] for k, ci in assignments.items()}
 
 
@@ -9755,9 +9846,9 @@ def api_create_bon_livraison(ticket_id):
     if not lieu_stockage:
         return jsonify({'ok': False, 'error': 'Lieu de stockage obligatoire'}), 400
     if not numero_dossier:
-        return jsonify({'ok': False, 'error': 'N° dossier obligatoire pour numéroter les colis'}), 400
+        return jsonify({'ok': False, 'error': 'N° dossier obligatoire pour numéroter les Pre-Packings'}), 400
     if nombre_colis < 1:
-        return jsonify({'ok': False, 'error': 'Le nombre total de colis doit être supérieur ou égal à 1'}), 400
+        return jsonify({'ok': False, 'error': 'Le nombre total de Pre-Packings doit être supérieur ou égal à 1'}), 400
 
     # Compatibilité avec l'ancienne interface : si elle n'envoie que selected_indexes,
     # on réceptionne le reliquat complet de chaque article sélectionné.
@@ -9893,7 +9984,7 @@ def api_create_bon_livraison(ticket_id):
         colis_refs = _allocate_colis_numbers(numero_dossier, nombre_colis)
         colis_types = _resolve_colis_types(data.get('colis_types'), colis_refs)
         if any(not colis_types.get(ref) for ref in colis_refs):
-            return jsonify({'ok': False, 'error': 'Le type de chaque colis est obligatoire : Softpack, Carton ou Caisse bois.'}), 400
+            return jsonify({'ok': False, 'error': 'Le type de chaque Pre-Packing est obligatoire : Softpack, Carton ou Packing bois.'}), 400
         try:
             _validate_colis_repartition_shape(selected, colis_repartition, len(colis_refs), article_parts)
             reception_esi_ids, parent_part_ids = _expand_selected_items_with_parts(selected, article_parts)
@@ -9949,7 +10040,7 @@ def api_create_bon_livraison(ticket_id):
 
         # Étiquettes colis
         colis_labels = [{
-            'titre': 'COLIS',
+            'titre': 'PRE-PACKING',
             'principal': _colis_display(colis_ref, colis_types.get(colis_ref)),
             'dossier': numero_dossier,
             'client': enl.get('client') or ticket.get('dossier') or '',
@@ -9961,7 +10052,7 @@ def api_create_bon_livraison(ticket_id):
             'qr_url': _colis_qr_url(colis_ref),
         } for colis_ref in colis_refs]
         colis_labels_bytes = _build_labels_pdf_bytes(colis_labels, kind="colis")
-        colis_labels_filename = f"{blr_ref}_etiquettes_colis.pdf"
+        colis_labels_filename = f"{blr_ref}_etiquettes_pre_packing.pdf"
         colis_labels_path = f"{ticket_id}/bons_livraison/{now.strftime('%Y%m%d%H%M%S')}_{colis_labels_filename}"
 
         try:
@@ -9989,7 +10080,7 @@ def api_create_bon_livraison(ticket_id):
             )
         except Exception as e:
             print(f"[COLIS ARTICLES] Creation impossible pour {blr_ref}: {e}")
-            return jsonify({'ok': False, 'error': f'Impossible de créer les colis dans la base Articles : {e}'}), 500
+            return jsonify({'ok': False, 'error': f'Impossible de créer les Pre-Packings dans la base Articles : {e}'}), 500
 
         bon['filename'] = filename
         bon['storage_path'] = storage_path
@@ -10163,12 +10254,12 @@ def api_ticket_notification_url(ticket_id):
     ticket_url = f"{base_url}/demandeur?ticket={urllib.parse.quote(ticket_id, safe='')}"
 
     if module == "Fiche de caisse":
-        link_text = f"Consulter la fiche de caisse {dossier}-{ref}"
-        intro = "La fiche de caisse suivante a été commandée :"
+        link_text = f"Consulter la fiche de Packing {_packing_reference(dossier, ref)}"
+        intro = "Le Packing suivant a été commandé :"
         details = f"""
         <p>
           <strong>Dossier :</strong> {dossier or '-'}<br>
-          <strong>N° caisse / Référence :</strong> {ref or '-'}<br>
+          <strong>N° Packing / Référence :</strong> {_packing_reference(dossier, ref) or '-'}<br>
           <strong>Prêteur :</strong> {preteur or '-'}<br>
           <strong>Dimensions extérieures :</strong> {fiche.get('dimensionsExt') or '-'}<br>
           <strong>Prix de cession :</strong> {fiche.get('prixCession') or '-'}<br>
@@ -10279,12 +10370,12 @@ def _build_notification_content(ticket, ticket_id, notification_mode='final'):
         return html.escape(str(value or "-")).replace("\n", "<br>")
 
     if module == "Fiche de caisse":
-        link_text = f"Consulter la fiche de caisse {dossier}-{ref}"
-        intro = "La fiche de caisse suivante a été commandée :"
+        link_text = f"Consulter la fiche de Packing {_packing_reference(dossier, ref)}"
+        intro = "Le Packing suivant a été commandé :"
         details = f"""
         <p>
           <strong>Dossier :</strong> {esc(dossier)}<br>
-          <strong>N° caisse / Référence :</strong> {esc(ref)}<br>
+          <strong>N° Packing / Référence :</strong> {esc(_packing_reference(dossier, ref))}<br>
           <strong>Prêteur :</strong> {esc(preteur)}<br>
           <strong>Dimensions extérieures :</strong> {esc(fiche.get('dimensionsExt'))}<br>
           <strong>Prix de cession :</strong> {esc(fiche.get('prixCession'))}<br>
@@ -10605,7 +10696,7 @@ def api_ticket_articles_lies(ticket_id):
     if not ticket:
         return jsonify({'ok': False, 'error': 'Ticket introuvable'}), 404
     if _as_text(ticket.get('module')).strip() != 'Fiche de caisse':
-        return jsonify({'ok': False, 'error': "Ce ticket n'est pas une fiche de caisse"}), 400
+        return jsonify({'ok': False, 'error': "Ce ticket n'est pas une fiche de Packing"}), 400
 
     if request.method == 'GET':
         try:
@@ -10625,20 +10716,20 @@ def api_ticket_articles_lies(ticket_id):
         if esi_id and esi_id not in esi_ids:
             esi_ids.append(esi_id)
 
-    # Référence canonique de la caisse : N° dossier + N° caisse.
-    # Exemple : dossier 101129, caisse 1 -> 101129-01.
+    # Référence canonique du Packing : C-N° dossier-N° Packing.
+    # Le champ technique ticket.ref reste inchangé pour la compatibilité historique.
     dossier_caisse = _as_text(ticket.get('dossier')).strip()
     numero_brut = _as_text(ticket.get('ref')).strip()
     numero_norm = _normalise_numero_caisse(numero_brut) if numero_brut else ''
     if not dossier_caisse or not numero_norm:
         return jsonify({
             'ok': False,
-            'error': "Impossible de déterminer la référence de caisse (N° dossier ou N° caisse manquant)."
+            'error': "Impossible de déterminer la référence du Packing (N° dossier ou N° Packing manquant)."
         }), 400
 
-    numero_caisse = numero_norm.zfill(2) if numero_norm.isdigit() else numero_brut
-    caisse_ref = f"{dossier_caisse}-{numero_caisse}"
-    equivalent_refs = {caisse_ref, f"{dossier_caisse}-{numero_norm}"}
+    caisse_ref = _packing_reference(dossier_caisse, numero_brut)
+    legacy_ref = _legacy_packing_reference(dossier_caisse, numero_brut)
+    equivalent_refs = {x for x in (caisse_ref, legacy_ref, f"{dossier_caisse}-{numero_norm}") if x}
 
     # Mémorise l'ancienne sélection pour savoir quels articles ont été retirés.
     previous_ids = []
@@ -10697,7 +10788,7 @@ def api_ticket_articles_lies(ticket_id):
         if missing:
             return jsonify({
                 'ok': False,
-                'error': 'Certains articles sont introuvables ou sont des COLIS : ' + ', '.join(missing[:10])
+                'error': 'Certains Articles sont introuvables ou sont des Pre-Packings : ' + ', '.join(missing[:10])
             }), 400
 
         if conflicts:
@@ -10706,7 +10797,7 @@ def api_ticket_articles_lies(ticket_id):
             )
             return jsonify({
                 'ok': False,
-                'error': "Certains articles sont déjà liés à une autre caisse : " + details
+                'error': "Certains Articles sont déjà liés à un autre Packing : " + details
             }), 409
 
         now = datetime.now().isoformat()
@@ -10724,14 +10815,15 @@ def api_ticket_articles_lies(ticket_id):
                     current_colis = _as_text(row.get('dernier_colis')).strip()
 
                     if esi_id in esi_ids:
-                        # Article coché : le N° de caisse EST aussi le N° de colis.
+                        # Article coché : le Packing et le Pre-Packing sont désormais deux notions distinctes.
+                        # On renseigne uniquement la référence Packing C-... et on conserve le Pre-Packing actuel.
                         target_ref = caisse_ref
-                        target_colis = caisse_ref
+                        target_colis = current_colis
                     elif esi_id in previous_ids:
-                        # Article décoché : retire uniquement les valeurs qui correspondent
-                        # à CETTE caisse, sans effacer une autre affectation éventuelle.
+                        # Article décoché : retire uniquement le Packing de CETTE fiche.
+                        # Le Pre-Packing reste inchangé.
                         target_ref = '' if current_ref in equivalent_refs else current_ref
-                        target_colis = '' if current_colis in equivalent_refs else current_colis
+                        target_colis = current_colis
                     else:
                         continue
 
@@ -10794,6 +10886,7 @@ def api_ticket_articles_lies(ticket_id):
             'articles': selected,
             'count': len(selected),
             'ref_caisse': caisse_ref,
+            'numero_packing': caisse_ref,
             'numero_colis': caisse_ref,
         })
 
@@ -10819,8 +10912,8 @@ def api_export_excel():
 
     ws.append([
         "ID","Module","Statut","Date création","Date rendu","Délai RDV → rendu (jours)",
-        "Dossier / Client","Réf / N° caisse","Chargé de projet","Projet / Expo",
-        "Type de caisse","Dimensions","Prix devis",
+        "Dossier / Client","Réf / N° Packing","Chargé de projet","Projet / Expo",
+        "Type de Packing","Dimensions","Prix devis",
         "Prix d'achat","Prix cession","Commentaire","Choix du caissier",
         "Date RDV","Heure RDV","Lieu RDV"
     ])
@@ -10975,13 +11068,13 @@ def api_export_excel():
 
         ws.append([
             t.get('id',''),
-            t.get('module',''),
+            _module_display_label(t.get('module','')),
             t.get('status',''),
             date_creation,
             date_terminee,
             delai_jours,
             t.get('dossier',''),
-            t.get('ref',''),
+            (_packing_reference(t.get('dossier'), t.get('ref')) if t.get('module') == 'Fiche de caisse' else t.get('ref','')),
             t.get('chargeProjet',''),
             t.get('expo') or t.get('objet',''),
             t.get('typeCaisse',''),
@@ -11040,14 +11133,14 @@ def api_export_ticket_pdf(ticket_id):
     lines.append("=" * 70)
     lines.append("")
     add_wrapped(lines, "ID", ticket.get('id'))
-    add_wrapped(lines, "Module", ticket.get('module'))
+    add_wrapped(lines, "Module", _module_display_label(ticket.get('module')))
     add_wrapped(lines, "Statut", ticket.get('status'))
     add_wrapped(lines, "Dossier / Client", ticket.get('dossier'))
-    add_wrapped(lines, "Reference", ticket.get('ref'))
+    add_wrapped(lines, "Reference", _packing_reference(ticket.get('dossier'), ticket.get('ref')) if ticket.get('module') == 'Fiche de caisse' else ticket.get('ref'))
     add_wrapped(lines, "Charge de projet", ticket.get('chargeProjet'))
     add_wrapped(lines, "Projet / Expo", ticket.get('expo') or ticket.get('objet'))
     add_wrapped(lines, "Preteur", ticket.get('preteur'))
-    add_wrapped(lines, "Type de caisse", ticket.get('typeCaisse'))
+    add_wrapped(lines, "Type de Packing", ticket.get('typeCaisse'))
     add_wrapped(lines, "Dimensions", ticket.get('dimensions'))
     add_wrapped(lines, "Prix devis", ticket.get('prixDevis'))
     add_wrapped(lines, "Lieu RDV", ticket.get('lieuRdv'))
@@ -11068,7 +11161,7 @@ def api_export_ticket_pdf(ticket_id):
         lines.append("-" * 70)
         add_wrapped(lines, "Dimensions exterieures", fiche.get('dimensionsExt'))
         add_wrapped(lines, "Prix achat", fiche.get('prixAchat'))
-        add_wrapped(lines, "Type caisse fiche", fiche.get('typeCaisseFiche'))
+        add_wrapped(lines, "Type Packing fiche", fiche.get('typeCaisseFiche'))
         add_wrapped(lines, "Bilan carbone", fiche.get('bilanCarbone'))
         add_wrapped(lines, "Poids", fiche.get('poids'))
         add_wrapped(lines, "Choix caissier", fiche.get('choixCaissier'))
