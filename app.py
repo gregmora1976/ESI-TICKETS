@@ -717,6 +717,22 @@ h1{{font-size:31px;line-height:1.05;margin:9px 0 5px}}
 # -----------------------------------------------------------------------------
 _ARTICLE_LOCK = threading.Lock()
 
+# Colonnes utiles à la liste et aux fiches Articles.
+# search_text est volontairement exclu des réponses : il reste utilisé côté Supabase
+# pour la recherche, mais peut être très volumineux car il duplique une grande partie
+# de raw_json.
+_ARTICLE_LIST_SELECT = (
+    "esi_id,article_no,source_module,type_objet,reference,description,dossier,client,projet,"
+    "ref_caisse,longueur_cm,largeur_cm,hauteur_cm,poids_kg,lieu_stockage,"
+    "statut_logistique,dernier_colis,derniere_reception_ref,created_at,updated_at,raw_json"
+)
+_ARTICLE_DETAIL_SELECT = (
+    "esi_id,article_no,ticket_id,source_module,source_index,unit_index,type_objet,reference,description,"
+    "dossier,client,projet,ref_caisse,transporteur_ref,longueur_cm,largeur_cm,hauteur_cm,"
+    "volume_m3,surface_m2,poids_kg,lieu_stockage,statut_logistique,dernier_colis,"
+    "derniere_reception_ref,created_at,updated_at,raw_json"
+)
+
 
 def _article_quantity(value, default=1):
     try:
@@ -878,6 +894,14 @@ def _article_row_to_public(row):
             category = "ARTICLE"
     row["categorie_metier"] = category
     return row
+
+
+def _article_row_to_list_public(row):
+    """Version légère pour la grille : conserve les champs métier mais pas raw_json."""
+    public = _article_row_to_public(row)
+    public.pop("raw_json", None)
+    public.pop("search_text", None)
+    return public
 
 
 def _article_number(value):
@@ -1315,7 +1339,7 @@ def _article_parts_for_parent(parent_esi, dossier=""):
     dossier = _as_text(dossier).strip()
     if not parent_esi:
         return []
-    query = "select=*&order=article_no.asc&limit=5000"
+    query = "select=" + _ARTICLE_DETAIL_SELECT + "&order=article_no.asc&limit=5000"
     if dossier:
         query += "&dossier=eq." + urllib.parse.quote(dossier, safe='')
     rows = supabase_rest_request("GET", "articles", query) or []
@@ -2224,7 +2248,7 @@ def api_articles():
     # Quand un filtre métier doit être appliqué après lecture de raw_json, on lit jusqu'à
     # 500 lignes techniques pour ne pas tronquer artificiellement les résultats.
     query_limit = 500 if business_filter in ("PRE-PACKING", "PACKING") else limit
-    query = "select=*&order=article_no.desc&limit=" + str(query_limit)
+    query = "select=" + _ARTICLE_LIST_SELECT + "&order=article_no.desc&limit=" + str(query_limit)
 
     if technical_type in ("PRODUIT", "CONTENANT"):
         query += "&type_objet=eq." + urllib.parse.quote(technical_type, safe='')
@@ -2233,7 +2257,7 @@ def api_articles():
         pattern = "*" + q.replace("*", "") + "*"
         query += "&search_text=ilike." + urllib.parse.quote(pattern, safe='*')
 
-    rows = [_article_row_to_public(row) for row in (supabase_rest_request("GET", "articles", query) or [])]
+    rows = [_article_row_to_list_public(row) for row in (supabase_rest_request("GET", "articles", query) or [])]
     if business_filter:
         rows = [row for row in rows if row.get("categorie_metier") == business_filter]
     return jsonify(rows[:limit])
@@ -2441,10 +2465,10 @@ def api_articles_by_dossier():
     rows = supabase_rest_request(
         "GET",
         "articles",
-        f"select=*&dossier=eq.{safe_dossier}&order=article_no.asc&limit=5000"
+        f"select={_ARTICLE_LIST_SELECT}&dossier=eq.{safe_dossier}&order=article_no.asc&limit=5000"
     ) or []
 
-    articles = [_article_row_to_public(row) for row in rows]
+    articles = [_article_row_to_list_public(row) for row in rows]
     return jsonify({
         "ok": True,
         "dossier": dossier,
@@ -3251,7 +3275,7 @@ def api_article_detail(esi_id):
     esi_id = _as_text(esi_id).strip()
     safe_esi = urllib.parse.quote(esi_id, safe='-')
     rows = supabase_rest_request(
-        "GET", "articles", f"select=*&esi_id=eq.{safe_esi}&limit=1"
+        "GET", "articles", f"select={_ARTICLE_DETAIL_SELECT}&esi_id=eq.{safe_esi}&limit=1"
     ) or []
     if not rows:
         return jsonify({"error": "Article introuvable"}), 404
@@ -3276,13 +3300,22 @@ def api_article_detail(esi_id):
     composition_parts = []
     if part_meta.get("parent_esi"):
         safe_parent = urllib.parse.quote(part_meta["parent_esi"], safe='-')
-        parent_rows = supabase_rest_request("GET", "articles", f"select=*&esi_id=eq.{safe_parent}&limit=1") or []
+        parent_rows = supabase_rest_request("GET", "articles", f"select={_ARTICLE_DETAIL_SELECT}&esi_id=eq.{safe_parent}&limit=1") or []
         if parent_rows:
             p = _article_row_to_public(parent_rows[0])
             parent_summary = {"esi_id": p.get("esi_id"), "reference": p.get("reference"), "description": p.get("description"), "statut_logistique": p.get("statut_logistique"), "dernier_colis": p.get("dernier_colis")}
         composition_parts = _article_parts_for_parent(part_meta["parent_esi"], article.get("dossier"))
     else:
-        composition_parts = _article_parts_for_parent(esi_id, article.get("dossier"))
+        # Avant : chaque ouverture de fiche chargeait jusqu'à 5000 lignes du dossier
+        # pour vérifier si l'article avait des parties. On ne le fait désormais que
+        # pour les articles explicitement déclarés multi-parties.
+        has_declared_parts = (
+            _as_text(article.get("article_en_plusieurs_parties")).strip().lower() in ("oui", "yes", "true", "1")
+            or bool(article_raw.get("parts"))
+            or bool(article_raw.get("parts_total"))
+        )
+        if has_declared_parts:
+            composition_parts = _article_parts_for_parent(esi_id, article.get("dossier"))
 
     detail = {
         "article": article,
