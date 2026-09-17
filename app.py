@@ -2210,6 +2210,41 @@ function ensureManualCreateUI(){
   };
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',ensureManualCreateUI);else ensureManualCreateUI();
+
+// Ajoute l'impression d'une etiquette directement depuis la carte d'identite.
+function installIdentityLabelPrint(){
+  if(typeof renderArticleDetail!=='function') return;
+  if(renderArticleDetail.__esiLabelPrintInstalled) return;
+  const originalRenderArticleDetail=renderArticleDetail;
+  const wrapped=function(d,editing=false){
+    const result=originalRenderArticleDetail.apply(this,arguments);
+    try{
+      const article=(d&&d.article)||{};
+      const esi=String(article.esi_id||((typeof articleDetailState!=='undefined'&&articleDetailState.esi)||'')).trim();
+      const category=String(article.categorie_metier||'').trim().toUpperCase() || (String(article.type_objet||'').trim().toUpperCase()==='CONTENANT'?'PRE-PACKING':'ARTICLE');
+      const actions=document.querySelector('#articleModalBody .article-hero-actions');
+      if(actions){
+        const previous=document.getElementById('articlePrintLabelBtn');
+        if(previous) previous.remove();
+        if(!editing&&esi){
+          const btn=document.createElement('button');
+          btn.className='btn hero-action secondary';
+          btn.id='articlePrintLabelBtn';
+          btn.type='button';
+          const wording=category==='PACKING'?'Packing':(category==='PRE-PACKING'?'Pré-Packing':'Article');
+          btn.textContent='Imprimer l’étiquette '+wording;
+          btn.title='Ouvrir l’étiquette prête à imprimer';
+          btn.onclick=()=>window.open('/api/articles/'+encodeURIComponent(esi)+'/etiquette','_blank','noopener');
+          actions.insertBefore(btn,actions.firstChild);
+        }
+      }
+    }catch(e){console.error('Ajout bouton etiquette impossible',e)}
+    return result;
+  };
+  wrapped.__esiLabelPrintInstalled=true;
+  renderArticleDetail=wrapped;
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',installIdentityLabelPrint);else installIdentityLabelPrint();
 })();"""
 
 @app.route('/articles')
@@ -3652,6 +3687,96 @@ def api_article_detail(esi_id):
     return jsonify(detail)
 
 
+@app.route('/api/articles/<path:esi_id>/etiquette')
+def api_article_single_label(esi_id):
+    """Génère à la demande l'étiquette de l'Article, du Pré-Packing ou du Packing."""
+    esi_id = _as_text(esi_id).strip()
+    if not esi_id:
+        abort(404)
+    safe_esi = urllib.parse.quote(esi_id, safe='-')
+    rows = supabase_rest_request('GET', 'articles', f'select=*&esi_id=eq.{safe_esi}&limit=1') or []
+    if not rows:
+        abort(404)
+
+    article = _article_row_to_public(rows[0])
+    category = _as_text(article.get('categorie_metier')).strip().upper() or 'ARTICLE'
+    dossier = _as_text(article.get('dossier')).strip()
+    client = _as_text(article.get('client')).strip()
+    charge_projet = _as_text(article.get('charge_projet')).strip()
+    lieu = _as_text(article.get('lieu_stockage')).strip()
+    bon = _as_text(article.get('derniere_reception_ref') or article.get('transporteur_ref')).strip()
+
+    if category == 'PRE-PACKING':
+        prepacking_ref = _as_text(article.get('numero_colis') or article.get('reference') or article.get('dernier_colis')).strip()
+        if not prepacking_ref:
+            prepacking_ref = esi_id
+        prepacking_type = _normalise_colis_type(article.get('type_colis'))
+        label = {
+            'titre': 'PRE-PACKING',
+            'principal': _colis_display(prepacking_ref, prepacking_type),
+            'dossier': dossier,
+            'client': client,
+            'charge_projet': charge_projet,
+            'colis': prepacking_ref,
+            'type_colis': prepacking_type,
+            'lieu': lieu,
+            'bon': bon,
+            'qr_url': _colis_qr_url(prepacking_ref),
+        }
+        pdf_bytes = _build_labels_pdf_bytes([label], kind='colis')
+        filename = f"{safe_filename(prepacking_ref)}_etiquette_pre_packing.pdf"
+    elif category == 'PACKING':
+        packing_ref = _as_text(article.get('packing_reference') or article.get('reference') or article.get('ref_caisse')).strip()
+        if not packing_ref:
+            packing_ref = esi_id
+        packing_type = _as_text(article.get('packing_type')).strip()
+        label = {
+            'titre': 'PACKING',
+            'principal': packing_ref,
+            'dossier': dossier,
+            'client': client,
+            'charge_projet': charge_projet,
+            'packing_type': packing_type,
+            'lieu': lieu,
+            'bon': bon,
+            # Le QR ouvre la carte d'identité de la ligne PACKING ; le mode Mise en caisse
+            # reconnait également cette URL /article/ESI-x comme un Packing grâce à la base.
+            'qr_url': _article_qr_url(esi_id),
+        }
+        pdf_bytes = _build_labels_pdf_bytes([label], kind='colis')
+        filename = f"{safe_filename(packing_ref)}_etiquette_packing.pdf"
+    else:
+        label = {
+            'titre': 'ARTICLE',
+            'principal': esi_id,
+            'esi_id': esi_id,
+            'dossier': dossier,
+            'client': client,
+            'charge_projet': charge_projet,
+            'reference': _as_text(article.get('reference')).strip(),
+            'designation': _as_text(article.get('description')).strip(),
+            'partie': _as_text(article.get('partie_label')).strip(),
+            'article_principal': _as_text(article.get('parent_esi')).strip(),
+            'quantite': '1',
+            'colis': _as_text(article.get('dernier_colis')).strip(),
+            'lieu': lieu,
+            'bon': bon,
+            'qr_url': _article_qr_url(esi_id),
+        }
+        pdf_bytes = _build_labels_pdf_bytes([label], kind='article')
+        filename = f"{safe_filename(esi_id)}_etiquette_article.pdf"
+
+    response = send_file(
+        BytesIO(pdf_bytes),
+        mimetype='application/pdf',
+        as_attachment=False,
+        download_name=filename,
+    )
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Content-Disposition'] = f'inline; filename="{filename}"'
+    return response
+
+
 @app.route('/article/<path:esi_id>')
 def article_public_page(esi_id):
     """Carte d'identité mobile en lecture seule ouverte depuis le QR de l'étiquette article."""
@@ -3679,6 +3804,8 @@ def article_public_page(esi_id):
         abort(404)
 
     article = _article_row_to_public(rows[0])
+    public_category = _as_text(article.get('categorie_metier')).strip().upper() or 'ARTICLE'
+    public_entity_label = 'PACKING' if public_category == 'PACKING' else ('PRE-PACKING' if public_category == 'PRE-PACKING' else 'ARTICLE')
     raw = article.get('raw_json') if isinstance(article.get('raw_json'), dict) else {}
     raw = dict(raw or {})
     part_meta = _article_part_meta(article)
@@ -3777,7 +3904,7 @@ def article_public_page(esi_id):
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>{esc(esi_id)} - Carte d’identité article</title>
+<title>{esc(esi_id)} - Carte d’identité {esc(public_entity_label)}</title>
 <style>
 :root{{--blue:#0f2f4f;--blue2:#16476f;--accent:#0284c7;--light:#eef8fd;--line:#cfe3ee;--text:#17324a;--muted:#60758a}}
 *{{box-sizing:border-box}}
@@ -3814,7 +3941,7 @@ h1{{font-size:30px;line-height:1.05;margin:16px 0 5px;overflow-wrap:anywhere}}
   <header class="hero">
     <div class="hero-top">
       <img class="logo" src="/static/logo.png" alt="ESI" onerror="this.style.display='none'">
-      <div class="brand">ESI TICKETS · CARTE D’IDENTITÉ ARTICLE</div>
+      <div class="brand">ESI TICKETS · CARTE D’IDENTITÉ {esc(public_entity_label)}</div>
     </div>
     <h1>{esc(article.get('reference') or article.get('esi_id') or esi_id)}</h1>
     <div class="desc">{esc(article.get('description'))}</div>
@@ -10198,8 +10325,10 @@ def _build_labels_pdf_bytes(labels, kind="article"):
                 'BT', '/F2 20 Tf', f'{margin} {page_height - 40:.2f} Td', '(ESI) Tj', 'ET'
             ]
 
-        # Titre COLIS en haut à droite du logo.
+        # Titre de l'emballage en haut à droite du logo.
         title = _as_text(label.get('titre') or 'PRE-PACKING').strip()
+        is_packing_label = title.upper() == 'PACKING'
+        packaging_name = 'PACKING' if is_packing_label else 'PRE-PACKING'
         stream_lines += [
             'BT', '/F2 17 Tf', f'{page_width - 72:.2f} {page_height - 36:.2f} Td',
             f'({pdf_escape(title)}) Tj', 'ET'
@@ -10212,7 +10341,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
         if principal:
             stream_lines += [
                 'BT', '/F2 9 Tf', f'{margin} {y:.2f} Td',
-                '(N\260 PRE-PACKING) Tj', 'ET'
+                f'(N\260 {packaging_name}) Tj', 'ET'
             ]
             y -= 18
             principal_size = 23 if len(principal) <= 18 else 19
@@ -10231,7 +10360,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
         y -= 22
 
         fields = [
-            ('type_colis', 'Type de Pre-Packing'),
+            (('packing_type' if is_packing_label else 'type_colis'), ('Type de Packing' if is_packing_label else 'Type de Pre-Packing')),
             ('dossier', 'Dossier'),
             ('client', 'Client'),
             ('charge_projet', 'Charge de projet'),
@@ -10268,7 +10397,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
                 '/Qr1 Do',
                 'Q',
                 'BT', '/F2 6 Tf', f'{qr_x + 1:.2f} 17 Td',
-                '(SCAN - CONTENU PRE-PACKING) Tj', 'ET',
+                f'({"SCAN - CARTE IDENTITE PACKING" if is_packing_label else "SCAN - CONTENU PRE-PACKING"}) Tj', 'ET',
             ]
 
         stream = "\n".join(stream_lines).encode("latin-1", errors="replace")
