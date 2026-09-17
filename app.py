@@ -852,6 +852,7 @@ def _article_payload_from_item(ticket, item, source_module=None, source_index=No
 _ARTICLE_EXTRA_FIELDS = {
     "charge_projet", "type_colis", "numero_colis", "colis_esi", "articles_lies",
     "categorie_metier", "packing_reference", "packing_ticket_id", "packing_type",
+    "prepackings_lies", "mise_en_caisse_ticket_id", "mise_en_caisse_date",
     "parent_esi", "partie_label", "partie_index", "partie_total", "article_en_plusieurs_parties",
     "oeuvre_reference", "artiste", "oeuvre_titre", "oeuvre_technique",
     "oeuvre_longueur_cm", "oeuvre_largeur_cm", "oeuvre_hauteur_cm",
@@ -1185,6 +1186,22 @@ def _ensure_packing_article_record(ticket):
     reception = dict(reception or {})
     linked = _packing_article_link_summaries(ticket)
     linked_ids = [x['esi_id'] for x in linked if x.get('esi_id')]
+    prepacking_linked = []
+    for item in ticket.get('prepackings_lies') or []:
+        if isinstance(item, dict):
+            esi_id = _as_text(item.get('esi_id')).strip()
+            if not esi_id:
+                continue
+            prepacking_linked.append({
+                'esi_id': esi_id,
+                'reference': _as_text(item.get('reference')).strip(),
+                'dossier': _as_text(item.get('dossier')).strip(),
+            })
+        else:
+            esi_id = _as_text(item).strip()
+            if esi_id:
+                prepacking_linked.append({'esi_id': esi_id, 'reference': '', 'dossier': dossier})
+    prepacking_ids = list(dict.fromkeys(x['esi_id'] for x in prepacking_linked if x.get('esi_id')))
 
     existing = _find_packing_article_record(ticket)
     existing_raw = existing.get('raw_json') if existing and isinstance(existing.get('raw_json'), dict) else {}
@@ -1208,6 +1225,7 @@ def _ensure_packing_article_record(ticket):
         'packing_ticket_id': _as_text(ticket.get('id')).strip(),
         'packing_type': packing_type,
         'articles_lies': ', '.join(linked_ids),
+        'prepackings_lies': ', '.join(prepacking_ids),
     })
     raw.update({
         'source': 'packing_ticket',
@@ -1217,6 +1235,8 @@ def _ensure_packing_article_record(ticket):
         'packing_type': packing_type,
         'articles_lies': linked,
         'packing_article_esi_ids': linked_ids,
+        'prepackings_lies': prepacking_linked,
+        'packing_prepacking_esi_ids': prepacking_ids,
         'status_ticket': statut_ticket,
         'reception': reception,
         'article_fields': extra,
@@ -2898,6 +2918,317 @@ def _validate_mise_en_caisse_request(payload):
         'validation_mode': 'demande_uniquement',
     }
 
+
+def _mise_en_caisse_rows_by_ids(esi_ids):
+    """Charge des lignes Articles par N° ESI, par lots, sans changer leur ordre métier."""
+    clean_ids = list(dict.fromkeys(
+        _as_text(x).strip() for x in (esi_ids or []) if _as_text(x).strip()
+    ))
+    rows_by_id = {}
+    for offset in range(0, len(clean_ids), 100):
+        part = clean_ids[offset:offset + 100]
+        if not part:
+            continue
+        encoded = urllib.parse.quote(','.join(part), safe=',-_')
+        rows = supabase_rest_request(
+            'GET', 'articles', 'select=*&esi_id=in.(' + encoded + ')&limit=100'
+        ) or []
+        for row in rows:
+            esi_id = _as_text(row.get('esi_id')).strip()
+            if esi_id:
+                rows_by_id[esi_id] = dict(row)
+    return rows_by_id
+
+
+def _mise_en_caisse_prepacking_member_ids(prepacking_row, snapshot=None):
+    """Retourne les Articles actuellement contenus dans un Pré-Packing.
+
+    La base actuelle est prioritaire. Le snapshot du ticket sert uniquement de secours
+    pour les anciens Pré-Packings dont la composition n'aurait pas été persistée.
+    """
+    raw = prepacking_row.get('raw_json') if isinstance(prepacking_row.get('raw_json'), dict) else {}
+    member_ids = raw.get('article_esi_ids') or []
+    if not isinstance(member_ids, list):
+        member_ids = []
+    if not member_ids and isinstance(snapshot, dict):
+        member_ids = snapshot.get('member_esi_ids') or []
+        if not isinstance(member_ids, list):
+            member_ids = []
+    return list(dict.fromkeys(
+        _as_text(x).strip() for x in member_ids if _as_text(x).strip()
+    ))
+
+
+def _apply_mise_en_caisse_to_articles(ticket):
+    """Applique une Mise en caisse validée dans la Base Articles.
+
+    Règles métier :
+      - Article direct -> ref_caisse = Packing cible ;
+      - Article déjà dans un Pré-Packing -> dernier_colis reste inchangé et
+        ref_caisse reçoit le Packing ;
+      - Pré-Packing -> ref_caisse = Packing cible ;
+      - les Articles contenus dans un Pré-Packing reçoivent eux aussi le Packing ;
+      - la fiche Packing conserve la liste aplatie des Articles et la liste des
+        Pré-Packings liés ;
+      - l'opération est idempotente et ne déplace jamais silencieusement un élément
+        déjà rattaché à un autre Packing.
+    """
+    if _as_text(ticket.get('module')).strip() != 'Mise en caisse':
+        return {'applied': False, 'reason': 'not_mise_en_caisse'}
+
+    mise = ticket.get('miseEnCaisse') if isinstance(ticket.get('miseEnCaisse'), dict) else {}
+    mise = dict(mise or {})
+    dossier = _as_text(mise.get('dossier') or ticket.get('dossier')).strip()
+    packing_ref = _as_text(mise.get('packing_reference') or ticket.get('ref')).strip()
+    packing_ticket_id = _as_text(mise.get('packing_ticket_id')).strip()
+    direct_article_ids = list(dict.fromkeys(
+        _as_text(x).strip() for x in (mise.get('article_esi_ids') or []) if _as_text(x).strip()
+    ))
+    prepacking_ids = list(dict.fromkeys(
+        _as_text(x).strip() for x in (mise.get('prepacking_esi_ids') or []) if _as_text(x).strip()
+    ))
+
+    if not dossier:
+        raise ValueError('Mise en caisse : N° dossier manquant.')
+    if not packing_ref:
+        raise ValueError('Mise en caisse : Packing cible manquant.')
+    if not direct_article_ids and not prepacking_ids:
+        raise ValueError('Mise en caisse : aucun Article ou Pré-Packing à valider.')
+
+    # Vérifie que le Packing cible existe toujours au moment de la validation.
+    current_data = _mise_en_caisse_dossier_data(dossier)
+    current_packing = next((
+        p for p in (current_data.get('packings') or [])
+        if _as_text(p.get('reference')).strip() == packing_ref
+    ), None)
+    if not current_packing:
+        raise ValueError(f'Mise en caisse : le Packing {packing_ref} n’existe plus dans le dossier {dossier}.')
+    if not packing_ticket_id:
+        packing_ticket_id = _as_text(current_packing.get('packing_ticket_id')).strip()
+
+    # Références équivalentes historiques du même Packing, afin de ne pas créer
+    # de faux conflits avec une ancienne valeur dossier-numéro.
+    equivalent_refs = {
+        packing_ref,
+        _legacy_packing_reference(dossier, packing_ref),
+    }
+    equivalent_refs = {x for x in equivalent_refs if _as_text(x).strip()}
+
+    selected_rows = _mise_en_caisse_rows_by_ids(direct_article_ids + prepacking_ids)
+    missing = [x for x in direct_article_ids + prepacking_ids if x not in selected_rows]
+    if missing:
+        raise ValueError('Mise en caisse : élément(s) introuvable(s) dans la Base Articles : ' + ', '.join(missing[:10]))
+
+    prepacking_snapshots = {
+        _as_text(x.get('esi_id')).strip(): x
+        for x in (mise.get('prepackings') or [])
+        if isinstance(x, dict) and _as_text(x.get('esi_id')).strip()
+    }
+
+    member_ids = []
+    validation_errors = []
+    for esi_id in direct_article_ids:
+        public = _article_row_to_public(selected_rows[esi_id])
+        if _as_text(public.get('categorie_metier')).strip().upper() != 'ARTICLE':
+            validation_errors.append(f'{esi_id} n’est pas un Article')
+        if _as_text(public.get('dossier')).strip() != dossier:
+            validation_errors.append(f'{esi_id} appartient au dossier {_as_text(public.get("dossier")).strip() or "?"}')
+
+    for esi_id in prepacking_ids:
+        row = selected_rows[esi_id]
+        public = _article_row_to_public(row)
+        if _as_text(public.get('categorie_metier')).strip().upper() != 'PRE-PACKING':
+            validation_errors.append(f'{esi_id} n’est pas un Pré-Packing')
+        if _as_text(public.get('dossier')).strip() != dossier:
+            validation_errors.append(f'{esi_id} appartient au dossier {_as_text(public.get("dossier")).strip() or "?"}')
+        member_ids.extend(_mise_en_caisse_prepacking_member_ids(row, prepacking_snapshots.get(esi_id)))
+
+    if validation_errors:
+        raise ValueError('Mise en caisse impossible : ' + ' ; '.join(validation_errors[:10]))
+
+    member_ids = list(dict.fromkeys(member_ids))
+    member_rows = _mise_en_caisse_rows_by_ids(member_ids)
+    missing_members = [x for x in member_ids if x not in member_rows]
+    if missing_members:
+        raise ValueError(
+            'Mise en caisse : Article(s) contenu(s) dans un Pré-Packing introuvable(s) : '
+            + ', '.join(missing_members[:10])
+        )
+
+    # Tous les membres doivent rester des Articles du même dossier.
+    for esi_id in member_ids:
+        public = _article_row_to_public(member_rows[esi_id])
+        if _as_text(public.get('categorie_metier')).strip().upper() != 'ARTICLE':
+            raise ValueError(f'Mise en caisse : {esi_id} contenu dans un Pré-Packing n’est pas un Article.')
+        if _as_text(public.get('dossier')).strip() != dossier:
+            raise ValueError(f'Mise en caisse : {esi_id} n’appartient pas au dossier {dossier}.')
+
+    all_article_ids = list(dict.fromkeys(direct_article_ids + member_ids))
+    all_rows = dict(selected_rows)
+    all_rows.update(member_rows)
+    affected_ids = list(dict.fromkeys(all_article_ids + prepacking_ids))
+
+    conflicts = []
+    for esi_id in affected_ids:
+        current_ref = _as_text(all_rows[esi_id].get('ref_caisse')).strip()
+        if current_ref and current_ref not in equivalent_refs:
+            conflicts.append(f'{esi_id} → {current_ref}')
+    if conflicts:
+        raise ValueError(
+            'Mise en caisse impossible : certains éléments sont déjà liés à un autre Packing : '
+            + ', '.join(conflicts[:10])
+        )
+
+    now_iso = datetime.now().isoformat()
+    changed = []
+
+    def patch_element(esi_id):
+        row = all_rows[esi_id]
+        raw = row.get('raw_json') if isinstance(row.get('raw_json'), dict) else {}
+        raw = dict(raw or {})
+        old_raw = row.get('raw_json') if isinstance(row.get('raw_json'), dict) else {}
+        old_raw = dict(old_raw or {})
+        history = list(raw.get('mise_en_caisse_history') or [])
+        ticket_id = _as_text(ticket.get('id')).strip()
+        if not any(_as_text(x.get('ticket_id')).strip() == ticket_id for x in history if isinstance(x, dict)):
+            history.append({
+                'ticket_id': ticket_id,
+                'date': now_iso,
+                'packing_reference': packing_ref,
+                'mode_saisie': _as_text(mise.get('mode_saisie')).strip(),
+            })
+        raw['mise_en_caisse_history'] = history
+        raw['packing_actuel'] = packing_ref
+        extra = raw.get('article_fields') if isinstance(raw.get('article_fields'), dict) else {}
+        extra = dict(extra or {})
+        extra['packing_reference'] = packing_ref
+        extra['mise_en_caisse_ticket_id'] = ticket_id
+        extra['mise_en_caisse_date'] = now_iso
+        raw['article_fields'] = extra
+
+        patch = {
+            'ref_caisse': packing_ref,
+            # Important : dernier_colis n'est PAS modifié. Le lien Article -> Pré-Packing
+            # reste donc intact pendant que l'on ajoute le lien vers le Packing.
+            'updated_at': now_iso,
+            'raw_json': raw,
+        }
+        merged = dict(row)
+        merged.update(patch)
+        patch['search_text'] = _article_search_text(merged)
+        safe_esi = urllib.parse.quote(esi_id, safe='-')
+        supabase_rest_request('PATCH', 'articles', f'esi_id=eq.{safe_esi}', patch, prefer='return=minimal')
+        changed.append({
+            'esi_id': esi_id,
+            'ref_caisse': row.get('ref_caisse') or '',
+            'updated_at': row.get('updated_at'),
+            'raw_json': old_raw,
+            'search_text': row.get('search_text') or '',
+        })
+
+    packing_ticket = None
+    packing_ticket_backup = None
+    try:
+        with _ARTICLE_LOCK:
+            for esi_id in affected_ids:
+                patch_element(esi_id)
+
+        # Synchronise également la fiche Packing existante : les Articles directs et
+        # ceux contenus dans les Pré-Packings deviennent visibles dans sa composition.
+        if packing_ticket_id:
+            packing_ticket = load_ticket(packing_ticket_id)
+        if packing_ticket:
+            if _as_text(packing_ticket.get('module')).strip() != 'Fiche de caisse':
+                raise ValueError('Le ticket Packing associé à la mise en caisse est invalide.')
+            packing_ticket_backup = {
+                'articles_lies': list(packing_ticket.get('articles_lies') or []),
+                'prepackings_lies': list(packing_ticket.get('prepackings_lies') or []),
+                'updatedAt': packing_ticket.get('updatedAt'),
+            }
+
+            existing_article_ids = []
+            for item in packing_ticket.get('articles_lies') or []:
+                val = _as_text(item.get('esi_id') if isinstance(item, dict) else item).strip()
+                if val and val not in existing_article_ids:
+                    existing_article_ids.append(val)
+            merged_article_ids = list(dict.fromkeys(existing_article_ids + all_article_ids))
+            article_rows_for_packing = _mise_en_caisse_rows_by_ids(merged_article_ids)
+            packing_ticket['articles_lies'] = [
+                {
+                    'esi_id': esi_id,
+                    'dossier': _as_text(article_rows_for_packing.get(esi_id, {}).get('dossier')).strip(),
+                    'reference': _as_text(article_rows_for_packing.get(esi_id, {}).get('reference')).strip(),
+                }
+                for esi_id in merged_article_ids if esi_id in article_rows_for_packing
+            ]
+
+            existing_pre_ids = []
+            for item in packing_ticket.get('prepackings_lies') or []:
+                val = _as_text(item.get('esi_id') if isinstance(item, dict) else item).strip()
+                if val and val not in existing_pre_ids:
+                    existing_pre_ids.append(val)
+            merged_pre_ids = list(dict.fromkeys(existing_pre_ids + prepacking_ids))
+            packing_ticket['prepackings_lies'] = [
+                {
+                    'esi_id': esi_id,
+                    'reference': _as_text(selected_rows.get(esi_id, {}).get('reference')).strip(),
+                    'dossier': dossier,
+                }
+                for esi_id in merged_pre_ids if esi_id in selected_rows
+            ]
+            packing_ticket['updatedAt'] = now_iso
+            save_ticket(packing_ticket)
+
+        # Marque le ticket MEC comme effectivement appliqué. Le champ reste dans raw_json.
+        mise['validation_mode'] = 'appliquee_base_articles'
+        mise['appliquee_le'] = now_iso
+        mise['packing_reference'] = packing_ref
+        mise['articles_appliques'] = all_article_ids
+        mise['prepackings_appliques'] = prepacking_ids
+        mise['selection_physique_count'] = len(all_article_ids)
+        ticket['miseEnCaisse'] = mise
+
+        return {
+            'applied': True,
+            'packing_reference': packing_ref,
+            'articles_directs': len(direct_article_ids),
+            'prepackings': len(prepacking_ids),
+            'articles_total': len(all_article_ids),
+            'updated_elements': len(affected_ids),
+            'applied_at': now_iso,
+        }
+
+    except Exception:
+        # Rollback des lignes Articles déjà modifiées.
+        with _ARTICLE_LOCK:
+            for old in reversed(changed):
+                try:
+                    rollback_patch = {
+                        'ref_caisse': old.get('ref_caisse') or '',
+                        'updated_at': old.get('updated_at') or now_iso,
+                        'raw_json': old.get('raw_json') or {},
+                        'search_text': old.get('search_text') or '',
+                    }
+                    supabase_rest_request(
+                        'PATCH', 'articles',
+                        'esi_id=eq.' + urllib.parse.quote(old['esi_id'], safe='-'),
+                        rollback_patch,
+                        prefer='return=minimal'
+                    )
+                except Exception as rollback_error:
+                    print(f"[MISE EN CAISSE] Rollback impossible pour {old.get('esi_id')}: {rollback_error}")
+
+        if packing_ticket and packing_ticket_backup is not None:
+            try:
+                packing_ticket['articles_lies'] = packing_ticket_backup['articles_lies']
+                packing_ticket['prepackings_lies'] = packing_ticket_backup['prepackings_lies']
+                packing_ticket['updatedAt'] = packing_ticket_backup['updatedAt'] or now_iso
+                save_ticket(packing_ticket)
+            except Exception as rollback_error:
+                print(f"[MISE EN CAISSE] Rollback fiche Packing impossible: {rollback_error}")
+        raise
+
+
 def _article_file_link(ticket_id, file_info, kind):
     if not isinstance(file_info, dict) or not file_info.get("name"):
         return None
@@ -3625,6 +3956,7 @@ def api_article_detail(esi_id):
         "demande_enlevement": None,
         "fiche_caisse": None,
         "packing_articles": [],
+        "packing_prepackings": [],
         "receptions": [],
         "documents_source": [],
         "composition": {"is_part": bool(part_meta.get("parent_esi")), "parent": parent_summary, "partie_label": part_meta.get("partie_label") or "", "parts": composition_parts},
@@ -3686,6 +4018,7 @@ def api_article_detail(esi_id):
                 detail["packing_articles"] = _linked_articles_for_ticket(ticket)
             except Exception:
                 detail["packing_articles"] = _packing_article_link_summaries(ticket)
+            detail["packing_prepackings"] = list(ticket.get("prepackings_lies") or [])
         elif module in ("Demande d'enlèvement", "Demande d'enlevement"):
             enl = ticket.get("enlevement") or {}
             detail["demande_enlevement"] = {
@@ -4007,6 +4340,7 @@ h1{{font-size:30px;line-height:1.05;margin:16px 0 5px;overflow-wrap:anywhere}}
       <div class="field"><b>Statut logistique</b><div>{esc(article.get('statut_logistique'))}</div></div>
       <div class="field"><b>N° Pre-Packing</b><div>{esc(article.get('dernier_colis'))}</div></div>
       <div class="field"><b>Type de Pre-Packing</b><div>{esc(_display_prepacking_type(article.get('type_colis')))}</div></div>
+      <div class="field"><b>N° Packing</b><div>{esc(article.get('ref_caisse'))}</div></div>
       <div class="field"><b>Dernière réception</b><div>{esc(article.get('derniere_reception_ref'))}</div></div>
     </section>
     <aside class="photo">{photo_html}</aside>
@@ -10924,6 +11258,28 @@ def api_update_status(ticket_id):
     data = request.get_json(silent=True) or {}
     nouveau_statut = _as_text(data.get('status', ancien_statut)).strip()
     now_iso = datetime.now().isoformat()
+    mise_en_caisse_result = None
+
+    # Une demande "Mise en caisse" ne modifie la Base Articles qu'au moment où
+    # elle est réellement validée par le passage au statut Terminé.
+    # L'appel reste volontairement idempotent : un ancien ticket déjà Terminé peut
+    # être resoumis au même statut afin de reconstruire ses liens si nécessaire.
+    if nouveau_statut == 'Terminé' and _as_text(ticket.get('module')).strip() == 'Mise en caisse':
+        try:
+            mise_en_caisse_result = _apply_mise_en_caisse_to_articles(ticket)
+        except ValueError as e:
+            return jsonify({
+                'ok': False,
+                'error': str(e),
+                'mise_en_caisse_appliquee': False,
+            }), 409
+        except Exception as e:
+            print(f"[MISE EN CAISSE] Application du ticket {ticket_id} impossible: {e}")
+            return jsonify({
+                'ok': False,
+                'error': 'Impossible de mettre à jour la Base Articles : ' + str(e),
+                'mise_en_caisse_appliquee': False,
+            }), 500
 
     # A partir de cette version, on conserve la vraie date du PREMIER passage
     # au statut Terminé. Le champ reste dans raw_json : aucune colonne Supabase
@@ -10937,7 +11293,11 @@ def api_update_status(ticket_id):
 
     # L'envoi automatique SMTP est volontairement désactivé.
     # La notification se prépare maintenant via Outlook Web avec le bouton "Envoyer Notif".
-    return jsonify({'ok': True, 'termineAt': ticket.get('termineAt', '')})
+    return jsonify({
+        'ok': True,
+        'termineAt': ticket.get('termineAt', ''),
+        'mise_en_caisse': mise_en_caisse_result,
+    })
 
 
 @app.route('/api/tickets/<ticket_id>/annuler-enlevement', methods=['PATCH'])
