@@ -603,28 +603,10 @@ document.getElementById('selectAll').addEventListener('change',e=>{document.quer
 body.addEventListener('change',e=>{if(!e.target.classList.contains('row-check'))return;const boxes=[...document.querySelectorAll('.row-check')];document.getElementById('selectAll').checked=boxes.length>0&&boxes.every(x=>x.checked);updateSelectionActions()});
 body.addEventListener('click',e=>{const link=e.target.closest('.esi-link');if(!link)return;e.preventDefault();openArticleDetail(link.dataset.esi)});
 document.getElementById('articleModalClose').onclick=closeArticleModal;document.getElementById('articleModalBackdrop').addEventListener('click',e=>{if(e.target.id==='articleModalBackdrop')closeArticleModal()});document.addEventListener('keydown',e=>{if(e.key==='Escape')closeArticleModal()});
-(async()=>{
-  // Priorité absolue : afficher immédiatement les Articles / Pre-Packings déjà en base.
-  // La synchronisation des Packings historiques se fait ensuite et ne bloque jamais l'écran.
-  await load();
-
-  if(!sessionStorage.getItem('esi-packings-base-synced-v2')){
-    setTimeout(async()=>{
-      try{
-        const r=await fetch('/api/articles/sync-packings',{method:'POST'});
-        const d=await apiJson(r);
-        if(r.ok || r.status===207){
-          sessionStorage.setItem('esi-packings-base-synced-v2','1');
-          await load();
-        }else{
-          console.warn('Synchronisation Packings impossible',d&&d.error?d.error:d);
-        }
-      }catch(e){
-        console.warn('Synchronisation Packings impossible',e);
-      }
-    },1500);
-  }
-})();
+// Chargement direct de la Base Articles.
+// Les Packings historiques ne sont plus resynchronisés à chaque ouverture :
+// le bouton « Synchroniser l’existant » reste disponible pour cette opération ponctuelle.
+load();
 </script>
 </body>
 </html>
