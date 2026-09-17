@@ -2597,6 +2597,227 @@ def api_dossier_lookup():
     })
 
 
+
+def _mise_en_caisse_dossier_data(dossier):
+    """Prépare les Articles, Pré-Packings et Packings disponibles pour un dossier."""
+    dossier = _as_text(dossier).strip()
+    if not dossier:
+        raise ValueError("Le N° de dossier est obligatoire")
+
+    safe_dossier = urllib.parse.quote(dossier, safe='')
+    rows = supabase_rest_request(
+        'GET',
+        'articles',
+        f"select={_ARTICLE_LIST_SELECT}&dossier=eq.{safe_dossier}&order=article_no.asc&limit=5000"
+    ) or []
+
+    articles = []
+    prepackings = []
+    packings_by_ref = {}
+
+    for source in rows:
+        public = _article_row_to_public(source)
+        category = _as_text(public.get('categorie_metier')).strip().upper()
+        raw = source.get('raw_json') if isinstance(source.get('raw_json'), dict) else {}
+        item = {
+            'esi_id': _as_text(public.get('esi_id')).strip(),
+            'reference': _as_text(public.get('reference')).strip(),
+            'description': _as_text(public.get('description')).strip(),
+            'dossier': dossier,
+            'client': _as_text(public.get('client')).strip(),
+            'projet': _as_text(public.get('projet')).strip(),
+            'longueur_cm': _as_text(public.get('longueur_cm')).strip(),
+            'largeur_cm': _as_text(public.get('largeur_cm')).strip(),
+            'hauteur_cm': _as_text(public.get('hauteur_cm')).strip(),
+            'poids_kg': _as_text(public.get('poids_kg')).strip(),
+            'lieu_stockage': _as_text(public.get('lieu_stockage')).strip(),
+            'statut_logistique': _as_text(public.get('statut_logistique')).strip(),
+            'prepacking_actuel': _as_text(public.get('dernier_colis')).strip(),
+            'packing_actuel': _as_text(public.get('ref_caisse')).strip(),
+            'categorie_metier': category,
+        }
+
+        if category == 'ARTICLE':
+            articles.append(item)
+            continue
+
+        if category == 'PRE-PACKING':
+            linked_ids = raw.get('article_esi_ids') or []
+            if not isinstance(linked_ids, list):
+                linked_ids = []
+            item.update({
+                'type_prepacking': _display_prepacking_type(public.get('type_colis')),
+                'member_count': len([x for x in linked_ids if _as_text(x).strip()]),
+                'member_esi_ids': [_as_text(x).strip() for x in linked_ids if _as_text(x).strip()],
+            })
+            prepackings.append(item)
+            continue
+
+        if category == 'PACKING':
+            packing_ref = _as_text(public.get('packing_reference') or public.get('reference')).strip()
+            if not packing_ref:
+                continue
+            item.update({
+                'reference': packing_ref,
+                'packing_reference': packing_ref,
+                'packing_ticket_id': _as_text(public.get('packing_ticket_id')).strip(),
+                'packing_type': _as_text(public.get('packing_type')).strip(),
+            })
+            packings_by_ref[packing_ref] = item
+
+    # Secours : une ancienne fiche Packing peut exister dans les tickets sans avoir encore
+    # été synchronisée vers la Base Articles. On l'ajoute à la liste sans modifier la base.
+    try:
+        ticket_rows = supabase_rest_request(
+            'GET',
+            'tickets',
+            'select=id,module,dossier,ref,preteur,expo,objet,charge_projet,status,raw_json,created_at'
+            f'&dossier=eq.{safe_dossier}&module=eq.' + urllib.parse.quote('Fiche de caisse', safe='') +
+            '&order=created_at.desc&limit=500'
+        ) or []
+        for row in ticket_rows:
+            ref = _packing_reference(dossier, row.get('ref'))
+            if not ref or ref in packings_by_ref:
+                continue
+            raw = row.get('raw_json') if isinstance(row.get('raw_json'), dict) else {}
+            fiche = raw.get('fiche') if isinstance(raw.get('fiche'), dict) else {}
+            packings_by_ref[ref] = {
+                'esi_id': '',
+                'reference': ref,
+                'packing_reference': ref,
+                'packing_ticket_id': _as_text(row.get('id')).strip(),
+                'packing_type': _as_text(fiche.get('typeCaisseFiche') or raw.get('typeCaisse')).strip(),
+                'description': 'Packing',
+                'dossier': dossier,
+                'client': _as_text(row.get('preteur')).strip(),
+                'projet': _as_text(row.get('expo') or row.get('objet')).strip(),
+                'lieu_stockage': _as_text(fiche.get('localisation')).strip(),
+                'statut_logistique': _as_text(row.get('status')).strip(),
+                'categorie_metier': 'PACKING',
+            }
+    except Exception as e:
+        print(f"[MISE EN CAISSE] Lecture des Packings historiques impossible pour {dossier}: {e}")
+
+    identity = {'client': '', 'projet': '', 'charge_projet': ''}
+    try:
+        identity.update(_article_dossier_identity(dossier) or {})
+    except Exception:
+        pass
+
+    # Si la base Articles ne suffit pas, reprend les informations depuis les tickets du dossier.
+    if not all(_as_text(identity.get(k)).strip() for k in ('client', 'projet', 'charge_projet')):
+        try:
+            ticket_rows = supabase_rest_request(
+                'GET',
+                'tickets',
+                'select=module,dossier,preteur,expo,objet,charge_projet,raw_json,created_at'
+                f'&dossier=eq.{safe_dossier}&order=created_at.desc&limit=200'
+            ) or []
+            for row in ticket_rows:
+                values = _dossier_ticket_values(row)
+                for key in ('client', 'projet', 'charge_projet'):
+                    if not _as_text(identity.get(key)).strip() and _as_text(values.get(key)).strip():
+                        identity[key] = _as_text(values.get(key)).strip()
+                if all(_as_text(identity.get(k)).strip() for k in ('client', 'projet', 'charge_projet')):
+                    break
+        except Exception as e:
+            print(f"[MISE EN CAISSE] Identité dossier incomplète pour {dossier}: {e}")
+
+    packings = list(packings_by_ref.values())
+    packings.sort(key=lambda x: _as_text(x.get('reference')).casefold())
+    return {
+        'dossier': dossier,
+        'identity': {
+            'client': _as_text(identity.get('client')).strip(),
+            'projet': _as_text(identity.get('projet')).strip(),
+            'charge_projet': _as_text(identity.get('charge_projet')).strip(),
+        },
+        'articles': articles,
+        'prepackings': prepackings,
+        'packings': packings,
+    }
+
+
+@app.route('/api/mise-en-caisse/dossier')
+def api_mise_en_caisse_dossier():
+    dossier = _as_text(request.args.get('dossier')).strip()
+    if not dossier:
+        return jsonify({'ok': False, 'error': 'Le N° de dossier est obligatoire'}), 400
+    try:
+        data = _mise_en_caisse_dossier_data(dossier)
+        return jsonify({
+            'ok': True,
+            **data,
+            'counts': {
+                'articles': len(data['articles']),
+                'prepackings': len(data['prepackings']),
+                'packings': len(data['packings']),
+            }
+        })
+    except ValueError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+    except Exception as e:
+        print(f"[MISE EN CAISSE] Chargement dossier {dossier} impossible: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+def _validate_mise_en_caisse_request(payload):
+    """Valide et enrichit une demande sans modifier l'état physique des Articles."""
+    if not isinstance(payload, dict):
+        raise ValueError('Données de mise en caisse invalides.')
+
+    dossier = _as_text(payload.get('dossier')).strip()
+    if not dossier:
+        raise ValueError('Le N° de dossier est obligatoire.')
+
+    data = _mise_en_caisse_dossier_data(dossier)
+    packing_ref = _as_text(payload.get('packing_reference')).strip()
+    packing_ticket_id = _as_text(payload.get('packing_ticket_id')).strip()
+    packings = data.get('packings') or []
+    packing = next((p for p in packings if _as_text(p.get('reference')).strip() == packing_ref), None)
+    if not packing and packing_ticket_id:
+        packing = next((p for p in packings if _as_text(p.get('packing_ticket_id')).strip() == packing_ticket_id), None)
+    if not packing:
+        raise ValueError('Le Packing sélectionné est introuvable pour ce dossier.')
+
+    requested_articles = payload.get('article_esi_ids') or []
+    requested_prepackings = payload.get('prepacking_esi_ids') or []
+    if not isinstance(requested_articles, list) or not isinstance(requested_prepackings, list):
+        raise ValueError('Sélection Articles / Pré-Packings invalide.')
+
+    requested_articles = list(dict.fromkeys(_as_text(x).strip() for x in requested_articles if _as_text(x).strip()))
+    requested_prepackings = list(dict.fromkeys(_as_text(x).strip() for x in requested_prepackings if _as_text(x).strip()))
+    if not requested_articles and not requested_prepackings:
+        raise ValueError('Sélectionne au moins un Article ou un Pré-Packing.')
+
+    articles_by_id = {_as_text(x.get('esi_id')).strip(): x for x in data.get('articles') or [] if _as_text(x.get('esi_id')).strip()}
+    prepackings_by_id = {_as_text(x.get('esi_id')).strip(): x for x in data.get('prepackings') or [] if _as_text(x.get('esi_id')).strip()}
+
+    missing_articles = [x for x in requested_articles if x not in articles_by_id]
+    missing_prepackings = [x for x in requested_prepackings if x not in prepackings_by_id]
+    if missing_articles:
+        raise ValueError('Article(s) introuvable(s) dans ce dossier : ' + ', '.join(missing_articles[:10]))
+    if missing_prepackings:
+        raise ValueError('Pré-Packing(s) introuvable(s) dans ce dossier : ' + ', '.join(missing_prepackings[:10]))
+
+    return {
+        'dossier': dossier,
+        'client': _as_text(payload.get('client') or data.get('identity', {}).get('client')).strip(),
+        'projet': _as_text(payload.get('projet') or data.get('identity', {}).get('projet')).strip(),
+        'charge_projet': _as_text(payload.get('charge_projet') or data.get('identity', {}).get('charge_projet')).strip(),
+        'date_souhaitee': _as_text(payload.get('date_souhaitee')).strip(),
+        'commentaire': _as_text(payload.get('commentaire')).strip(),
+        'packing': packing,
+        'packing_reference': _as_text(packing.get('reference')).strip(),
+        'packing_ticket_id': _as_text(packing.get('packing_ticket_id')).strip(),
+        'articles': [articles_by_id[x] for x in requested_articles],
+        'prepackings': [prepackings_by_id[x] for x in requested_prepackings],
+        'article_esi_ids': requested_articles,
+        'prepacking_esi_ids': requested_prepackings,
+        'selection_count': len(requested_articles) + len(requested_prepackings),
+        'validation_mode': 'demande_uniquement',
+    }
+
 def _article_file_link(ticket_id, file_info, kind):
     if not isinstance(file_info, dict) or not file_info.get("name"):
         return None
@@ -6244,6 +6465,10 @@ def index():
 def demandeur():
     return render_template('demandeur.html')
 
+@app.route('/mise-en-caisse')
+def mise_en_caisse_page():
+    return render_template('mise_en_caisse.html')
+
 GESTIONNAIRE_ARTICLES_LIES_JS = r"""(function(){
 'use strict';
 
@@ -8150,13 +8375,16 @@ def api_create_ticket():
         'Demande d\'enlèvement': 'ENL',
         'Demande d\'enlevement': 'ENL',
         "Avis d'arrivée": 'ARR',
+        'Mise en caisse': 'MEC',
     }
     prefix = prefixes.get(module, 'AV')
 
     incoming_files = [fs for fs in request.files.getlist('files') if fs and fs.filename]
     is_enlevement = module in ("Demande d'enlèvement", "Demande d'enlevement")
     is_avis_arrivee = module == "Avis d'arrivée"
+    is_mise_en_caisse = module == 'Mise en caisse'
     avis_arrivee = None
+    mise_en_caisse = None
     enlevement_analyse = None
     article_selections = []
     enlevement_dossier = _as_text(form.get('numeroDossier') or form.get('dossier')).strip() if is_enlevement else ''
@@ -8180,6 +8408,20 @@ def api_create_ticket():
                 return jsonify({'ok': False, 'error': 'Sélection des articles invalide.'}), 400
             if not isinstance(article_selections, list):
                 return jsonify({'ok': False, 'error': 'Sélection des articles invalide.'}), 400
+    if is_mise_en_caisse:
+        raw_mise = form.get('miseEnCaisse', '')
+        try:
+            payload_mise = json.loads(raw_mise) if raw_mise else {}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'Données de mise en caisse invalides.'}), 400
+        try:
+            mise_en_caisse = _validate_mise_en_caisse_request(payload_mise)
+        except ValueError as e:
+            return jsonify({'ok': False, 'error': str(e)}), 400
+        except Exception as e:
+            print(f"[MISE EN CAISSE] Validation impossible: {e}")
+            return jsonify({'ok': False, 'error': str(e)}), 500
+
     if is_avis_arrivee:
         raw_avis = form.get('avisArrivee', '')
         try:
@@ -8318,6 +8560,17 @@ def api_create_ticket():
         # Les données spécifiques restent dans raw_json : aucune nouvelle colonne Supabase n'est nécessaire.
         # Les champs historiques ci-dessus restent remplis pour que l'avis apparaisse dans les listes existantes.
         ticket['avisArrivee'] = avis_arrivee
+
+    if is_mise_en_caisse and mise_en_caisse:
+        ticket['miseEnCaisse'] = mise_en_caisse
+        ticket['dossier'] = mise_en_caisse.get('dossier') or ticket['dossier']
+        ticket['ref'] = mise_en_caisse.get('packing_reference') or ticket['ref']
+        ticket['preteur'] = mise_en_caisse.get('client') or ticket['preteur']
+        ticket['expo'] = mise_en_caisse.get('projet') or ticket['expo']
+        ticket['objet'] = mise_en_caisse.get('projet') or ticket['objet']
+        ticket['chargeProjet'] = mise_en_caisse.get('charge_projet') or ticket['chargeProjet']
+        ticket['dateEmballage'] = mise_en_caisse.get('date_souhaitee') or ticket['dateEmballage']
+        ticket['commentaire'] = mise_en_caisse.get('commentaire') or ticket['commentaire']
 
     ticket_folder(ticket_id)  # conserve la création du dossier local historique
 
