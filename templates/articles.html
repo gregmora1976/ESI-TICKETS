@@ -15,7 +15,7 @@
 .info{padding:0 24px 14px;color:var(--muted);font-size:12px}.tablewrap{overflow:auto;border-top:1px solid var(--line)}
 table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:12px}th{position:sticky;top:0;background:#f8fafc;font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.04em}
 .esi{font-weight:950;color:#0369a1;font-size:14px;white-space:nowrap}.muted{color:var(--muted)}.empty{padding:35px;text-align:center;color:var(--muted)}
-.badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#e0f2fe;color:#075985;font-weight:800}.type-badge{display:inline-flex;align-items:center;justify-content:center;padding:5px 9px;border-radius:999px;font-size:10px;font-weight:950;letter-spacing:.045em;white-space:nowrap}.type-badge.produit{background:#e0f2fe;color:#075985;border:1px solid #bae6fd}.type-badge.contenant{background:#e8eef5;color:var(--navy);border:1px solid #b9c9d8}.container-row td{background:#f8fbfd}.container-row td:nth-child(2){box-shadow:inset 4px 0 0 var(--navy)}
+.badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#e0f2fe;color:#075985;font-weight:800}.type-badge{display:inline-flex;align-items:center;justify-content:center;padding:5px 9px;border-radius:999px;font-size:10px;font-weight:950;letter-spacing:.045em;white-space:nowrap}.type-badge.produit{background:#e0f2fe;color:#075985;border:1px solid #bae6fd}.type-badge.contenant{background:#e8eef5;color:var(--navy);border:1px solid #b9c9d8}.type-badge.packing{background:#fef3c7;color:#92400e;border:1px solid #fcd34d}.container-row td{background:#f8fbfd}.container-row td:nth-child(2){box-shadow:inset 4px 0 0 var(--navy)}.packing-row td{background:#fffbeb}.packing-row td:nth-child(2){box-shadow:inset 4px 0 0 #d97706}
 .select-col{width:44px;text-align:center}.row-check,.select-all{width:16px;height:16px;cursor:pointer}
 .esi-link{color:#0369a1;font-weight:950;text-decoration:none;white-space:nowrap}.esi-link:hover{text-decoration:underline}.part-badge{display:inline-block;margin-top:4px;padding:3px 7px;border-radius:999px;background:#e0f2fe;color:#075985;font-size:9px;font-weight:950}.part-parent{display:block;margin-top:3px;font-size:9px;color:#64748b;font-weight:800}.main-article-badge{display:inline-block;margin-top:4px;padding:3px 7px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:9px;font-weight:950}
 .modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.48);display:none;align-items:center;justify-content:center;padding:20px;z-index:1000}
@@ -76,12 +76,12 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
     <div class="head">
       <div class="brand">
         <img src="/static/logo.png" alt="ESI">
-        <div><div class="title">BASE ARTICLES & PRE-PACKINGS</div><div class="sub">Référentiel global des Articles et Pre-Packings ESI TICKETS</div></div>
+        <div><div class="title">BASE ARTICLES · PRE-PACKINGS · PACKINGS</div><div class="sub">Référentiel global des Articles, Pre-Packings et Packings ESI TICKETS</div></div>
       </div>
       <div class="actions">
         <button class="btn" onclick="location.href='/gestion-reception'">Gestion réception</button>
         <button class="btn primary" id="excelImportBtn">Importer un Excel</button>
-        <button class="btn" id="migrateBtn">Importer les articles existants</button>
+        <button class="btn" id="migrateBtn">Synchroniser l’existant</button>
         <button class="btn" id="duplicatesBtn">Rechercher les doublons</button>
       </div>
     </div>
@@ -89,8 +89,9 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
       <input id="q" placeholder="Rechercher : ESI-125, référence, dossier, client, projet, description, stockage...">
       <select id="typeFilter" aria-label="Filtrer par type">
         <option value="">Tous les types</option>
-        <option value="PRODUIT">Articles</option>
-        <option value="CONTENANT">Pre-Packings</option>
+        <option value="ARTICLE">Articles</option>
+        <option value="PRE-PACKING">Pre-Packings</option>
+        <option value="PACKING">Packings</option>
       </select>
       <button class="btn primary" id="searchBtn">Rechercher</button>
       <button class="btn" id="resetBtn">Tout afficher</button>
@@ -106,7 +107,7 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
         <thead><tr>
           <th class="select-col"><input class="select-all" id="selectAll" type="checkbox" title="Tout sélectionner"></th>
           <th>N° ESI</th><th>Type</th><th>Référence</th><th>Description</th><th>Dossier</th><th>Client</th>
-          <th>Projet</th><th>Dimensions</th><th>Poids</th><th>Stockage</th><th>N° Pre-Packing</th><th>Type Pre-Packing</th>
+          <th>Projet</th><th>Dimensions</th><th>Poids</th><th>Stockage</th><th>N° Pre-Packing</th><th>Type Pre-Packing</th><th>Réf. Packing</th>
         </tr></thead>
         <tbody id="body"></tbody>
       </table>
@@ -184,10 +185,10 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
 const q=document.getElementById('q'),typeFilter=document.getElementById('typeFilter'),body=document.getElementById('body'),empty=document.getElementById('empty'),info=document.getElementById('info');
 let currentRows=[];
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
-function articleType(a){return String((a&&a.type_objet)||'PRODUIT').trim().toUpperCase()==='CONTENANT'?'CONTENANT':'PRODUIT'}
+function articleType(a){const c=String((a&&a.categorie_metier)||'').trim().toUpperCase();if(['ARTICLE','PRE-PACKING','PACKING'].includes(c))return c;return String((a&&a.type_objet)||'PRODUIT').trim().toUpperCase()==='CONTENANT'?'PRE-PACKING':'ARTICLE'}
 function prePackingTypeLabel(v){return String(v||'').trim()==='Caisse bois'?'Packing bois':String(v||'').trim()}
 function packingReferenceDisplay(value,dossier=''){const v0=String(value||'').trim(),d=String(dossier||'').trim();if(!v0)return '-';if(/^C-/i.test(v0))return v0;if(!d)return v0;let v=v0.startsWith(d+'-')?v0.slice(d.length+1):v0;if(/^\d+$/.test(v))v=v.padStart(2,'0');return `C-${d}-${v}`;}
-function typeBadge(a){const t=articleType(a),label=t==='CONTENANT'?'PRE-PACKING':'ARTICLE';return `<span class="type-badge ${t==='CONTENANT'?'contenant':'produit'}">${esc(label)}</span>`}
+function typeBadge(a){const t=articleType(a),cls=t==='PACKING'?'packing':(t==='PRE-PACKING'?'contenant':'produit');return `<span class="type-badge ${cls}">${esc(t)}</span>`}
 async function apiJson(response){
   const text=await response.text();
   if(!text) return {};
@@ -225,17 +226,18 @@ async function load(){
   rows.forEach(a=>{
     const dims=[a.longueur_cm,a.largeur_cm,a.hauteur_cm].filter(Boolean).join(' x '),type=articleType(a);
     const tr=document.createElement('tr');
-    if(type==='CONTENANT')tr.classList.add('container-row');
+    if(type==='PRE-PACKING')tr.classList.add('container-row');
+    if(type==='PACKING')tr.classList.add('packing-row');
     tr.innerHTML=`<td class="select-col"><input class="row-check" type="checkbox" data-esi="${esc(a.esi_id)}"></td>
       <td><a href="#" class="esi-link" data-esi="${esc(a.esi_id)}">${esc(a.esi_id)}</a>${a.partie_label?`<span class="part-badge">Partie ${esc(a.partie_label)}</span>${a.parent_esi?`<span class="part-parent">de ${esc(a.parent_esi)}</span>`:''}`:(a.article_en_plusieurs_parties==='Oui'?`<span class="main-article-badge">Article principal</span>`:'')}</td>
       <td>${typeBadge(a)}</td>
       <td><strong>${esc(a.reference||'-')}</strong></td>
       <td>${esc(a.description||'-')}</td><td>${esc(dossierAuto(a))}</td><td>${esc(a.client||'-')}</td>
       <td>${esc(a.projet||'-')}</td><td>${esc(dims||'-')}</td><td>${esc(a.poids_kg||'-')}</td>
-      <td>${esc(a.lieu_stockage||'-')}</td><td><strong>${esc(a.dernier_colis||'-')}</strong></td><td><strong>${esc(prePackingTypeLabel(a.type_colis)||'-')}</strong></td>`;
+      <td>${esc(a.lieu_stockage||'-')}</td><td><strong>${esc(type==='PACKING'?'-':(a.dernier_colis||'-'))}</strong></td><td><strong>${esc(type==='PACKING'?'-':(prePackingTypeLabel(a.type_colis)||'-'))}</strong></td><td><strong>${esc(type==='PACKING'?(a.reference||'-'):packingReferenceDisplay(a.ref_caisse,dossierAuto(a)))}</strong></td>`;
     body.appendChild(tr);
   });
-  const label=typeFilter.value==='CONTENANT'?'Pre-Packing(s)':(typeFilter.value==='PRODUIT'?'Article(s)':'élément(s)');
+  const label=typeFilter.value==='PRE-PACKING'?'Pre-Packing(s)':(typeFilter.value==='PACKING'?'Packing(s)':(typeFilter.value==='ARTICLE'?'Article(s)':'élément(s)'));
   info.textContent=`${rows.length} ${label} affiché(s)`;
 }
 document.getElementById('searchBtn').onclick=load;
@@ -291,8 +293,8 @@ excelImportConfirmBtn.onclick=async()=>{
 document.getElementById('migrateBtn').onclick=async()=>{
   if(!confirm("Attribuer un numéro ESI aux articles déjà présents dans les tickets ?"))return;
   const b=document.getElementById('migrateBtn');b.disabled=true;b.textContent='Import en cours…';
-  try{const r=await fetch('/api/articles/migrate',{method:'POST'});const d=await apiJson(r);alert(`Import terminé.\nTickets parcourus : ${d.tickets||0}\nArticles créés : ${d.articles_crees||0}\nErreurs : ${(d.errors||[]).length}`);load()}
-  catch(e){alert("Erreur lors de l'import.")}finally{b.disabled=false;b.textContent='Importer les articles existants'}
+  try{const r=await fetch('/api/articles/migrate',{method:'POST'});const d=await apiJson(r);alert(`Synchronisation terminée.\nTickets Articles parcourus : ${d.tickets||0}\nArticles créés : ${d.articles_crees||0}\nPackings traités : ${d.packings_traites||0}\nPackings créés : ${d.packings_crees||0}\nPackings mis à jour : ${d.packings_mis_a_jour||0}\nErreurs : ${(d.errors||[]).length}`);load()}
+  catch(e){alert("Erreur lors de l'import.")}finally{b.disabled=false;b.textContent='Synchroniser l’existant'}
 };
 
 document.getElementById('duplicatesBtn').onclick=async()=>{
@@ -342,8 +344,8 @@ function setupArticleDossierAutofill(){
   dossier.addEventListener('change',fill);dossier.addEventListener('blur',fill);
 }
 function articleTypeEditField(value){
-  const t=String(value||'PRODUIT').toUpperCase()==='CONTENANT'?'CONTENANT':'PRODUIT';
-  return `<div class="identity-field"><div class="identity-field-label">Type</div><select class="article-edit-input" data-article-field="type_objet"><option value="PRODUIT" ${t==='PRODUIT'?'selected':''}>ARTICLE</option><option value="CONTENANT" ${t==='CONTENANT'?'selected':''}>PRE-PACKING</option></select></div>`;
+  const t=String(value||'ARTICLE').toUpperCase();
+  return `<div class="identity-field"><div class="identity-field-label">Type</div><select class="article-edit-input" data-article-field="type_objet"><option value="ARTICLE" ${t==='ARTICLE'?'selected':''}>ARTICLE</option><option value="PRE-PACKING" ${t==='PRE-PACKING'?'selected':''}>PRE-PACKING</option><option value="PACKING" ${t==='PACKING'?'selected':''}>PACKING</option></select></div>`;
 }
 function metricCard(label,value,unit=''){
   const v=valueText(value);return `<div class="metric-card"><div class="metric-label">${esc(label)}</div><div class="metric-line"><div class="metric-value">${esc(v)}</div>${unit&&v!=='-'?`<div class="metric-unit">${esc(unit)}</div>`:''}</div></div>`;
@@ -370,7 +372,7 @@ function articlePhotoUrl(a){
   return String(a.photo_url||a.photo||raw.photo_url||raw.photo||raw.image_url||'').trim();
 }
 function articlePhotoMarkup(a,editing){
-  const photo=articlePhotoUrl(a),filename=String(a.photo_filename||'').trim(),isContainer=articleType(a)==='CONTENANT',photoLabel=isContainer?'Photo du Pre-Packing':'Photo de l’Article';
+  const photo=articlePhotoUrl(a),filename=String(a.photo_filename||'').trim(),kind=articleType(a),photoLabel=kind==='PACKING'?'Photo du Packing':(kind==='PRE-PACKING'?'Photo du Pre-Packing':'Photo de l’Article');
   if(!editing){
     return `<div class="article-photo">${photo?`<img src="${esc(photo)}" alt="${esc(photoLabel)} ${esc(a.esi_id||'')}">`:`<div class="article-photo-empty"><div class="article-photo-empty-mark"></div><strong>${esc(photoLabel)}</strong><span>Aucune photo enregistrée</span></div>`}</div>`;
   }
@@ -439,10 +441,10 @@ async function setupArticleColisEditor(a,dossier,editing){
   }else{select.disabled=true;select.innerHTML='<option value="">Aucun dossier disponible</option>';if(saveBtn)saveBtn.disabled=true}
 }
 function renderArticleDetail(d,editing=false){
-  const content=document.getElementById('articleModalBody'),a=d.article||{},esi=articleDetailState.esi,dossier=dossierAuto(a),type=articleType(a),isContainer=type==='CONTENANT';
-  const typeLabel=isContainer?'PRE-PACKING':'ARTICLE',typeTitle=isContainer?"CARTE D'IDENTITÉ DU PRE-PACKING":"CARTE D'IDENTITÉ DE L'ARTICLE";
+  const content=document.getElementById('articleModalBody'),a=d.article||{},esi=articleDetailState.esi,dossier=dossierAuto(a),type=articleType(a),isPacking=type==='PACKING',isPrePacking=type==='PRE-PACKING',isContainer=isPacking||isPrePacking;
+  const typeLabel=type,typeTitle=isPacking?"CARTE D'IDENTITÉ DU PACKING":(isPrePacking?"CARTE D'IDENTITÉ DU PRE-PACKING":"CARTE D'IDENTITÉ DE L'ARTICLE");
   document.getElementById('articleModalTitle').textContent=typeTitle;
-  document.getElementById('articleModalSub').textContent=`${a.esi_id||esi} • ${isContainer?'Fiche Pre-Packing et suivi logistique':'Fiche détaillée et historique'}`;
+  document.getElementById('articleModalSub').textContent=`${a.esi_id||esi} • ${isPacking?'Fiche Packing et suivi logistique':(isPrePacking?'Fiche Pre-Packing et suivi logistique':'Fiche détaillée et historique')}`;
   const heroTitle=valueText(a.reference)!=='-'?a.reference:(valueText(a.description)!=='-'?a.description:a.esi_id||esi);
   const heroDesc=valueText(a.description)!=='-'&&a.description!==heroTitle?a.description:'';
   let html=`<div class="article-hero">
@@ -456,12 +458,12 @@ function renderArticleDetail(d,editing=false){
     ${a.parent_esi?identityField('Article principal',a.parent_esi,'article-readonly'):''}
     ${a.article_en_plusieurs_parties==='Oui'?identityField('Composition','Article principal en plusieurs parties','article-readonly'):''}
     ${editing?articleTypeEditField(type):identityField('Type',typeLabel)}
-    ${editing?articleEditField(isContainer?'Référence Pre-Packing':'Référence','reference',a.reference):identityField(isContainer?'Référence Pre-Packing':'Référence',a.reference)}
+    ${editing?articleEditField(isPacking?'Référence Packing':(isPrePacking?'Référence Pre-Packing':'Référence'),'reference',a.reference):identityField(isPacking?'Référence Packing':(isPrePacking?'Référence Pre-Packing':'Référence'),a.reference)}
     ${editing?articleEditField('Dossier','dossier',dossier==='-'?'':dossier):identityField('Dossier',dossier)}
     ${editing?articleEditField('Client','client',a.client):identityField('Client',a.client)}
     ${editing?articleEditField('Chargé de projet','charge_projet',a.charge_projet):identityField('Chargé de projet',a.charge_projet)}
     ${editing?articleEditField('Projet / exposition','projet',a.projet):identityField('Projet / exposition',a.projet)}
-    ${editing?articleEditField(isContainer?'Description du Pre-Packing':'Description / désignation','description',a.description,'span-2',true):identityField(isContainer?'Description du Pre-Packing':'Description / désignation',a.description,'span-2')}
+    ${editing?articleEditField(isPacking?'Description du Packing':(isPrePacking?'Description du Pre-Packing':'Description / désignation'),'description',a.description,'span-2',true):identityField(isPacking?'Description du Packing':(isPrePacking?'Description du Pre-Packing':'Description / désignation'),a.description,'span-2')}
     ${isContainer?'':(editing?articleEditField('Réf. Packing','ref_caisse',a.ref_caisse):identityField('Réf. Packing',packingReferenceDisplay(a.ref_caisse,dossier)))}
     ${editing?articleEditField(isContainer?'Réf. transporteur / BL':'Réf. transporteur','transporteur_ref',a.transporteur_ref):identityField(isContainer?'Réf. transporteur / BL':'Réf. transporteur',a.transporteur_ref)}
   </div>${articlePhotoMarkup(a,editing)}</div></div>`;
@@ -504,7 +506,13 @@ function renderArticleDetail(d,editing=false){
     </div></div>`;
   }
 
-  if(isContainer){
+  if(isPacking){
+    html+=`<div class="identity-section"><div class="identity-section-title">Suivi du Packing</div><div class="logistics-grid">
+      ${editing?logisticsEditCard('Statut','statut_logistique',a.statut_logistique):logisticsCard('Statut',a.statut_logistique)}
+      ${editing?logisticsEditCard('Stockage actuel','lieu_stockage',a.lieu_stockage):logisticsCard('Stockage actuel',a.lieu_stockage)}
+      ${logisticsCard('Référence Packing',a.reference)}${logisticsCard('Dernière réception / BL',a.derniere_reception_ref||a.transporteur_ref)}
+    </div></div>`;
+  }else if(isPrePacking){
     html+=`<div class="identity-section"><div class="identity-section-title">Suivi du Pre-Packing</div><div class="logistics-grid">
       ${editing?logisticsEditCard('Statut','statut_logistique',a.statut_logistique):logisticsCard('Statut',a.statut_logistique)}
       ${editing?logisticsEditCard('Stockage actuel','lieu_stockage',a.lieu_stockage):logisticsCard('Stockage actuel',a.lieu_stockage)}
@@ -518,12 +526,13 @@ function renderArticleDetail(d,editing=false){
     </div><div class="colis-editor"><div><label for="articleColisSelect">Association du Pre-Packing</label><select id="articleColisSelect" class="import-input"><option value="">Aucun Pre-Packing</option></select>${editing?'<div class="colis-edit-note">Le Pre-Packing sélectionné sera enregistré avec la fiche.</div>':''}</div>${editing?'':'<button class="btn primary" type="button" id="saveArticleColisBtn">Enregistrer le Pre-Packing</button>'}</div></div>`;
   }
 
+  if(isPacking&&(d.packing_articles||[]).length){html+=`<div class="identity-section"><div class="identity-section-title">Articles liés au Packing <span class="identity-section-sub">Composition actuelle</span></div><div class="composition-grid">`;d.packing_articles.forEach(p=>{html+=`<div class="composition-card"><div class="part-title">${esc(p.reference||p.esi_id||'-')}</div><div class="part-esi">${esc(p.esi_id||'-')}</div><div class="part-meta">${esc(p.description||'')}<br>Dossier : ${esc(p.dossier||'-')}</div><a href="#" class="part-open" data-related-esi="${esc(p.esi_id||'')}">Ouvrir l’Article</a></div>`});html+=`</div></div>`;}
   if(d.fiche_caisse){const x=d.fiche_caisse;html+=`<div class="identity-section"><div class="identity-section-title">Fiche de Packing liée <span class="identity-section-sub">Synchronisation automatique</span></div><div class="linked-grid">${linkedCard('Ticket Packing',x.ticket_id)}${linkedCard('Référence Packing',packingReferenceDisplay(x.reference,a.dossier))}${linkedCard('Statut ticket',x.status)}${linkedCard('Type de Packing',x.type_caisse)}${linkedCard('Dimensions extérieures',x.dimensions_ext)}${linkedCard('Poids',x.poids)}${linkedCard('Date mise à disposition',x.date_mise_dispo)}${linkedCard('Chargé de projet',x.charge_projet)}${linkedCard('Prêteur',x.preteur)}${linkedCard('Projet / exposition',x.projet)}${linkedCard('Localisation',x.localisation)}${linkedCard('Réceptionnée',x.receptionnee?'Oui':'Non')}${linkedCard('Réceptionnée le',fmtDate(x.receptionnee_le))}${linkedCard('BL fournisseur',x.bl_numero)}${linkedCard('Date BL',x.bl_date)}</div></div>`}
   if(d.avis_arrivee){const x=d.avis_arrivee,exp=x.expediteur||{},tr=x.transporteur||{};html+=`<div class="identity-section"><div class="identity-section-title">Avis d’arrivée lié</div><div class="linked-grid">${linkedCard('Réf. dossier',x.dossier_ref)}${linkedCard('Réception prévue',x.date_reception_prevue)}${linkedCard('Client',x.client)}${linkedCard('Projet / exposition',x.projet)}${linkedCard('Coordinateur',x.coordinateur)}${linkedCard('Expéditeur',exp.nom)}${linkedCard('Adresse expéditeur',exp.adresse,'span-2')}${linkedCard('Contact expéditeur',exp.contact)}${linkedCard('Transporteur',tr.nom)}${linkedCard('Adresse transporteur',tr.adresse,'span-2')}${linkedCard('Contact transporteur',tr.contact)}${linkedCard('Référence transporteur',tr.reference)}${linkedCard('Commentaire',x.commentaire,'span-2')}</div></div>`}
   if(d.demande_enlevement){const x=d.demande_enlevement;html+=`<div class="identity-section"><div class="identity-section-title">Demande d’enlèvement liée</div><div class="linked-grid">${linkedCard('N° bon enlèvement',x.numero_bon)}${linkedCard('Date enlèvement',x.date_enlevement)}${linkedCard('Client',x.client)}${linkedCard('Projet / exposition',x.projet)}${linkedCard('Coordinateur',x.coordinateur)}${linkedCard('Adresse départ',x.adresse_depart)}${linkedCard('Adresse destination',x.adresse_destination)}${linkedCard('Notes',x.notes)}${linkedCard('Instructions',x.instructions,'span-2')}</div></div>`}
   if((d.documents_source||[]).length){html+=`<div class="identity-section"><div class="identity-section-title">Documents source</div><div class="document-list">`;d.documents_source.forEach(f=>{html+=`<a class="file-link" target="_blank" href="${esc(f.url)}">${esc(f.name)}</a>`});html+=`</div></div>`}
   html+=`<div class="identity-section"><div class="identity-section-title">Historique des réceptions</div>`;
-  if((d.receptions||[]).length){html+=`<div class="reception-list">`;d.receptions.forEach(rec=>{const date=rec.date_affichee||fmtDate(rec.date);html+=`<div class="reception-card"><div class="reception-head"><div class="reception-title">${esc(rec.reference||'Réception')}</div><div class="reception-date">${esc(valueText(date))}</div></div><div class="reception-grid">${receptionField('Réceptionné par',rec.receptionne_par)}${receptionField('Quantité reçue',rec.quantite)}${receptionField('Lieu de stockage',rec.lieu_stockage)}${receptionField('N° dossier',rec.numero_dossier)}${receptionField('Nombre de Pre-Packings',rec.nombre_colis)}${receptionField('Pre-Packing',(rec.colis||[]).join(', '))}${receptionField('Type de Pre-Packing',prePackingTypeLabel(rec.type_colis))}${rec.partie_label?receptionField('Partie',rec.partie_label):''}${rec.parent_esi?receptionField('Article principal',rec.parent_esi):''}</div>`;if((rec.files||[]).length){html+=`<div class="document-list" style="margin-top:10px">`;rec.files.forEach(f=>{html+=`<a class="file-link" target="_blank" href="${esc(f.url)}">${esc(f.name)}</a>`});html+=`</div>`}html+=`</div>`});html+=`</div>`}else html+=`<div class="article-empty">Aucune réception enregistrée pour ce ${isContainer?'Pre-Packing':'Article'}.</div>`;
+  if((d.receptions||[]).length){html+=`<div class="reception-list">`;d.receptions.forEach(rec=>{const date=rec.date_affichee||fmtDate(rec.date);html+=`<div class="reception-card"><div class="reception-head"><div class="reception-title">${esc(rec.reference||'Réception')}</div><div class="reception-date">${esc(valueText(date))}</div></div><div class="reception-grid">${receptionField('Réceptionné par',rec.receptionne_par)}${receptionField('Quantité reçue',rec.quantite)}${receptionField('Lieu de stockage',rec.lieu_stockage)}${receptionField('N° dossier',rec.numero_dossier)}${receptionField('Nombre de Pre-Packings',rec.nombre_colis)}${receptionField('Pre-Packing',(rec.colis||[]).join(', '))}${receptionField('Type de Pre-Packing',prePackingTypeLabel(rec.type_colis))}${rec.partie_label?receptionField('Partie',rec.partie_label):''}${rec.parent_esi?receptionField('Article principal',rec.parent_esi):''}</div>`;if((rec.files||[]).length){html+=`<div class="document-list" style="margin-top:10px">`;rec.files.forEach(f=>{html+=`<a class="file-link" target="_blank" href="${esc(f.url)}">${esc(f.name)}</a>`});html+=`</div>`}html+=`</div>`});html+=`</div>`}else html+=`<div class="article-empty">Aucune réception enregistrée pour ce ${isPacking?'Packing':(isPrePacking?'Pre-Packing':'Article')}.</div>`;
   html+=`</div><div class="article-meta"><span>Créé le : ${esc(fmtDate(a.created_at))}</span><span>Dernière mise à jour : ${esc(fmtDate(a.updated_at))}</span></div>`;
   content.innerHTML=html;
 
@@ -567,7 +576,7 @@ function closeEditModal(){const b=document.getElementById('editModalBackdrop');b
 function openEditModal(){
   const ids=selectedEsiIds();if(!ids.length)return;const single=ids.length===1,article=single?currentRows.find(x=>String(x.esi_id)===ids[0]):null;
   document.getElementById('editModalTitle').textContent=single?`Modifier ${ids[0]}`:`Modifier ${ids.length} éléments`;document.getElementById('editModalSub').textContent=single?'Tous les champs peuvent être modifiés sauf le N° ESI.':'Seuls les champs cochés seront appliqués à tous les éléments sélectionnés.';
-  const grid=document.getElementById('editGrid');grid.innerHTML=editableFields.map(([field,label])=>{const value=single?String((article&&article[field])??''):'',textarea=field==='description',isType=field==='type_objet';let control;if(isType){const t=String(value||'PRODUIT').toUpperCase()==='CONTENANT'?'CONTENANT':'PRODUIT';control=`<select class="edit-value" data-field="${field}"><option value="PRODUIT" ${t==='PRODUIT'?'selected':''}>ARTICLE</option><option value="CONTENANT" ${t==='CONTENANT'?'selected':''}>PRE-PACKING</option></select>`}else{control=textarea?`<textarea class="edit-value" data-field="${field}">${esc(value)}</textarea>`:`<input class="edit-value" data-field="${field}" value="${esc(value)}">`}return `<div class="edit-field"><label><input type="checkbox" class="edit-apply" data-field="${field}" ${single?'checked':''}> ${esc(label)}</label>${control}</div>`}).join('');
+  const grid=document.getElementById('editGrid');grid.innerHTML=editableFields.map(([field,label])=>{const value=single?String((article&&article[field])??''):'',textarea=field==='description',isType=field==='type_objet';let control;if(isType){const row=single?article:null,t=row?articleType(row):String(value||'ARTICLE').toUpperCase();control=`<select class="edit-value" data-field="${field}"><option value="ARTICLE" ${t==='ARTICLE'?'selected':''}>ARTICLE</option><option value="PRE-PACKING" ${t==='PRE-PACKING'?'selected':''}>PRE-PACKING</option><option value="PACKING" ${t==='PACKING'?'selected':''}>PACKING</option></select>`}else{control=textarea?`<textarea class="edit-value" data-field="${field}">${esc(value)}</textarea>`:`<input class="edit-value" data-field="${field}" value="${esc(value)}">`}return `<div class="edit-field"><label><input type="checkbox" class="edit-apply" data-field="${field}" ${single?'checked':''}> ${esc(label)}</label>${control}</div>`}).join('');
   const b=document.getElementById('editModalBackdrop');b.classList.add('open');b.setAttribute('aria-hidden','false');
 }
 document.getElementById('editSelectedBtn').onclick=openEditModal;document.getElementById('editModalClose').onclick=closeEditModal;document.getElementById('editCancelBtn').onclick=closeEditModal;document.getElementById('editModalBackdrop').addEventListener('click',e=>{if(e.target.id==='editModalBackdrop')closeEditModal()});
@@ -583,7 +592,15 @@ document.getElementById('selectAll').addEventListener('change',e=>{document.quer
 body.addEventListener('change',e=>{if(!e.target.classList.contains('row-check'))return;const boxes=[...document.querySelectorAll('.row-check')];document.getElementById('selectAll').checked=boxes.length>0&&boxes.every(x=>x.checked);updateSelectionActions()});
 body.addEventListener('click',e=>{const link=e.target.closest('.esi-link');if(!link)return;e.preventDefault();openArticleDetail(link.dataset.esi)});
 document.getElementById('articleModalClose').onclick=closeArticleModal;document.getElementById('articleModalBackdrop').addEventListener('click',e=>{if(e.target.id==='articleModalBackdrop')closeArticleModal()});document.addEventListener('keydown',e=>{if(e.key==='Escape')closeArticleModal()});
-load();
+(async()=>{
+  try{
+    if(!sessionStorage.getItem('esi-packings-base-synced-v1')){
+      const r=await fetch('/api/articles/sync-packings',{method:'POST'});
+      if(r.ok)sessionStorage.setItem('esi-packings-base-synced-v1','1');
+    }
+  }catch(e){console.warn('Synchronisation Packings impossible',e)}
+  await load();
+})();
 </script>
 </body>
 </html>
