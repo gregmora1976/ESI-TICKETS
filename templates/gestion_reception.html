@@ -88,7 +88,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
     <button class="btn primary" id="todayBtn" type="button">Aujourd'hui</button>
     <button class="btn success" id="articlesBtn" type="button" onclick="window.location.href='/articles'">BASE ARTICLES</button>
     <input class="search" id="searchInput" type="search" placeholder="Client, bon, référence item..." />
-    <button class="btn" id="refreshBtn" type="button">Planning caisserie</button>
+    <button class="btn" id="refreshBtn" type="button">Planning Packing</button>
   </div>
 </div>
 
@@ -388,7 +388,7 @@ function renderTicketModal(editing=false){
         html+=` — ${esc(r.date_reception||'')} — ${esc(r.receptionne_par||'')} — ${esc(r.lieu_stockage||'')} <button class="btn danger" type="button" style="padding:5px 8px;margin-left:8px" onclick="cancelSpecificReception('${esc(r.reference||'')}')">Annuler cette réception</button></div>`;
 
         if(r.colis&&r.colis.length){
-          html+=`<div class="delivery-meta">Colis : ${esc(colisDisplayList(r.colis,r.colis_types))}</div>`;
+          html+=`<div class="delivery-meta">Pre-Packing : ${esc(colisDisplayList(r.colis,r.colis_types))}</div>`;
         }
 
         if(articlesFilename||colisFilename){
@@ -402,7 +402,7 @@ function renderTicketModal(editing=false){
           if(colisFilename){
             html+=`<a class="file-link" target="_blank"
               href="/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(colisFilename)}">
-              Étiquettes colis
+              Étiquettes Pre-Packing
             </a>`;
           }
           html+=`</div>`;
@@ -498,7 +498,7 @@ function renderTicketModal(editing=false){
         </div>`;
 
       if(b.colis&&b.colis.length){
-        html+=`<div class="delivery-meta">Colis : ${esc(colisDisplayList(b.colis,b.colis_types))}</div>`;
+        html+=`<div class="delivery-meta">Pre-Packing : ${esc(colisDisplayList(b.colis,b.colis_types))}</div>`;
       }
       if(articlesFilename||colisFilename){
         html+=`<div class="generated-links">`;
@@ -511,7 +511,7 @@ function renderTicketModal(editing=false){
         if(colisFilename){
           html+=`<a class="file-link" target="_blank"
             href="/api/tickets/${encodeURIComponent(t.id)}/download-sheet/${encodeURIComponent(colisFilename)}">
-            Étiquettes colis
+            Étiquettes Pre-Packing
           </a>`;
         }
         html+=`</div>`;
@@ -538,7 +538,7 @@ function openTicket(t){
 }
 async function cancelSpecificReception(reference){
   if(!openedTicket||!reference) return;
-  if(!confirm(`Annuler uniquement la réception ${reference} ?\n\nLes quantités réceptionnées seront restaurées et les associations article / colis de cette réception seront retirées. Le ticket restera actif.`)) return;
+  if(!confirm(`Annuler uniquement la réception ${reference} ?\n\nLes quantités réceptionnées seront restaurées et les associations Article / Pre-Packing de cette réception seront retirées. Le ticket restera actif.`)) return;
   try{
     const ticketId=openedTicket.id;
     const res=await fetch(`/api/tickets/${encodeURIComponent(ticketId)}`,{
@@ -611,7 +611,7 @@ async function saveTicketEdits(){
 
 function colisTypeOptions(selected=''){
   const values=['Softpack','Carton','Caisse bois'];
-  return `<option value="">Choisir le type...</option>`+values.map(v=>`<option value="${v}" ${selected===v?'selected':''}>${v}</option>`).join('');
+  return `<option value="">Choisir le type...</option>`+values.map(v=>`<option value="${v}" ${selected===v?'selected':''}>${v==='Caisse bois'?'Packing bois':v}</option>`).join('');
 }
 function readColisTypes(prefix){
   return [...document.querySelectorAll('.'+prefix+'-colis-type')]
@@ -623,7 +623,8 @@ function colisDisplayList(colis,types){
   const map=(types&&typeof types==='object'&&!Array.isArray(types))?types:{};
   return refs.map(ref=>{
     const type=String(map[ref]||'').trim();
-    return type?`${ref} - ${type.toUpperCase()}`:ref;
+    const label=type==='Caisse bois'?'Packing bois':type;
+    return label?`${ref} - ${label.toUpperCase()}`:ref;
   }).join(', ');
 }
 function readArticleParts(prefix, checkClass, qtyClass){
@@ -653,9 +654,9 @@ function buildColisRepartition(prefix, checkClass, qtyClass, packageInputId){
     }
   });
   if(!units.length){box.innerHTML='<div class="muted">Sélectionne les articles à réceptionner.</div>';return;}
-  const opts=Array.from({length:count},(_,i)=>`<option value="${i}">Colis ${i+1}</option>`).join('');
-  const typeCards=Array.from({length:count},(_,i)=>`<div class="colis-type-card"><label for="${prefix}ColisType${i}">Colis ${i+1} - Type de colis</label><select id="${prefix}ColisType${i}" class="${prefix}-colis-type" data-colis-index="${i}" required>${colisTypeOptions(previousTypes[i]||'')}</select></div>`).join('');
-  box.innerHTML=`<div class="colis-repartition-title">Constitution des colis</div><div class="colis-type-title">Type de chaque colis</div><div class="colis-type-grid">${typeCards}</div><div class="colis-type-title">Répartition des articles / parties dans les colis</div>`+units.map(u=>`<div class="colis-unit"><div><strong>${esc(u.reference)} - ${esc(u.designation)} - ${esc(u.esi)}${u.part_label?' - '+esc(u.part_label):''}</strong></div><select class="${prefix}-colis-select" data-index="${u.index}" data-unit-offset="${u.unit_offset}" data-part-index="${u.part_index}">${opts}</select></div>`).join('');
+  const opts=Array.from({length:count},(_,i)=>`<option value="${i}">Pre-Packing ${i+1}</option>`).join('');
+  const typeCards=Array.from({length:count},(_,i)=>`<div class="colis-type-card"><label for="${prefix}ColisType${i}">Pre-Packing ${i+1} - Type de Pre-Packing</label><select id="${prefix}ColisType${i}" class="${prefix}-colis-type" data-colis-index="${i}" required>${colisTypeOptions(previousTypes[i]||'')}</select></div>`).join('');
+  box.innerHTML=`<div class="colis-repartition-title">Constitution des Pre-Packings</div><div class="colis-type-title">Type de chaque Pre-Packing</div><div class="colis-type-grid">${typeCards}</div><div class="colis-type-title">Répartition des Articles / parties dans les Pre-Packings</div>`+units.map(u=>`<div class="colis-unit"><div><strong>${esc(u.reference)} - ${esc(u.designation)} - ${esc(u.esi)}${u.part_label?' - '+esc(u.part_label):''}</strong></div><select class="${prefix}-colis-select" data-index="${u.index}" data-unit-offset="${u.unit_offset}" data-part-index="${u.part_index}">${opts}</select></div>`).join('');
   box.querySelectorAll('.'+prefix+'-colis-select').forEach((sel,i)=>sel.value=String(i%count));
 }
 function readColisRepartition(prefix){return [...document.querySelectorAll('.'+prefix+'-colis-select')].map(x=>({index:Number(x.dataset.index),unit_offset:Number(x.dataset.unitOffset),part_index:Number(x.dataset.partIndex||0),colis_index:Number(x.value)}));}
@@ -716,12 +717,12 @@ function openReceptionModal(){
       <input id="arrivalReceptionLocation" type="text" placeholder="Ex. Stock A, rack B12, réserve 2...">
     </div>
     <div class="form-row">
-      <label for="arrivalReceptionDossierNumber">N° dossier pour les étiquettes colis</label>
+      <label for="arrivalReceptionDossierNumber">N° dossier pour les étiquettes Pre-Packing</label>
       <input id="arrivalReceptionDossierNumber" type="text"
         value="${esc(a.dossier_ref||openedTicket.dossier||'')}" placeholder="Ex. 960130">
     </div>
     <div class="form-row">
-      <label for="arrivalReceptionPackageCount">Nombre total de colis pour cette réception</label>
+      <label for="arrivalReceptionPackageCount">Nombre total de Pre-Packings pour cette réception</label>
       <input id="arrivalReceptionPackageCount" type="number" min="1" step="1" value="1">
     </div><div id="arrivalColisRepartition" class="colis-repartition"></div>
     <div class="form-row">
@@ -737,7 +738,7 @@ function openReceptionModal(){
         <div><strong>${esc(r.reference||'Réception')}</strong>
         — ${esc(r.date_reception||'')} — ${esc(r.receptionne_par||'')} — ${esc(r.lieu_stockage||'')}</div>`;
       if(r.colis&&r.colis.length){
-        html+=`<div class="delivery-meta">Colis : ${esc(colisDisplayList(r.colis,r.colis_types))}</div>`;
+        html+=`<div class="delivery-meta">Pre-Packing : ${esc(colisDisplayList(r.colis,r.colis_types))}</div>`;
       }
       html+=`<div class="generated-links">`;
       if(r.bon_reception_filename){
@@ -755,7 +756,7 @@ function openReceptionModal(){
       if(r.etiquettes_colis_filename){
         html+=`<a class="file-link" target="_blank"
           href="/api/tickets/${encodeURIComponent(openedTicket.id)}/download-sheet/${encodeURIComponent(r.etiquettes_colis_filename)}">
-          Étiquettes colis
+          Étiquettes Pre-Packing
         </a>`;
       }
       html+=`</div></div>`;
@@ -790,7 +791,7 @@ function openReceptionModal(){
 
   setupPartsControls('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount');
 
-  // Initialise immédiatement la répartition Article / Partie -> Colis à l'ouverture.
+  // Initialise immediatement la repartition Article / Partie -> Pre-Packing a l'ouverture.
   buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount');
 
   const b=document.getElementById('receptionModalBackdrop');
@@ -817,8 +818,8 @@ async function validateArrivalReception(){
 
   if(!receiver){alert("Renseigne le nom et prénom de la personne qui réceptionne.");return;}
   if(!location){alert("Renseigne le lieu de stockage.");return;}
-  if(!dossierNumber){alert("Renseigne le N° dossier utilisé pour numéroter les colis.");return;}
-  if(!Number.isInteger(packageCount)||packageCount<1){alert("Renseigne un nombre total de colis supérieur ou égal à 1.");return;}
+  if(!dossierNumber){alert("Renseigne le N° dossier utilisé pour numéroter les Pre-Packings.");return;}
+  if(!Number.isInteger(packageCount)||packageCount<1){alert("Renseigne un nombre total de Pre-Packings supérieur ou égal à 1.");return;}
   if(!selected.length){alert("Sélectionne au moins une marchandise réceptionnée.");return;}
   if(selected.some(x=>!Number.isInteger(x.quantite_recue)||x.quantite_recue<1)){
     alert("Chaque article sélectionné doit avoir une quantité réceptionnée valide.");
@@ -829,21 +830,21 @@ async function validateArrivalReception(){
   const articleParts=readArticleParts('arrival','arrival-reception-check','arrival-reception-qty');
   const totalUnits=repartition.length;
   if(!totalUnits){
-    alert("Chaque article ou partie physique doit être associé à un colis.");
+    alert("Chaque article ou partie physique doit être associé à un Pre-Packing.");
     buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount');
     return;
   }
   if(packageCount>totalUnits){
-    alert("Le nombre de colis ne peut pas dépasser le nombre d'articles ou parties physiques réceptionnés.");
+    alert("Le nombre de Pre-Packings ne peut pas dépasser le nombre d'Articles ou parties physiques réceptionnés.");
     return;
   }
   if(new Set(repartition.map(x=>x.colis_index)).size!==packageCount){
-    alert("Chaque colis créé doit contenir au moins un article.");
+    alert("Chaque Pre-Packing créé doit contenir au moins un Article.");
     return;
   }
   const colisTypes=readColisTypes('arrival');
   if(colisTypes.length!==packageCount || colisTypes.some(type=>!type)){
-    alert("Choisis le type de chaque colis : Softpack, Carton ou Caisse bois.");
+    alert("Choisis le type de chaque Pre-Packing : Softpack, Carton ou Packing bois.");
     return;
   }
 
@@ -881,7 +882,7 @@ async function validateArrivalReception(){
     closeReceptionModal();
 
     const colis=colisDisplayList(data.colis||[],data.colis_types||{});
-    alert(`Réception validée.\nRéférence : ${data.reference||'-'}\nColis : ${colis||'-'}\nLes PDF d'étiquettes sont disponibles dans le ticket.`);
+    alert(`Réception validée.\nRéférence : ${data.reference||'-'}\nPre-Packing : ${colis||'-'}\nLes PDF d'étiquettes sont disponibles dans le ticket.`);
   }catch(e){
     alert(e.message||"Impossible de valider la réception");
   }finally{
@@ -987,11 +988,11 @@ function openDeliveryModal(){
       <input id="deliveryLocation" type="text" placeholder="Ex. Stock A, rack B12, réserve 2...">
     </div>
     <div class="form-row">
-      <label for="deliveryDossierNumber">N° dossier pour les étiquettes colis</label>
+      <label for="deliveryDossierNumber">N° dossier pour les étiquettes Pre-Packing</label>
       <input id="deliveryDossierNumber" type="text" value="${esc(guessDossierNumber(openedTicket))}" placeholder="Ex. 960130">
     </div>
     <div class="form-row">
-      <label for="deliveryPackageCount">Nombre total de colis pour cette réception</label>
+      <label for="deliveryPackageCount">Nombre total de Pre-Packings pour cette réception</label>
       <input id="deliveryPackageCount" type="number" min="1" step="1" value="1">
     </div><div id="deliveryColisRepartition" class="colis-repartition"></div>`;
 
@@ -1005,14 +1006,14 @@ function openDeliveryModal(){
         <div><a class="file-link" target="_blank" href="${href}"><strong>${esc(b.reference||filename)}</strong></a>
         — ${esc(b.date_reception||'')} — ${esc(b.receptionne_par||'')} — ${esc(b.lieu_stockage||'')}</div>`;
       if(b.colis&&b.colis.length){
-        html+=`<div class="delivery-meta">Colis : ${esc(colisDisplayList(b.colis,b.colis_types))}</div>`;
+        html+=`<div class="delivery-meta">Pre-Packing : ${esc(colisDisplayList(b.colis,b.colis_types))}</div>`;
       }
       const links=[];
       if(b.etiquettes_articles_filename){
         links.push(`<a class="file-link" target="_blank" href="/api/tickets/${encodeURIComponent(openedTicket.id)}/download-sheet/${encodeURIComponent(b.etiquettes_articles_filename)}">Étiquettes articles</a>`);
       }
       if(b.etiquettes_colis_filename){
-        links.push(`<a class="file-link" target="_blank" href="/api/tickets/${encodeURIComponent(openedTicket.id)}/download-sheet/${encodeURIComponent(b.etiquettes_colis_filename)}">Étiquettes colis</a>`);
+        links.push(`<a class="file-link" target="_blank" href="/api/tickets/${encodeURIComponent(openedTicket.id)}/download-sheet/${encodeURIComponent(b.etiquettes_colis_filename)}">Étiquettes Pre-Packing</a>`);
       }
       if(links.length) html+=`<div class="generated-links">${links.join('')}</div>`;
       html+=`</div>`;
@@ -1072,8 +1073,8 @@ async function validateDelivery(){
 
   if(!receiver){alert("Renseigne le nom et prénom de la personne qui réceptionne.");return;}
   if(!location){alert("Renseigne le lieu de stockage.");return;}
-  if(!dossierNumber){alert("Renseigne le N° dossier utilisé pour numéroter les colis.");return;}
-  if(!Number.isInteger(packageCount)||packageCount<1){alert("Renseigne un nombre total de colis supérieur ou égal à 1.");return;}
+  if(!dossierNumber){alert("Renseigne le N° dossier utilisé pour numéroter les Pre-Packings.");return;}
+  if(!Number.isInteger(packageCount)||packageCount<1){alert("Renseigne un nombre total de Pre-Packings supérieur ou égal à 1.");return;}
   if(!selected.length){alert("Sélectionne au moins un article à réceptionner.");return;}
   if(selected.some(x=>!Number.isInteger(x.quantite_recue)||x.quantite_recue<1)){
     alert("Chaque article sélectionné doit avoir une quantité réceptionnée valide.");
@@ -1084,21 +1085,21 @@ async function validateDelivery(){
   const articleParts=readArticleParts('delivery','delivery-check','delivery-qty');
   const totalUnits=repartition.length;
   if(!totalUnits){
-    alert("Chaque article ou partie physique doit être associé à un colis.");
+    alert("Chaque article ou partie physique doit être associé à un Pre-Packing.");
     buildColisRepartition('delivery','delivery-check','delivery-qty','deliveryPackageCount');
     return;
   }
   if(packageCount>totalUnits){
-    alert("Le nombre de colis ne peut pas dépasser le nombre d'articles ou parties physiques réceptionnés.");
+    alert("Le nombre de Pre-Packings ne peut pas dépasser le nombre d'Articles ou parties physiques réceptionnés.");
     return;
   }
   if(new Set(repartition.map(x=>x.colis_index)).size!==packageCount){
-    alert("Chaque colis créé doit contenir au moins un article.");
+    alert("Chaque Pre-Packing créé doit contenir au moins un Article.");
     return;
   }
   const colisTypes=readColisTypes('delivery');
   if(colisTypes.length!==packageCount || colisTypes.some(type=>!type)){
-    alert("Choisis le type de chaque colis : Softpack, Carton ou Caisse bois.");
+    alert("Choisis le type de chaque Pre-Packing : Softpack, Carton ou Packing bois.");
     return;
   }
 
@@ -1133,7 +1134,7 @@ async function validateDelivery(){
     closeDeliveryModal();
 
     const colis=colisDisplayList(data.colis||[],data.colis_types||{});
-    alert(`Réception validée.\nBon généré : ${data.reference}\nColis : ${colis||'-'}\nLes PDF d'étiquettes sont disponibles dans le ticket.`);
+    alert(`Réception validée.\nBon généré : ${data.reference}\nPre-Packing : ${colis||'-'}\nLes PDF d'étiquettes sont disponibles dans le ticket.`);
   }catch(e){
     alert(e.message||"Impossible de valider la réception");
   }finally{

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESI - Planning caisserie</title>
+<title>ESI - Planning Packing</title>
 <link rel="icon" type="image/png" href="/static/logo.png">
 <style>
 :root{
@@ -476,15 +476,15 @@ body{
 <body>
 <div class="topbar">
   <div class="topbar-left">
-    <div class="title">Planning caisserie</div>
+    <div class="title">Planning Packing</div>
 
     <div class="stats-wrap">
       <div class="stat-card">
-        <div class="stat-label">Caisses à réceptionner</div>
+        <div class="stat-label">Packings à réceptionner</div>
         <div class="stat-value pending" id="statPending">0</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label" id="statDoneLabel">Caisses réalisées en 2026</div>
+        <div class="stat-label" id="statDoneLabel">Packings réalisés en 2026</div>
         <div class="stat-value done" id="statDone">0</div>
       </div>
     </div>
@@ -512,8 +512,8 @@ body{
     </div>
     <div class="month-grid" id="monthGrid"></div>
     <div class="legend">
-      <div>Affichage : fiches de caisse terminées et réceptionnées</div>
-      <div>Format affiché : N° dossier - N° caisse</div>
+      <div>Affichage : fiches de Packing terminées et réceptionnées</div>
+      <div>Format affiché : C-N° dossier-N° Packing</div>
     </div>
   </div>
 </div>
@@ -522,7 +522,7 @@ body{
   <div class="ticket-modal" role="dialog" aria-modal="true" aria-labelledby="ticketModalTitle">
     <div class="ticket-modal-head">
       <div>
-        <div class="ticket-modal-title" id="ticketModalTitle">Détail caisse</div>
+        <div class="ticket-modal-title" id="ticketModalTitle">Détail Packing</div>
         <div class="ticket-modal-sub" id="ticketModalSub">-</div>
       </div>
       <button class="modal-close" id="ticketModalClose" type="button" aria-label="Fermer">×</button>
@@ -531,7 +531,7 @@ body{
     <div class="ticket-modal-body">
       <div class="detail-grid">
         <div class="detail-label">Dossier</div><div class="detail-value" id="modalDossier">-</div>
-        <div class="detail-label">N° caisse</div><div class="detail-value" id="modalRef">-</div>
+        <div class="detail-label">N° Packing</div><div class="detail-value" id="modalRef">-</div>
         <div class="detail-label">Dimensions</div><div class="detail-value" id="modalDimensions">-</div>
         <div class="detail-label">Caissier</div><div class="detail-value" id="modalCaissier">-</div>
         <div class="detail-label">Chargé de projet</div><div class="detail-value" id="modalChargeProjet">-</div>
@@ -562,7 +562,7 @@ body{
         </div>
 
         <div class="reception-info-row">
-          <div class="reception-info-label">Caisse réceptionnée</div>
+          <div class="reception-info-label">Packing réceptionné</div>
           <div class="reception-info-value" id="modalReceptionInfo">
             <span class="reception-empty">Non réceptionnée</span>
           </div>
@@ -582,7 +582,7 @@ body{
     <div class="ticket-modal-head">
       <div>
         <div class="ticket-modal-title" id="blModalTitle">Importer un bordereau de réception</div>
-        <div class="ticket-modal-sub">PDF fournisseur → détection des caisses → validation groupée</div>
+        <div class="ticket-modal-sub">PDF fournisseur → détection des Packings → validation groupée</div>
       </div>
       <button class="modal-close" id="blModalClose" type="button" aria-label="Fermer">×</button>
     </div>
@@ -686,7 +686,7 @@ function renderBlAnalysis(data){
   document.getElementById('blNumero').textContent = data.bl_numero || 'Non détecté';
   document.getElementById('blDate').textContent = data.bl_date || 'Non détectée';
   document.getElementById('blStats').textContent =
-    `${data.found_count || 0} caisse(s) trouvée(s), ${data.missing_count || 0} non trouvée(s)`;
+    `${data.found_count || 0} Packing(s) trouvé(s), ${data.missing_count || 0} non trouvée(s)`;
 
   const list = document.getElementById('blItems');
   list.innerHTML = '';
@@ -710,7 +710,7 @@ function renderBlAnalysis(data){
     dossier.textContent = item.dossier || '-';
 
     const ref = document.createElement('div');
-    ref.textContent = item.ref || '-';
+    ref.textContent = item.packing_ref || packingReference(item.dossier,item.ref);
 
     const info = document.createElement('div');
     info.textContent = item.found
@@ -779,7 +779,7 @@ async function validateBlReception(){
   ).map(x => x.dataset.ticketId).filter(Boolean);
 
   if(!selected.length){
-    setBlFeedback('Aucune caisse sélectionnée.', 'error');
+    setBlFeedback('Aucun Packing sélectionné.', 'error');
     return;
   }
 
@@ -809,12 +809,12 @@ async function validateBlReception(){
 
     if(data.errors && data.errors.length){
       setBlFeedback(
-        `${data.updated_count || 0} caisse(s) mises à jour, ${data.errors.length} erreur(s).`,
+        `${data.updated_count || 0} Packing(s) mis à jour, ${data.errors.length} erreur(s).`,
         'error'
       );
     }else{
       setBlFeedback(
-        `${data.updated_count || 0} caisse(s) réceptionnée(s) à ${localisation}.`,
+        `${data.updated_count || 0} Packing(s) réceptionné(s) à ${localisation}.`,
         'success'
       );
     }
@@ -823,7 +823,7 @@ async function validateBlReception(){
 
     if(data.errors && data.errors.length){
       setBlFeedback(
-        `${data.updated_count || 0} caisse(s) mise(s) à jour, ${data.errors.length} erreur(s).`,
+        `${data.updated_count || 0} Packing(s) mis à jour, ${data.errors.length} erreur(s).`,
         'error'
       );
     }else{
@@ -914,7 +914,7 @@ async function saveLocalisation(){
     renderCalendar();
 
     setLocalisationFeedback(
-      localisation ? 'Caisse réceptionnée — localisation enregistrée' : 'Localisation supprimée — caisse à réceptionner',
+      localisation ? 'Packing réceptionné — localisation enregistrée' : 'Localisation supprimée — Packing à réceptionner',
       'success'
     );
   }catch(err){
@@ -975,9 +975,9 @@ async function openTicketModal(t){
   const ref = t.ref || '-';
   const fournisseurRef = `${t.dossier || ''}-${ref}`;
 
-  document.getElementById('ticketModalSub').textContent = `${t.dossier || '-'} - ${ref}`;
+  document.getElementById('ticketModalSub').textContent = packingReference(t.dossier,ref);
   document.getElementById('modalDossier').textContent = t.dossier || '-';
-  document.getElementById('modalRef').textContent = ref;
+  document.getElementById('modalRef').textContent = packingReference(t.dossier,ref);
   document.getElementById('modalDimensions').textContent = dimensions;
   document.getElementById('modalCaissier').textContent = fiche.choixCaissier || '-';
   document.getElementById('modalChargeProjet').textContent = t.chargeProjet || '-';
@@ -993,7 +993,7 @@ async function openTicketModal(t){
   backdrop.setAttribute('aria-hidden','false');
 
   if(!ref || ref === '-') {
-    setSupplierStatus('Référence caisse manquante', 'error');
+    setSupplierStatus('Référence Packing manquante', 'error');
     return;
   }
 
@@ -1011,7 +1011,7 @@ async function openTicketModal(t){
       }
       setSupplierStatus(etat.toUpperCase(), kind);
     }else{
-      setSupplierStatus(data.error || 'Caisse introuvable', 'error');
+      setSupplierStatus(data.error || 'Packing introuvable', 'error');
     }
   }catch(err){
     console.error(err);
@@ -1019,6 +1019,7 @@ async function openTicketModal(t){
   }
 }
 
+function packingReference(dossier,ref){const d=String(dossier||'').trim(),r0=String(ref||'').trim();if(!r0)return '-';if(/^C-/i.test(r0))return r0;if(!d)return r0;let r=r0.startsWith(d+'-')?r0.slice(d.length+1):r0;if(/^\d+$/.test(r))r=r.padStart(2,'0');return `C-${d}-${r}`;}
 function pad(n){ return String(n).padStart(2,'0'); }
 function isoDate(d){ return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
 function labelMonth(d){
@@ -1045,7 +1046,7 @@ function isWeekday(d){
 function displayTicket(t){
   const dossier = t.dossier || '-';
   const ref = t.ref || '-';
-  return `${dossier} - ${ref}`;
+  return packingReference(dossier,ref);
 }
 function eventText(t){
   const fiche = t.fiche || {};
@@ -1160,7 +1161,7 @@ function updateStats(){
 
   document.getElementById('statPending').textContent = pending;
   document.getElementById('statDone').textContent = done + historiqueCaisses2026;
-  document.getElementById('statDoneLabel').textContent = `Caisses réalisées en ${year}`;
+  document.getElementById('statDoneLabel').textContent = `Packings réalisés en ${year}`;
 }
 
 async function loadTickets(){
@@ -1323,18 +1324,19 @@ setInterval(loadTickets, 30000);
   window.__esiColisTypeFetchInstalled=true;
   const nativeFetch=window.fetch.bind(window);
   const allowed=['Softpack','Carton','Caisse bois'];
+  const typeLabel=v=>v==='Caisse bois'?'Packing bois':v;
   function validTypes(v,n){return Array.isArray(v)&&v.length===n&&v.every(x=>allowed.includes(String(x||'').trim()))}
   function chooseTypes(count,existing){
     return new Promise(resolve=>{
       const bg=document.createElement('div');bg.className='esi-colis-type-backdrop';
       const box=document.createElement('div');box.className='esi-colis-type-modal';
-      box.innerHTML='<h3>Type des colis</h3><p>Indique le type de chaque colis avant de valider la réception. Le N° de colis reste généré automatiquement.</p>';
+      box.innerHTML='<h3>Type des Pre-Packings</h3><p>Indique le type de chaque Pre-Packing avant de valider la réception. Le N° de Pre-Packing reste généré automatiquement.</p>';
       const selects=[];
       for(let i=0;i<count;i++){
         const row=document.createElement('div');row.className='esi-colis-type-row';
-        const lab=document.createElement('label');lab.textContent='Colis '+(i+1);
+        const lab=document.createElement('label');lab.textContent='Pre-Packing '+(i+1);
         const sel=document.createElement('select');
-        sel.innerHTML='<option value="">Choisir...</option>'+allowed.map(x=>'<option value="'+x+'">'+x+'</option>').join('');
+        sel.innerHTML='<option value="">Choisir...</option>'+allowed.map(x=>'<option value="'+x+'">'+typeLabel(x)+'</option>').join('');
         if(existing&&allowed.includes(existing[i]))sel.value=existing[i];
         row.append(lab,sel);box.appendChild(row);selects.push(sel);
       }
@@ -1344,7 +1346,7 @@ setInterval(loadTickets, 30000);
       actions.append(cancel,ok);box.appendChild(actions);bg.appendChild(box);document.body.appendChild(bg);
       function close(value){bg.remove();resolve(value)}
       cancel.onclick=()=>close(null);bg.addEventListener('click',e=>{if(e.target===bg)close(null)});
-      ok.onclick=()=>{const values=selects.map(s=>s.value);if(values.some(v=>!v)){alert('Choisis le type de chaque colis.');return}close(values)};
+      ok.onclick=()=>{const values=selects.map(s=>s.value);if(values.some(v=>!v)){alert('Choisis le type de chaque Pre-Packing.');return}close(values)};
     });
   }
   window.fetch=async function(input,init){
@@ -1357,7 +1359,7 @@ setInterval(loadTickets, 30000);
     if(!Number.isInteger(count)||count<1)return nativeFetch(input,init);
     if(!validTypes(payload.colis_types,count)){
       const chosen=await chooseTypes(count,Array.isArray(payload.colis_types)?payload.colis_types:[]);
-      if(!chosen)throw new Error('Réception annulée : type de colis non renseigné.');
+      if(!chosen)throw new Error('Réception annulée : type de Pre-Packing non renseigné.');
       payload.colis_types=chosen;
     }
     const next={...cfg,body:JSON.stringify(payload)};
