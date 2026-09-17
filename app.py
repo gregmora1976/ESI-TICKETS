@@ -835,6 +835,7 @@ def _article_payload_from_item(ticket, item, source_module=None, source_index=No
 
 _ARTICLE_EXTRA_FIELDS = {
     "charge_projet", "type_colis", "numero_colis", "colis_esi", "articles_lies",
+    "categorie_metier", "packing_reference", "packing_ticket_id", "packing_type",
     "parent_esi", "partie_label", "partie_index", "partie_total", "article_en_plusieurs_parties",
     "oeuvre_reference", "artiste", "oeuvre_titre", "oeuvre_technique",
     "oeuvre_longueur_cm", "oeuvre_largeur_cm", "oeuvre_hauteur_cm",
@@ -859,6 +860,23 @@ def _article_row_to_public(row):
         if value is None and field == "charge_projet":
             value = raw.get("chargeProjet")
         row[field] = _as_text(value).strip()
+
+    # Catégorie métier visible dans l'interface. La colonne technique type_objet
+    # reste PRODUIT / CONTENANT pour conserver le schéma Supabase existant.
+    category = _as_text(row.get("categorie_metier")).strip().upper()
+    if category not in ("ARTICLE", "PRE-PACKING", "PACKING"):
+        technical_type = _as_text(row.get("type_objet") or "PRODUIT").strip().upper()
+        source_module = _as_text(row.get("source_module")).strip().lower()
+        reference = _as_text(row.get("reference")).strip().upper()
+        raw_source = _as_text(raw.get("source")).strip().lower()
+        if technical_type == "CONTENANT":
+            if raw_source == "packing_ticket" or source_module in ("fiche de packing", "fiche de caisse") or reference.startswith("C-"):
+                category = "PACKING"
+            else:
+                category = "PRE-PACKING"
+        else:
+            category = "ARTICLE"
+    row["categorie_metier"] = category
     return row
 
 
@@ -1068,6 +1086,203 @@ def _ensure_colis_article_records(ticket_id, numero_dossier, colis_refs, colis_t
         records.append(record)
 
     return records, colis_esi_by_ref
+
+
+def _packing_article_link_summaries(ticket):
+    """Retourne les Articles actuellement liés à une fiche Packing."""
+    result = []
+    for item in ticket.get('articles_lies') or []:
+        if isinstance(item, dict):
+            esi_id = _as_text(item.get('esi_id')).strip()
+            if not esi_id:
+                continue
+            result.append({
+                'esi_id': esi_id,
+                'dossier': _as_text(item.get('dossier')).strip(),
+                'reference': _as_text(item.get('reference')).strip(),
+            })
+        else:
+            esi_id = _as_text(item).strip()
+            if esi_id:
+                result.append({'esi_id': esi_id, 'dossier': '', 'reference': ''})
+    return result
+
+
+def _find_packing_article_record(ticket):
+    """Retrouve la ligne Base Articles correspondant à une fiche Packing."""
+    ticket_id = _as_text(ticket.get('id')).strip()
+    dossier = _as_text(ticket.get('dossier')).strip()
+    reference = _packing_reference(dossier, ticket.get('ref'))
+
+    candidates = []
+    if ticket_id:
+        safe_tid = urllib.parse.quote(ticket_id, safe='')
+        candidates.extend(supabase_rest_request(
+            'GET', 'articles', f'select=*&ticket_id=eq.{safe_tid}&type_objet=eq.CONTENANT&limit=20'
+        ) or [])
+    if reference:
+        safe_ref = urllib.parse.quote(reference, safe='-_')
+        candidates.extend(supabase_rest_request(
+            'GET', 'articles', f'select=*&reference=eq.{safe_ref}&type_objet=eq.CONTENANT&limit=20'
+        ) or [])
+
+    seen = set()
+    for row in candidates:
+        esi_id = _as_text(row.get('esi_id')).strip()
+        if esi_id in seen:
+            continue
+        seen.add(esi_id)
+        public = _article_row_to_public(row)
+        if public.get('categorie_metier') == 'PACKING':
+            return dict(row)
+    return None
+
+
+def _ensure_packing_article_record(ticket):
+    """
+    Crée ou met à jour le Packing dans la Base Articles.
+
+    Le Packing conserve un N° ESI comme les autres éléments. Techniquement, il reste
+    stocké avec type_objet=CONTENANT afin d'éviter toute migration SQL ; la catégorie
+    métier PACKING est enregistrée dans raw_json.article_fields.categorie_metier.
+    """
+    if _as_text(ticket.get('module')).strip() != 'Fiche de caisse':
+        return None, False
+
+    dossier = _as_text(ticket.get('dossier')).strip()
+    numero = _as_text(ticket.get('ref')).strip()
+    if not dossier or not numero:
+        return None, False
+
+    reference = _packing_reference(dossier, numero)
+    fiche = ticket.get('fiche') if isinstance(ticket.get('fiche'), dict) else {}
+    fiche = dict(fiche or {})
+    reception = ticket.get('reception') if isinstance(ticket.get('reception'), dict) else {}
+    reception = dict(reception or {})
+    linked = _packing_article_link_summaries(ticket)
+    linked_ids = [x['esi_id'] for x in linked if x.get('esi_id')]
+
+    existing = _find_packing_article_record(ticket)
+    existing_raw = existing.get('raw_json') if existing and isinstance(existing.get('raw_json'), dict) else {}
+    raw = dict(existing_raw or {})
+    extra = raw.get('article_fields') if isinstance(raw.get('article_fields'), dict) else {}
+    extra = dict(extra or {})
+
+    packing_type = _as_text(fiche.get('typeCaisseFiche') or ticket.get('typeCaisse')).strip()
+    localisation = _as_text(fiche.get('localisation')).strip()
+    poids = _as_text(fiche.get('poids')).strip()
+    statut_ticket = _as_text(ticket.get('status')).strip() or 'Demande créée'
+    receptionnee = bool(reception.get('receptionnee') is True or reception.get('receptionnee_le') or localisation)
+    statut_logistique = 'Réceptionné' if receptionnee else statut_ticket
+    bl_numero = _as_text(reception.get('bl_numero')).strip()
+    now = datetime.now().isoformat()
+
+    extra.update({
+        'categorie_metier': 'PACKING',
+        'charge_projet': _as_text(ticket.get('chargeProjet')).strip(),
+        'packing_reference': reference,
+        'packing_ticket_id': _as_text(ticket.get('id')).strip(),
+        'packing_type': packing_type,
+        'articles_lies': ', '.join(linked_ids),
+    })
+    raw.update({
+        'source': 'packing_ticket',
+        'ticket_id': _as_text(ticket.get('id')).strip(),
+        'packing_reference': reference,
+        'packing_local_number': _packing_local_number(dossier, numero),
+        'packing_type': packing_type,
+        'articles_lies': linked,
+        'packing_article_esi_ids': linked_ids,
+        'status_ticket': statut_ticket,
+        'reception': reception,
+        'article_fields': extra,
+        'updated_at': now,
+    })
+
+    description_parts = ['Packing']
+    if packing_type and packing_type != '-':
+        description_parts.append(packing_type)
+    if linked_ids:
+        description_parts.append(f"{len(linked_ids)} Article{'s' if len(linked_ids) != 1 else ''}")
+    description = ' - '.join(description_parts)
+
+    payload = {
+        'ticket_id': _as_text(ticket.get('id')).strip(),
+        'source_module': 'Fiche de Packing',
+        'source_index': None,
+        'unit_index': 1,
+        'type_objet': 'CONTENANT',
+        'reference': reference,
+        'description': description,
+        'dossier': dossier,
+        'client': '' if _as_text(ticket.get('preteur')).strip() in ('', '-') else _as_text(ticket.get('preteur')).strip(),
+        'projet': '' if _as_text(ticket.get('expo') or ticket.get('objet')).strip() in ('', '-') else _as_text(ticket.get('expo') or ticket.get('objet')).strip(),
+        'ref_caisse': '',
+        'transporteur_ref': bl_numero,
+        'longueur_cm': _as_text(fiche.get('longueur')).strip(),
+        'largeur_cm': _as_text(fiche.get('largeur')).strip(),
+        'hauteur_cm': _as_text(fiche.get('hauteur')).strip(),
+        'poids_kg': poids,
+        'lieu_stockage': localisation,
+        'statut_logistique': statut_logistique,
+        'dernier_colis': '',
+        'derniere_reception_ref': bl_numero,
+        'updated_at': now,
+        'raw_json': raw,
+    }
+    volume, surface = _article_calculated_metrics(
+        payload['longueur_cm'], payload['largeur_cm'], payload['hauteur_cm']
+    )
+    payload['volume_m3'] = volume
+    payload['surface_m2'] = surface
+
+    if existing:
+        payload['created_at'] = existing.get('created_at') or ticket.get('createdAt') or now
+        merged = dict(existing)
+        merged.update(payload)
+        payload['search_text'] = _article_search_text(merged)
+        safe_esi = urllib.parse.quote(_as_text(existing.get('esi_id')).strip(), safe='-')
+        rows = supabase_rest_request(
+            'PATCH', 'articles', f'esi_id=eq.{safe_esi}', payload, prefer='return=representation'
+        ) or []
+        return _article_row_to_public(rows[0] if rows else merged), False
+
+    payload['created_at'] = _as_text(ticket.get('createdAt')).strip() or now
+    payload['search_text'] = _article_search_text(payload)
+    return _create_article_record(payload), True
+
+
+def _sync_existing_packings_to_articles(tickets=None):
+    """Synchronise toutes les fiches Packing existantes vers la Base Articles."""
+    if tickets is None:
+        tickets = list_tickets()
+    stats = {'packings_traites': 0, 'packings_crees': 0, 'packings_mis_a_jour': 0, 'errors': []}
+    for ticket in tickets:
+        if _as_text(ticket.get('module')).strip() != 'Fiche de caisse':
+            continue
+        try:
+            record, created = _ensure_packing_article_record(ticket)
+            if record:
+                stats['packings_traites'] += 1
+                if created:
+                    stats['packings_crees'] += 1
+                else:
+                    stats['packings_mis_a_jour'] += 1
+        except Exception as e:
+            stats['errors'].append({'ticket_id': ticket.get('id'), 'error': str(e)})
+    return stats
+
+
+def _delete_packing_article_record(ticket):
+    """Supprime uniquement la ligne synthétique PACKING lors de la suppression du ticket Packing."""
+    existing = _find_packing_article_record(ticket)
+    if not existing:
+        return
+    esi_id = _as_text(existing.get('esi_id')).strip()
+    if esi_id:
+        supabase_rest_request(
+            'DELETE', 'articles', 'esi_id=eq.' + urllib.parse.quote(esi_id, safe='-'), prefer='return=minimal'
+        )
 
 
 def _article_part_meta(row):
@@ -1882,7 +2097,7 @@ function ensureManualCreateUI(){
     <div class="modal-body">
       <div class="section-title">Informations existantes</div>
       <div class="edit-grid" id="manualArticleGrid">
-        <div class="edit-field"><label>Type</label><select id="manualType"><option value="PRODUIT">ARTICLE</option><option value="CONTENANT">PRE-PACKING</option></select></div>
+        <div class="edit-field"><label>Type</label><select id="manualType"><option value="ARTICLE">ARTICLE</option><option value="PRE-PACKING">PRE-PACKING</option><option value="PACKING">PACKING</option></select></div>
         <div class="edit-field"><label>N° dossier *</label><input id="manualDossier" autocomplete="off" placeholder="Ex. 101129"></div>
         <div class="edit-field"><label>Client</label><input id="manualClient" autocomplete="off"></div>
         <div class="edit-field"><label>Chargé de projet</label><input id="manualChargeProjet" autocomplete="off"></div>
@@ -1929,7 +2144,7 @@ function ensureManualCreateUI(){
   function metric(v){if(v===null||!Number.isFinite(v))return '';return v.toFixed(6).replace(/0+$/,'').replace(/\.$/,'')}
   function recalcStandard(){const l=num('manualLongueur'),w=num('manualLargeur'),h=num('manualHauteur');el('manualSurface').value=(l!==null&&w!==null)?metric(l*w/10000):'';el('manualVolume').value=(l!==null&&w!==null&&h!==null)?metric(l*w*h/1000000):''}
   function recalcOeuvre(){const l=num('manualOeuvreLongueur'),w=num('manualOeuvreLargeur'),h=num('manualOeuvreHauteur');el('manualOeuvreSurface').value=(l!==null&&w!==null)?metric(l*w/10000):'';el('manualOeuvreVolume').value=(l!==null&&w!==null&&h!==null)?metric(l*w*h/1000000):''}
-  function clearForm(){ids.forEach(id=>{const node=el(id);if(!node)return;if(id==='manualType')node.value='PRODUIT';else if(id==='manualStatut')node.value='Créé';else node.value='';});el('manualArticleHint').textContent='Si ce N° de dossier existe déjà, Client, Projet et Chargé de projet seront repris automatiquement.'}
+  function clearForm(){ids.forEach(id=>{const node=el(id);if(!node)return;if(id==='manualType')node.value='ARTICLE';else if(id==='manualStatut')node.value='Créé';else node.value='';});el('manualArticleHint').textContent='Si ce N° de dossier existe déjà, Client, Projet et Chargé de projet seront repris automatiquement.'}
   function openModal(){clearForm();bg.classList.add('open');bg.setAttribute('aria-hidden','false');setTimeout(()=>el('manualDossier').focus(),50)}
   function closeModal(){bg.classList.remove('open');bg.setAttribute('aria-hidden','true')}
 
@@ -1989,26 +2204,39 @@ def articles_page():
 @app.route('/api/articles')
 def api_articles():
     q = _as_text(request.args.get("q")).strip()
-    type_objet = _as_text(request.args.get("type_objet")).strip().upper()
+    requested_type = _as_text(request.args.get("type_objet")).strip().upper()
     limit = min(max(int(request.args.get("limit") or 100), 1), 500)
 
-    # Compatibilité : l'interface parle désormais d'ARTICLE / PRE-PACKING.
-    if type_objet in ("PRE-PACKING", "PREPACKING", "COLIS"):
-        type_objet = "CONTENANT"
-    elif type_objet == "ARTICLE":
-        type_objet = "PRODUIT"
+    business_filter = ""
+    technical_type = ""
+    if requested_type in ("PRE-PACKING", "PREPACKING", "COLIS"):
+        technical_type = "CONTENANT"
+        business_filter = "PRE-PACKING"
+    elif requested_type == "PACKING":
+        technical_type = "CONTENANT"
+        business_filter = "PACKING"
+    elif requested_type in ("ARTICLE", "PRODUIT"):
+        technical_type = "PRODUIT"
+        business_filter = "ARTICLE"
+    elif requested_type == "CONTENANT":
+        technical_type = "CONTENANT"
 
-    query = "select=*&order=article_no.desc&limit=" + str(limit)
+    # Quand un filtre métier doit être appliqué après lecture de raw_json, on lit jusqu'à
+    # 500 lignes techniques pour ne pas tronquer artificiellement les résultats.
+    query_limit = 500 if business_filter in ("PRE-PACKING", "PACKING") else limit
+    query = "select=*&order=article_no.desc&limit=" + str(query_limit)
 
-    if type_objet in ("PRODUIT", "CONTENANT"):
-        query += "&type_objet=eq." + urllib.parse.quote(type_objet, safe='')
+    if technical_type in ("PRODUIT", "CONTENANT"):
+        query += "&type_objet=eq." + urllib.parse.quote(technical_type, safe='')
 
     if q:
         pattern = "*" + q.replace("*", "") + "*"
         query += "&search_text=ilike." + urllib.parse.quote(pattern, safe='*')
 
-    rows = supabase_rest_request("GET", "articles", query) or []
-    return jsonify([_article_row_to_public(row) for row in rows])
+    rows = [_article_row_to_public(row) for row in (supabase_rest_request("GET", "articles", query) or [])]
+    if business_filter:
+        rows = [row for row in rows if row.get("categorie_metier") == business_filter]
+    return jsonify(rows[:limit])
 
 
 @app.route('/api/articles/manual', methods=['POST'])
@@ -2016,13 +2244,19 @@ def api_article_create_manual():
     """Crée un article ou un colis directement depuis la base Articles. Le stockage DB historique reste CONTENANT."""
     data = request.get_json(silent=True) or {}
 
-    type_objet = _as_text(data.get('type_objet') or 'PRODUIT').strip().upper()
-    if type_objet in ('PRE-PACKING', 'PREPACKING', 'COLIS'):
+    requested_type = _as_text(data.get('type_objet') or 'ARTICLE').strip().upper()
+    categorie_metier = 'ARTICLE'
+    if requested_type in ('PRE-PACKING', 'PREPACKING', 'COLIS', 'CONTENANT'):
         type_objet = 'CONTENANT'
-    elif type_objet == 'ARTICLE':
+        categorie_metier = 'PRE-PACKING'
+    elif requested_type == 'PACKING':
+        type_objet = 'CONTENANT'
+        categorie_metier = 'PACKING'
+    elif requested_type in ('ARTICLE', 'PRODUIT'):
         type_objet = 'PRODUIT'
-    if type_objet not in ('PRODUIT', 'CONTENANT'):
-        return jsonify({'ok': False, 'error': 'Type invalide : ARTICLE ou PRE-PACKING attendu'}), 400
+        categorie_metier = 'ARTICLE'
+    else:
+        return jsonify({'ok': False, 'error': 'Type invalide : ARTICLE, PRE-PACKING ou PACKING attendu'}), 400
 
     dossier = _as_text(data.get('dossier')).strip()
     reference = _as_text(data.get('reference')).strip()
@@ -2053,6 +2287,7 @@ def api_article_create_manual():
     )
     article_fields = {
         'charge_projet': charge_projet,
+        'categorie_metier': categorie_metier,
         'oeuvre_reference': _as_text(data.get('oeuvre_reference')).strip(),
         'artiste': _as_text(data.get('artiste')).strip(),
         'oeuvre_titre': _as_text(data.get('oeuvre_titre')).strip(),
@@ -2612,8 +2847,21 @@ def api_articles_bulk_update():
         for field, value in changes.items()
         if field in _ARTICLE_EDITABLE_FIELDS
     }
-    if _as_text(clean_changes.get('type_objet')).strip().upper() == 'COLIS':
-        clean_changes['type_objet'] = 'CONTENANT'
+    # Le formulaire manipule les 3 catégories métier, tandis que Supabase conserve
+    # les 2 valeurs techniques historiques PRODUIT / CONTENANT.
+    requested_business_type = _as_text(clean_changes.get('type_objet')).strip().upper()
+    if requested_business_type:
+        if requested_business_type in ('ARTICLE', 'PRODUIT'):
+            clean_changes['type_objet'] = 'PRODUIT'
+            clean_changes['categorie_metier'] = 'ARTICLE'
+        elif requested_business_type in ('PRE-PACKING', 'PREPACKING', 'COLIS', 'CONTENANT'):
+            clean_changes['type_objet'] = 'CONTENANT'
+            clean_changes['categorie_metier'] = 'PRE-PACKING'
+        elif requested_business_type == 'PACKING':
+            clean_changes['type_objet'] = 'CONTENANT'
+            clean_changes['categorie_metier'] = 'PACKING'
+        else:
+            return jsonify({'ok': False, 'error': 'Type invalide : ARTICLE, PRE-PACKING ou PACKING attendu'}), 400
     if not clean_changes:
         return jsonify({'ok': False, 'error': 'Aucun champ modifiable fourni'}), 400
 
@@ -3041,6 +3289,8 @@ def api_article_detail(esi_id):
         "ticket": None,
         "avis_arrivee": None,
         "demande_enlevement": None,
+        "fiche_caisse": None,
+        "packing_articles": [],
         "receptions": [],
         "documents_source": [],
         "composition": {"is_part": bool(part_meta.get("parent_esi")), "parent": parent_summary, "partie_label": part_meta.get("partie_label") or "", "parts": composition_parts},
@@ -3078,7 +3328,31 @@ def api_article_detail(esi_id):
                 "expediteur": avis.get("expediteur") or {},
                 "transporteur": avis.get("transporteur") or {},
             }
-        else:
+        elif module == "Fiche de caisse":
+            fiche = ticket.get('fiche') if isinstance(ticket.get('fiche'), dict) else {}
+            reception = ticket.get('reception') if isinstance(ticket.get('reception'), dict) else {}
+            detail["fiche_caisse"] = {
+                "ticket_id": ticket.get('id') or '',
+                "reference": _packing_reference(ticket.get('dossier'), ticket.get('ref')),
+                "status": ticket.get('status') or '',
+                "type_caisse": fiche.get('typeCaisseFiche') or ticket.get('typeCaisse') or '',
+                "dimensions_ext": fiche.get('dimensionsExt') or '',
+                "poids": fiche.get('poids') or '',
+                "date_mise_dispo": ticket.get('dateEmballage') or '',
+                "charge_projet": ticket.get('chargeProjet') or '',
+                "preteur": ticket.get('preteur') or '',
+                "projet": ticket.get('expo') or ticket.get('objet') or '',
+                "localisation": fiche.get('localisation') or '',
+                "receptionnee": bool(reception.get('receptionnee') is True or reception.get('receptionnee_le') or fiche.get('localisation')),
+                "receptionnee_le": reception.get('receptionnee_le') or '',
+                "bl_numero": reception.get('bl_numero') or '',
+                "bl_date": reception.get('bl_date') or '',
+            }
+            try:
+                detail["packing_articles"] = _linked_articles_for_ticket(ticket)
+            except Exception:
+                detail["packing_articles"] = _packing_article_link_summaries(ticket)
+        elif module in ("Demande d'enlèvement", "Demande d'enlevement"):
             enl = ticket.get("enlevement") or {}
             detail["demande_enlevement"] = {
                 "numero_bon": enl.get("numero_bon") or ticket.get("ref") or "",
@@ -3092,7 +3366,8 @@ def api_article_detail(esi_id):
                 "instructions": enl.get("instructions") or "",
             }
 
-        detail["receptions"] = _article_reception_history_from_ticket(ticket, article)
+        if module != "Fiche de caisse":
+            detail["receptions"] = _article_reception_history_from_ticket(ticket, article)
 
     raw = article_raw
     raw_receptions = raw.get("receptions") or []
@@ -3721,8 +3996,12 @@ def api_articles_import_excel():
 
 @app.route('/api/articles/migrate', methods=['POST'])
 def api_articles_migrate():
-    """Importe les articles déjà présents dans les tickets et leur attribue un ESI-x."""
-    stats = {"tickets": 0, "articles_crees": 0, "errors": []}
+    """Synchronise Articles, Pre-Packings déjà créés et Packings historiques vers la Base Articles."""
+    stats = {
+        "tickets": 0, "articles_crees": 0,
+        "packings_traites": 0, "packings_crees": 0, "packings_mis_a_jour": 0,
+        "errors": []
+    }
     try:
         tickets = list_tickets()
     except Exception as e:
@@ -3739,10 +4018,25 @@ def api_articles_migrate():
         except Exception as e:
             stats["errors"].append({"ticket_id": ticket.get("id"), "error": str(e)})
 
+    packing_stats = _sync_existing_packings_to_articles(tickets)
+    for key in ("packings_traites", "packings_crees", "packings_mis_a_jour"):
+        stats[key] = packing_stats.get(key, 0)
+    stats["errors"].extend(packing_stats.get("errors") or [])
+
     return jsonify({
         "ok": not stats["errors"],
         **stats
     }), (200 if not stats["errors"] else 207)
+
+
+@app.route('/api/articles/sync-packings', methods=['POST'])
+def api_articles_sync_packings():
+    """Synchronisation idempotente des fiches Packing existantes vers la Base Articles."""
+    try:
+        stats = _sync_existing_packings_to_articles()
+        return jsonify({'ok': not stats['errors'], **stats}), (200 if not stats['errors'] else 207)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 def supabase_rest_request(method, table, query='', payload=None, prefer=None):
@@ -4261,6 +4555,14 @@ def save_ticket(ticket):
     if file_rows:
         supabase_rest_request("POST", "ticket_files", "", file_rows, prefer="return=minimal")
 
+    # Toute fiche Packing possède également sa propre ligne (et son N° ESI)
+    # dans la Base Articles. L'opération est idempotente et met à jour la ligne existante.
+    if _as_text(ticket.get('module')).strip() == 'Fiche de caisse':
+        try:
+            _ensure_packing_article_record(ticket)
+        except Exception as e:
+            print(f"[PACKING BASE ARTICLES] Synchronisation impossible pour {ticket_id}: {e}")
+
     print("[SUPABASE DB] Ticket sauvegardé", ticket_id)
 
 
@@ -4330,10 +4632,15 @@ def delete_ticket_permanently(ticket_id):
     # On protège cet historique : ces tickets ne sont pas supprimés tant que des articles
     # portent leur ticket_id. Les tickets classiques restent supprimables normalement.
     linked_articles = supabase_rest_request(
-        'GET', 'articles', f'select=esi_id&ticket_id=eq.{safe_tid}&limit=5'
+        'GET', 'articles', f'select=*&ticket_id=eq.{safe_tid}&limit=50'
     ) or []
-    if linked_articles:
-        ids = ', '.join(_as_text(x.get('esi_id')).strip() for x in linked_articles if x.get('esi_id'))
+    protected_links = []
+    for row in linked_articles:
+        public = _article_row_to_public(row)
+        if public.get('categorie_metier') != 'PACKING':
+            protected_links.append(public)
+    if protected_links:
+        ids = ', '.join(_as_text(x.get('esi_id')).strip() for x in protected_links if x.get('esi_id'))
         detail = f" ({ids})" if ids else ''
         raise ValueError(
             "Ce ticket est lié à des articles ESI et ne peut pas être supprimé directement" + detail + ". "
@@ -4341,6 +4648,7 @@ def delete_ticket_permanently(ticket_id):
         )
 
     _unlink_articles_from_deleted_caisse(ticket)
+    _delete_packing_article_record(ticket)
 
     warnings = []
     file_rows = supabase_rest_request(
@@ -7598,6 +7906,10 @@ def api_update_localisation(ticket_id):
             {"updated_at": ticket['updatedAt'], "raw_json": ticket},
             prefer="return=minimal"
         )
+        try:
+            _ensure_packing_article_record(ticket)
+        except Exception as sync_error:
+            print(f"[PACKING BASE ARTICLES] Mise à jour localisation impossible pour {ticket_id}: {sync_error}")
         return jsonify({
             'ok': True,
             'localisation': localisation,
@@ -7741,6 +8053,10 @@ def api_reception_valider_bl():
                 {"updated_at": ticket['updatedAt'], "raw_json": ticket},
                 prefer="return=minimal"
             )
+            try:
+                _ensure_packing_article_record(ticket)
+            except Exception as sync_error:
+                print(f"[PACKING BASE ARTICLES] Mise à jour réception impossible pour {ticket_id}: {sync_error}")
 
             updated.append(ticket_id)
 
@@ -10674,7 +10990,7 @@ def _linked_articles_for_ticket(ticket):
         encoded = urllib.parse.quote(','.join(part), safe=',-_')
         rows = supabase_rest_request(
             'GET', 'articles',
-            'select=esi_id,dossier,reference,type_objet&esi_id=in.(' + encoded + ')&limit=100'
+            'select=esi_id,dossier,reference,description,client,projet,type_objet&esi_id=in.(' + encoded + ')&limit=100'
         ) or []
         for row in rows:
             esi_id = _as_text(row.get('esi_id')).strip()
@@ -10685,6 +11001,9 @@ def _linked_articles_for_ticket(ticket):
                 'esi_id': esi_id,
                 'dossier': _as_text(row.get('dossier')).strip(),
                 'reference': _as_text(row.get('reference')).strip(),
+                'description': _as_text(row.get('description')).strip(),
+                'client': _as_text(row.get('client')).strip(),
+                'projet': _as_text(row.get('projet')).strip(),
             }
 
     return [rows_by_id[x] for x in esi_ids if x in rows_by_id]
