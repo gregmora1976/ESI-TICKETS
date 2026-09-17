@@ -2212,122 +2212,83 @@ function ensureManualCreateUI(){
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',ensureManualCreateUI);else ensureManualCreateUI();
 
 // Ajoute l'impression d'une etiquette directement depuis la carte d'identite.
-// Version robuste : ne depend ni d'une classe CSS precise ni du moment exact ou la carte est rendue.
-let _esiIdentityLabelContext={esi:'',category:'ARTICLE',editing:false};
-let _esiIdentityLabelObserver=null;
-
+// Version volontairement simple et bornee : aucun MutationObserver et aucune boucle de surveillance.
 function _esiIdentityLabelWording(category){
   const c=String(category||'').trim().toUpperCase();
   return c==='PACKING'?'Packing':(c==='PRE-PACKING'?'Pré-Packing':'Article');
 }
 
-function _esiFindIdentityActions(){
-  const body=document.getElementById('articleModalBody')||document.querySelector('[id*="articleModalBody"]');
-  if(!body) return null;
-
-  // Priorite au bouton Modifier visible : on insere l'impression exactement dans la meme zone.
-  const buttons=[...body.querySelectorAll('button')];
-  const modify=buttons.find(b=>String(b.textContent||'').trim().toLowerCase()==='modifier');
-  if(modify&&modify.parentElement) return {container:modify.parentElement,before:modify};
-
-  // Secours pour les differentes versions du template Articles.
-  const selectors=[
-    '.article-hero-actions','.hero-actions','.article-actions','.identity-actions',
-    '.modal-actions','.article-detail-actions','[class*="hero"][class*="action"]'
-  ];
-  for(const selector of selectors){
-    const node=body.querySelector(selector);
-    if(node) return {container:node,before:node.firstChild};
-  }
-  return null;
-}
-
-function _esiMountIdentityLabelButton(){
+function _esiMountIdentityLabelButton(d,editing=false){
   try{
-    const ctx=_esiIdentityLabelContext||{};
-    const esi=String(ctx.esi||'').trim();
+    const article=(d&&d.article)||{};
+    const fallbackEsi=(typeof articleDetailState!=='undefined'&&articleDetailState)?articleDetailState.esi:'';
+    const esi=String(article.esi_id||fallbackEsi||'').trim();
+    if(editing||!esi) return;
+
+    const body=document.getElementById('articleModalBody');
+    if(!body) return;
+
     const old=document.getElementById('articlePrintLabelBtn');
-    if(ctx.editing||!esi){if(old)old.remove();return false;}
+    if(old) old.remove();
 
-    const target=_esiFindIdentityActions();
-    if(!target) return false;
+    const technicalType=String(article.type_objet||'').trim().toUpperCase();
+    const category=String(article.categorie_metier||'').trim().toUpperCase() || (technicalType==='CONTENANT'?'PRE-PACKING':'ARTICLE');
+    const wording=_esiIdentityLabelWording(category);
 
-    const wording=_esiIdentityLabelWording(ctx.category);
-    let btn=old;
-    if(!btn){
-      btn=document.createElement('button');
-      btn.id='articlePrintLabelBtn';
-      btn.type='button';
+    const buttons=[...body.querySelectorAll('button')];
+    const modify=buttons.find(b=>String(b.textContent||'').trim().toLowerCase()==='modifier');
+
+    let container=null;
+    let before=null;
+    if(modify&&modify.parentElement){
+      container=modify.parentElement;
+      before=modify;
+    }else{
+      const selectors=['.article-hero-actions','.hero-actions','.article-actions','.identity-actions','.article-detail-actions'];
+      for(const selector of selectors){
+        const node=body.querySelector(selector);
+        if(node){container=node;break;}
+      }
     }
-    // Classes volontairement compatibles avec les boutons existants sans dependre du template.
+    if(!container) return;
+
+    const btn=document.createElement('button');
+    btn.id='articlePrintLabelBtn';
+    btn.type='button';
     btn.className='btn hero-action secondary';
     btn.textContent='Imprimer l’étiquette '+wording;
     btn.title='Ouvrir l’étiquette '+wording+' prête à imprimer';
     btn.onclick=()=>window.open('/api/articles/'+encodeURIComponent(esi)+'/etiquette','_blank','noopener');
 
-    if(btn.parentElement!==target.container){
-      if(btn.parentElement)btn.remove();
-      if(target.before)target.container.insertBefore(btn,target.before);
-      else target.container.appendChild(btn);
-    }else if(target.before&&btn!==target.before&&btn.nextSibling!==target.before){
-      target.container.insertBefore(btn,target.before);
-    }
-    return true;
+    if(before) container.insertBefore(btn,before);
+    else container.appendChild(btn);
   }catch(e){
     console.error('Ajout bouton etiquette impossible',e);
-    return false;
   }
 }
 
-function _esiScheduleIdentityLabelButton(){
-  // Certaines versions de la carte rendent l'entete en plusieurs etapes.
-  [0,30,100,250].forEach(delay=>setTimeout(_esiMountIdentityLabelButton,delay));
-}
-
 function installIdentityLabelPrint(){
-  if(typeof renderArticleDetail!=='function') return false;
-  if(renderArticleDetail.__esiLabelPrintInstalled) return true;
+  if(typeof renderArticleDetail!=='function') return;
+  if(renderArticleDetail.__esiLabelPrintInstalled) return;
 
   const originalRenderArticleDetail=renderArticleDetail;
   const wrapped=function(d,editing=false){
-    const article=(d&&d.article)||{};
-    const fallbackEsi=(typeof articleDetailState!=='undefined'&&articleDetailState)?articleDetailState.esi:'';
-    const technicalType=String(article.type_objet||'').trim().toUpperCase();
-    const category=String(article.categorie_metier||'').trim().toUpperCase() || (technicalType==='CONTENANT'?'PRE-PACKING':'ARTICLE');
-    _esiIdentityLabelContext={
-      esi:String(article.esi_id||fallbackEsi||'').trim(),
-      category:category,
-      editing:!!editing
-    };
-
     const result=originalRenderArticleDetail.apply(this,arguments);
-    _esiScheduleIdentityLabelButton();
+    // Le rendu de la carte est synchrone dans articles.html ; un second essai unique
+    // au cycle d'affichage suivant couvre les navigateurs qui finalisent le DOM juste apres.
+    _esiMountIdentityLabelButton(d,editing);
+    requestAnimationFrame(()=>_esiMountIdentityLabelButton(d,editing));
     return result;
   };
   wrapped.__esiLabelPrintInstalled=true;
   renderArticleDetail=wrapped;
-
-  if(!_esiIdentityLabelObserver&&document.body){
-    _esiIdentityLabelObserver=new MutationObserver(()=>{
-      if(_esiIdentityLabelContext&&_esiIdentityLabelContext.esi&&!_esiIdentityLabelContext.editing){
-        _esiMountIdentityLabelButton();
-      }
-    });
-    _esiIdentityLabelObserver.observe(document.body,{childList:true,subtree:true});
-  }
-  return true;
 }
 
-function _esiStartIdentityLabelPrint(){
-  if(installIdentityLabelPrint()) return;
-  // Si le script du template n'est pas encore charge, on reessaie pendant quelques secondes.
-  let attempts=0;
-  const timer=setInterval(()=>{
-    attempts+=1;
-    if(installIdentityLabelPrint()||attempts>=40)clearInterval(timer);
-  },100);
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded',installIdentityLabelPrint,{once:true});
+}else{
+  installIdentityLabelPrint();
 }
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_esiStartIdentityLabelPrint);else _esiStartIdentityLabelPrint();
 })();"""
 
 @app.route('/articles')
