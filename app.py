@@ -2815,6 +2815,7 @@ def _validate_mise_en_caisse_request(payload):
         'article_esi_ids': requested_articles,
         'prepacking_esi_ids': requested_prepackings,
         'selection_count': len(requested_articles) + len(requested_prepackings),
+        'mode_saisie': 'QR' if _as_text(payload.get('mode_saisie')).strip().upper() == 'QR' else 'MANUEL',
         'validation_mode': 'demande_uniquement',
     }
 
