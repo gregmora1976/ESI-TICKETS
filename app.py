@@ -10893,23 +10893,42 @@ def _build_labels_pdf_bytes(labels, kind="article"):
 
     - Étiquettes COLIS : format exact 100 x 148 mm avec le vrai logo ESI
       chargé depuis static/logo.png et affiché en haut à gauche sans déformation.
-    - Étiquettes ARTICLE : format A6 avec vrai logo ESI et QR vers la carte d'identité.
+    - Étiquettes ARTICLE : format exact 70 x 45 mm avec vrai logo ESI et QR vers la carte d'identité.
     """
     import io
     import textwrap as _tw
 
     # ------------------------------------------------------------------
-    # Étiquettes ARTICLE : A6 + vrai logo ESI + QR vers la carte d'identité.
+    # Étiquettes ARTICLE : format exact 70 x 45 mm (horizontal).
+    # Le format des étiquettes PRE-PACKING / PACKING reste inchangé.
     # ------------------------------------------------------------------
     if kind != "colis":
-        page_width, page_height = 298, 420
-        margin = 24
+        # PDF = 72 points par pouce ; 1 pouce = 25,4 mm.
+        page_width = 70 * 72 / 25.4
+        page_height = 45 * 72 / 25.4
+        margin = 7
 
         def pdf_escape(value):
             value = _as_text(value)
             return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
-        # Logo ESI : même principe que pour les étiquettes colis, sans recadrage.
+        def compact_text(value, max_chars):
+            value = " ".join(_as_text(value).strip().split())
+            if len(value) <= max_chars:
+                return value
+            return value[:max(1, max_chars - 3)].rstrip() + "..."
+
+        def wrap_compact(value, width=34, max_lines=2):
+            value = " ".join(_as_text(value).strip().split())
+            if not value:
+                return []
+            parts = _tw.wrap(value, width=width, break_long_words=True, break_on_hyphens=True) or [value]
+            if len(parts) > max_lines:
+                parts = parts[:max_lines]
+                parts[-1] = compact_text(parts[-1], max(5, width - 1))
+            return parts
+
+        # Logo ESI, conservé à son ratio d'origine.
         logo_path = APP_DIR / 'static' / 'logo.png'
         logo_image_bytes = None
         logo_w = logo_h = None
@@ -10929,7 +10948,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
                     im.save(buf, format='JPEG', quality=95)
                     logo_image_bytes = buf.getvalue()
             except Exception as e:
-                print(f'[ETIQUETTE ARTICLE] Logo ESI non charge: {e}')
+                print(f'[ETIQUETTE ARTICLE 70x45] Logo ESI non charge: {e}')
 
         objects = [
             b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -10957,7 +10976,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
                     version=None,
                     error_correction=qrcode.constants.ERROR_CORRECT_M,
                     box_size=8,
-                    border=3,
+                    border=2,
                 )
                 qr.add_data(value)
                 qr.make(fit=True)
@@ -10967,7 +10986,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
                 im.save(buf, format='JPEG', quality=100, subsampling=0)
                 return buf.getvalue(), w, h
             except Exception as e:
-                print(f'[ETIQUETTE ARTICLE] QR code non genere: {e}')
+                print(f'[ETIQUETTE ARTICLE 70x45] QR code non genere: {e}')
                 return None, None, None
 
         page_refs = []
@@ -10985,10 +11004,11 @@ def _build_labels_pdf_bytes(labels, kind="article"):
 
             stream_lines = []
 
+            # En-tête compact : logo à gauche, type à droite.
             logo_box_x = margin
-            logo_box_y = page_height - 66
-            logo_box_w = 90
-            logo_box_h = 40
+            logo_box_y = page_height - 24
+            logo_box_w = 43
+            logo_box_h = 15
             if logo_obj_num:
                 scale = min(logo_box_w / float(logo_w), logo_box_h / float(logo_h))
                 draw_w = logo_w * scale
@@ -11002,78 +11022,75 @@ def _build_labels_pdf_bytes(labels, kind="article"):
                     'Q',
                 ]
             else:
-                stream_lines += [
-                    'BT', '/F2 20 Tf', f'{margin} {page_height - 43:.2f} Td', '(ESI) Tj', 'ET'
-                ]
+                stream_lines += ['BT', '/F2 12 Tf', f'{margin} {page_height - 17:.2f} Td', '(ESI) Tj', 'ET']
 
-            title = _as_text(label.get('titre') or 'ARTICLE').strip()
+            title = _as_text(label.get('titre') or 'ARTICLE').strip().upper()
             stream_lines += [
-                'BT', '/F2 16 Tf', f'{page_width - margin - 72:.2f} {page_height - 43:.2f} Td',
-                f'({pdf_escape(title)}) Tj', 'ET'
+                'BT', '/F2 7 Tf', f'{page_width - margin - 29:.2f} {page_height - 17:.2f} Td',
+                f'({pdf_escape(title)}) Tj', 'ET',
+                '0.4 w', f'{margin} {page_height - 28:.2f} m {page_width - margin:.2f} {page_height - 28:.2f} l S'
             ]
 
-            principal = _as_text(label.get('principal') or label.get('esi_id')).strip()
-            y = page_height - 92
+            principal = compact_text(label.get('principal') or label.get('esi_id'), 22)
             if principal:
                 stream_lines += [
-                    'BT', '/F2 9 Tf', f'{margin} {y:.2f} Td', '(N\260 ESI) Tj', 'ET'
+                    'BT', '/F1 5 Tf', f'{margin} {page_height - 38:.2f} Td', '(N\260 ESI) Tj', 'ET',
+                    'BT', '/F2 14 Tf', f'{margin} {page_height - 52:.2f} Td',
+                    f'({pdf_escape(principal)}) Tj', 'ET',
                 ]
-                y -= 20
-                size = 22 if len(principal) <= 18 else 18
-                for part in _tw.wrap(principal, width=24) or [principal]:
-                    stream_lines += [
-                        'BT', f'/F2 {size} Tf', f'{margin} {y:.2f} Td',
-                        f'({pdf_escape(part)}) Tj', 'ET'
-                    ]
-                    y -= size + 8
 
-            y -= 2
-            stream_lines += [
-                '0.25 w', f'{margin} {y:.2f} m {page_width - margin:.2f} {y:.2f} l S'
-            ]
-            y -= 20
-
-            for key in ("dossier", "client", "charge_projet", "reference", "designation", "partie", "article_principal", "quantite", "colis", "lieu", "bon"):
-                value = _display_prepacking_type(label.get(key)) if key == 'type_colis' else _as_text(label.get(key)).strip()
-                if not value:
-                    continue
-                label_name = {
-                    "dossier": "Dossier",
-                    "client": "Client",
-                    "charge_projet": "Charge de projet",
-                    "reference": "Article",
-                    "designation": "Designation",
-                    "partie": "Partie",
-                    "article_principal": "Article principal",
-                    "quantite": "Quantite",
-                    "colis": "Pre-Packing",
-                    "lieu": "Stockage",
-                    "bon": "Bon",
-                }.get(key, key)
-                text_line = f"{label_name} : {value}"
-                for part in (_tw.wrap(text_line, width=43) or [text_line]):
-                    if y < 118:
-                        break
-                    stream_lines += [
-                        'BT', '/F1 10 Tf', f'{margin} {y:.2f} Td',
-                        f'({pdf_escape(part)}) Tj', 'ET'
-                    ]
-                    y -= 15
-                if y < 118:
-                    break
-
+            # QR à droite. 48 pt ≈ 16,9 mm : assez grand pour un scan tablette/téléphone.
+            qr_size = 48
+            qr_x = page_width - margin - qr_size
+            qr_y = 8
+            text_right = qr_x - 5
             if qr_obj_num:
-                qr_size = 76
-                qr_x = page_width - margin - qr_size
-                qr_y = 24
                 stream_lines += [
-                    'BT', '/F2 7 Tf', f'{qr_x:.2f} {qr_y + qr_size + 6:.2f} Td',
-                    '(CARTE IDENTITE) Tj', 'ET',
+                    'BT', '/F2 4.8 Tf', f'{qr_x + 17:.2f} {qr_y + qr_size + 3:.2f} Td',
+                    '(SCAN) Tj', 'ET',
                     'q',
                     f'{qr_size:.2f} 0 0 {qr_size:.2f} {qr_x:.2f} {qr_y:.2f} cm',
                     '/ImQR Do',
                     'Q',
                 ]
+
+            # Informations utiles sur le terrain, volontairement limitées pour rester lisibles.
+            dossier = compact_text(label.get('dossier'), 17)
+            charge = compact_text(label.get('charge_projet'), 18)
+            reference = compact_text(label.get('reference'), 28)
+            designation = _as_text(label.get('designation')).strip()
+            partie = compact_text(label.get('partie'), 10)
+            parent = compact_text(label.get('article_principal'), 18)
+            prepacking = compact_text(label.get('colis'), 22)
+
+            info_lines = []
+            if dossier or charge:
+                dossier_line = f'DOSSIER: {dossier}' if dossier else ''
+                cp_line = f'CP: {charge}' if charge else ''
+                info_lines.append('  |  '.join(x for x in (dossier_line, cp_line) if x))
+            if reference:
+                info_lines.append(f'REF: {reference}')
+            if partie:
+                info_lines.append(f'PARTIE: {partie}' + (f' / {parent}' if parent else ''))
+            for line in wrap_compact(designation, width=32, max_lines=2):
+                info_lines.append('DES: ' + line if not any(x.startswith('DES:') for x in info_lines) else '     ' + line)
+            if prepacking:
+                info_lines.append(f'PRE-PACKING: {prepacking}')
+
+            y = page_height - 64
+            for index, line in enumerate(info_lines[:6]):
+                # Les lignes longues sont coupées pour ne jamais passer sous le QR.
+                max_chars = 38 if index < 2 else 34
+                line = compact_text(line, max_chars)
+                font = '/F2' if index in (0, 1) else '/F1'
+                size = 5.8 if index < 2 else 5.5
+                stream_lines += [
+                    'BT', f'{font} {size} Tf', f'{margin} {y:.2f} Td',
+                    f'({pdf_escape(line)}) Tj', 'ET'
+                ]
+                y -= 8.4
+                if y < 9:
+                    break
 
             stream = "\n".join(stream_lines).encode("latin-1", errors="replace")
             content_obj_num = len(objects) + 1
@@ -11094,7 +11111,7 @@ def _build_labels_pdf_bytes(labels, kind="article"):
             resources += ' >>'
 
             page = (
-                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width} {page_height}] "
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width:.4f} {page_height:.4f}] "
                 f"{resources} /Contents {content_obj_num} 0 R >>"
             )
             objects.append(page.encode("latin-1"))
