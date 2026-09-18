@@ -1738,6 +1738,21 @@ async function renderDoneTickets(){
       allowedModules.has(String(t.module || '').trim()) &&
       !normalizeTicketStatus(t.status).includes('annul')
     );
+
+    // Filtre la colonne de droite selon le type de ticket actuellement sélectionné.
+    // Fiche de Packing -> uniquement les Fiches de caisse
+    // Demande de devis -> uniquement les Demandes de devis
+    // Demande Aller voir -> uniquement les Demandes Aller voir
+    const activeModuleMap = {
+      'caisse': 'Fiche de caisse',
+      'devis': 'Demande de devis',
+      'aller-voir': 'Demande Aller voir'
+    };
+    const activeTicketModule = activeModuleMap[state.currentModule] || '';
+    if(activeTicketModule){
+      tickets = tickets.filter(t => String(t.module || '').trim() === activeTicketModule);
+    }
+
     const search = (state.doneSearch || '').trim().toLowerCase();
     if(search){
       tickets = tickets.filter(t => ticketSearchText(t).includes(search));
