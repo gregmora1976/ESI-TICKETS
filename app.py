@@ -2287,6 +2287,117 @@ function _esiMountIdentityLabelButton(d,editing=false){
   }
 }
 
+
+function _esiRelationButton(text, onClick){
+  const b=document.createElement('button');
+  b.type='button';
+  b.textContent=text;
+  b.style.cssText='border:0;border-radius:10px;padding:8px 11px;font-weight:900;cursor:pointer;background:#fee2e2;color:#b91c1c;white-space:nowrap';
+  b.onclick=onClick;
+  return b;
+}
+
+function _esiRelationRow(label,value,detail,onClick){
+  const row=document.createElement('div');
+  row.style.cssText='display:grid;grid-template-columns:minmax(120px,.75fr) minmax(0,1.3fr) auto;gap:10px;align-items:center;border:1px solid #dbeafe;border-radius:12px;padding:10px;background:#f8fbff';
+  const l=document.createElement('div');l.style.cssText='font-size:10px;font-weight:900;text-transform:uppercase;color:#0369a1';l.textContent=label;
+  const v=document.createElement('div');v.style.cssText='min-width:0';
+  const main=document.createElement('div');main.style.cssText='font-size:12px;font-weight:900;color:#0f172a;overflow-wrap:anywhere';main.textContent=value||'-';v.appendChild(main);
+  if(detail){const sub=document.createElement('div');sub.style.cssText='font-size:10px;color:#64748b;margin-top:3px;overflow-wrap:anywhere';sub.textContent=detail;v.appendChild(sub);}
+  row.appendChild(l);row.appendChild(v);row.appendChild(_esiRelationButton('Dissocier',onClick));
+  return row;
+}
+
+async function _esiRunDissociation(targetEsi, relation, options={}){
+  targetEsi=String(targetEsi||'').trim();
+  if(!targetEsi)return;
+  let removeFromPacking=Boolean(options.removeFromPacking);
+  if(relation==='prepacking'&&!options.skipConfirm){
+    if(!window.confirm('Dissocier '+targetEsi+' de son Pré-Packing ?'))return;
+    if(options.packingRef){
+      removeFromPacking=window.confirm(
+        'Cet Article est aussi lié au Packing '+options.packingRef+'.\n\n'+
+        'OK = le retirer du Pré-Packing ET du Packing.\n'+
+        'Annuler = le retirer uniquement du Pré-Packing et le conserver directement dans le Packing.'
+      );
+    }
+  }else if(relation==='packing'&&!options.skipConfirm){
+    const kind=String(options.kind||'élément');
+    const extra=kind==='Pré-Packing'?'\nLes Articles contenus resteront dans ce Pré-Packing mais quitteront aussi le Packing.':'';
+    if(!window.confirm('Dissocier '+kind+' '+targetEsi+' du Packing ?'+extra))return;
+  }
+
+  try{
+    const r=await fetch('/api/articles/'+encodeURIComponent(targetEsi)+'/dissocier',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({relation,remove_from_packing:removeFromPacking})
+    });
+    const txt=await r.text();let data={};try{data=txt?JSON.parse(txt):{}}catch(_e){}
+    if(!r.ok)throw new Error(data.error||'Dissociation impossible');
+    if(typeof load==='function'){try{await load()}catch(_e){}}
+    const current=(typeof articleDetailState!=='undefined'&&articleDetailState)?String(articleDetailState.esi||'').trim():'';
+    if(current&&typeof openArticleDetail==='function')await openArticleDetail(current);
+  }catch(e){window.alert(e.message||'Dissociation impossible');}
+}
+
+function _esiMountDissociationPanel(d,editing=false){
+  try{
+    const body=document.getElementById('articleModalBody');
+    if(!body)return;
+    const old=document.getElementById('esiDissociationPanel');if(old)old.remove();
+    if(editing)return;
+    const article=(d&&d.article)||{};
+    const esi=String(article.esi_id||'').trim();if(!esi)return;
+    const technical=String(article.type_objet||'').trim().toUpperCase();
+    const category=String(article.categorie_metier||'').trim().toUpperCase()||(technical==='CONTENANT'?'PRE-PACKING':'ARTICLE');
+    const preRef=String(article.dernier_colis||'').trim();
+    const packingRef=String(article.ref_caisse||'').trim();
+    const panel=document.createElement('section');panel.id='esiDissociationPanel';
+    panel.style.cssText='margin-top:14px;border:1px solid #cfe3ee;border-radius:16px;padding:14px;background:#fff';
+    const title=document.createElement('div');title.textContent='LIENS LOGISTIQUES / DISSOCIATION';title.style.cssText='font-size:11px;font-weight:950;color:#0284c7;letter-spacing:.04em;margin-bottom:10px';panel.appendChild(title);
+    const rows=document.createElement('div');rows.style.cssText='display:grid;gap:8px';panel.appendChild(rows);
+
+    if(category==='ARTICLE'){
+      if(preRef) rows.appendChild(_esiRelationRow('Pré-Packing',preRef,'Retirer l’Article de ce Pré-Packing',()=>_esiRunDissociation(esi,'prepacking',{packingRef}))); 
+      if(packingRef) rows.appendChild(_esiRelationRow('Packing',packingRef,preRef?'Lien Packing actuel — peut provenir du Pré-Packing':'Lien direct au Packing',()=>_esiRunDissociation(esi,'packing',{kind:'Article'})));
+    }else if(category==='PRE-PACKING'){
+      if(packingRef) rows.appendChild(_esiRelationRow('Packing',packingRef,'Retirer le Pré-Packing et ses Articles de ce Packing',()=>_esiRunDissociation(esi,'packing',{kind:'Pré-Packing'})));
+      const members=(d&&d.prepacking_articles)||[];
+      members.forEach(m=>{
+        const mEsi=String(m.esi_id||'').trim();if(!mEsi)return;
+        const mPacking=String(m.ref_caisse||'').trim();
+        rows.appendChild(_esiRelationRow('Article',mEsi,[m.reference,m.description].filter(Boolean).join(' · '),()=>_esiRunDissociation(mEsi,'prepacking',{packingRef:mPacking})));
+      });
+    }else if(category==='PACKING'){
+      const pres=(d&&d.packing_prepackings)||[];
+      const preRefs=new Set(pres.map(p=>String(p.reference||'').trim()).filter(Boolean));
+      pres.forEach(p=>{
+        const pEsi=String(p.esi_id||'').trim();if(!pEsi)return;
+        rows.appendChild(_esiRelationRow('Pré-Packing',String(p.reference||pEsi),pEsi,()=>_esiRunDissociation(pEsi,'packing',{kind:'Pré-Packing'})));
+      });
+      const arts=(d&&d.packing_articles)||[];
+      arts.forEach(a=>{
+        const aEsi=String(a.esi_id||'').trim();if(!aEsi)return;
+        const via=String(a.dernier_colis||'').trim();
+        const nested=via&&preRefs.has(via);
+        rows.appendChild(_esiRelationRow('Article',aEsi,[a.reference,a.description,nested?'via '+via:''].filter(Boolean).join(' · '),()=>{
+          if(nested){
+            if(!window.confirm(aEsi+' est contenu dans le Pré-Packing '+via+'.\n\nLe retirer de ce Packing nécessite aussi de le dissocier de ce Pré-Packing. Continuer ?'))return;
+            _esiRunDissociation(aEsi,'prepacking',{removeFromPacking:true,skipConfirm:true});
+          }else{
+            _esiRunDissociation(aEsi,'packing',{kind:'Article'});
+          }
+        }));
+      });
+    }
+
+    if(!rows.children.length){
+      const empty=document.createElement('div');empty.textContent='Aucun lien logistique à dissocier.';empty.style.cssText='font-size:12px;color:#64748b;padding:8px 2px';rows.appendChild(empty);
+    }
+    body.appendChild(panel);
+  }catch(e){console.error('Ajout panneau dissociation impossible',e);}
+}
+
 function installIdentityLabelPrint(){
   if(typeof renderArticleDetail!=='function') return;
   if(renderArticleDetail.__esiLabelPrintInstalled) return;
@@ -2297,7 +2408,11 @@ function installIdentityLabelPrint(){
     // Le rendu de la carte est synchrone dans articles.html ; un second essai unique
     // au cycle d'affichage suivant couvre les navigateurs qui finalisent le DOM juste apres.
     _esiMountIdentityLabelButton(d,editing);
-    requestAnimationFrame(()=>_esiMountIdentityLabelButton(d,editing));
+    _esiMountDissociationPanel(d,editing);
+    requestAnimationFrame(()=>{
+      _esiMountIdentityLabelButton(d,editing);
+      _esiMountDissociationPanel(d,editing);
+    });
     return result;
   };
   wrapped.__esiLabelPrintInstalled=true;
@@ -3902,6 +4017,395 @@ def api_article_update_colis(esi_id):
     supabase_rest_request('PATCH','articles',f'esi_id=eq.{safe_esi}',patch,prefer='return=minimal')
     return jsonify({'ok':True,'esi_id':esi_id,'colis':colis})
 
+
+
+def _dissociation_history_raw(row, event, clear_prepacking=False, clear_packing=False):
+    """Ajoute une trace de dissociation sans effacer l'historique logistique existant."""
+    raw = row.get('raw_json') if isinstance(row.get('raw_json'), dict) else {}
+    raw = dict(raw or {})
+    history = list(raw.get('dissociation_history') or [])
+    history.append(dict(event or {}))
+    raw['dissociation_history'] = history[-200:]
+    extra = raw.get('article_fields') if isinstance(raw.get('article_fields'), dict) else {}
+    extra = dict(extra or {})
+    if clear_prepacking:
+        raw['colis_actuel'] = ''
+        raw['type_colis_actuel'] = ''
+        extra['numero_colis'] = ''
+        extra['type_colis'] = ''
+        extra['colis_esi'] = ''
+    if clear_packing:
+        raw['packing_actuel'] = ''
+        extra['packing_reference'] = ''
+        extra['mise_en_caisse_ticket_id'] = ''
+        extra['mise_en_caisse_date'] = ''
+    raw['article_fields'] = extra
+    return raw
+
+
+def _patch_article_relation_row(row, changes, event, clear_prepacking=False, clear_packing=False):
+    """PATCH relationnel commun avec recalcul de search_text."""
+    row = dict(row or {})
+    esi_id = _as_text(row.get('esi_id')).strip()
+    if not esi_id:
+        raise ValueError('N° ESI manquant pour la dissociation.')
+    patch = dict(changes or {})
+    patch['raw_json'] = _dissociation_history_raw(
+        row, event, clear_prepacking=clear_prepacking, clear_packing=clear_packing
+    )
+    patch['updated_at'] = datetime.now().isoformat()
+    merged = dict(row)
+    merged.update(patch)
+    patch['search_text'] = _article_search_text(merged)
+    supabase_rest_request(
+        'PATCH', 'articles',
+        'esi_id=eq.' + urllib.parse.quote(esi_id, safe='-'),
+        patch, prefer='return=minimal'
+    )
+    return patch
+
+
+def _packing_ticket_for_relation(dossier, packing_ref):
+    """Retrouve la fiche Packing correspondant à une référence C-dossier-xx."""
+    dossier = _as_text(dossier).strip()
+    packing_ref = _as_text(packing_ref).strip()
+    if not dossier or not packing_ref:
+        return None
+    try:
+        data = _mise_en_caisse_dossier_data(dossier)
+        equivalent = {packing_ref, _packing_reference(dossier, packing_ref), _legacy_packing_reference(dossier, packing_ref)}
+        equivalent = {_as_text(x).strip() for x in equivalent if _as_text(x).strip()}
+        for packing in data.get('packings') or []:
+            ref = _as_text(packing.get('reference') or packing.get('packing_reference')).strip()
+            if ref not in equivalent:
+                continue
+            tid = _as_text(packing.get('packing_ticket_id')).strip()
+            if tid:
+                ticket = load_ticket(tid)
+                if ticket:
+                    return ticket
+    except Exception as e:
+        print(f'[DISSOCIATION] Recherche Packing impossible {dossier} / {packing_ref}: {e}')
+    return None
+
+
+def _packing_ticket_remove_relations(dossier, packing_ref, article_ids=None, prepacking_ids=None):
+    """Retire uniquement les éléments ciblés de la composition mémorisée de la fiche Packing."""
+    article_ids = {_as_text(x).strip() for x in (article_ids or []) if _as_text(x).strip()}
+    prepacking_ids = {_as_text(x).strip() for x in (prepacking_ids or []) if _as_text(x).strip()}
+    ticket = _packing_ticket_for_relation(dossier, packing_ref)
+    if not ticket:
+        return None
+
+    old_articles = list(ticket.get('articles_lies') or [])
+    old_prepackings = list(ticket.get('prepackings_lies') or [])
+    old_updated = ticket.get('updatedAt')
+
+    def keep_item(item, blocked):
+        esi = _as_text(item.get('esi_id') if isinstance(item, dict) else item).strip()
+        return esi not in blocked
+
+    ticket['articles_lies'] = [x for x in old_articles if keep_item(x, article_ids)]
+    ticket['prepackings_lies'] = [x for x in old_prepackings if keep_item(x, prepacking_ids)]
+    ticket['updatedAt'] = datetime.now().isoformat()
+    try:
+        save_ticket(ticket)
+        # Met également à jour la ligne synthétique PACKING dans la Base Articles.
+        _ensure_packing_article_record(ticket)
+    except Exception:
+        try:
+            ticket['articles_lies'] = old_articles
+            ticket['prepackings_lies'] = old_prepackings
+            ticket['updatedAt'] = old_updated or datetime.now().isoformat()
+            save_ticket(ticket)
+            _ensure_packing_article_record(ticket)
+        except Exception as rollback_error:
+            print(f'[DISSOCIATION] Rollback fiche Packing impossible: {rollback_error}')
+        raise
+    return ticket
+
+
+def _dissociate_article_from_prepacking(article_row, remove_from_packing=False):
+    """Retire un Article de son Pré-Packing, avec option de retrait simultané du Packing."""
+    article_row = dict(article_row or {})
+    article = _article_row_to_public(article_row)
+    esi_id = _as_text(article.get('esi_id')).strip()
+    dossier = _as_text(article.get('dossier')).strip()
+    pre_ref = _as_text(article.get('dernier_colis')).strip()
+    packing_ref = _as_text(article.get('ref_caisse')).strip()
+    if not pre_ref:
+        raise ValueError(f'{esi_id} n’est lié à aucun Pré-Packing.')
+
+    pre_row = _find_colis_record(pre_ref, dossier)
+    if not pre_row:
+        raise ValueError(f'Pré-Packing {pre_ref} introuvable dans la Base Articles.')
+    pre_public = _article_row_to_public(pre_row)
+    if _as_text(pre_public.get('categorie_metier')).strip().upper() != 'PRE-PACKING':
+        raise ValueError(f'{pre_ref} n’est pas identifié comme Pré-Packing.')
+
+    now_iso = datetime.now().isoformat()
+    event = {
+        'date': now_iso,
+        'action': 'dissociation_prepacking',
+        'article_esi': esi_id,
+        'prepacking': pre_ref,
+        'packing': packing_ref,
+        'retire_du_packing': bool(remove_from_packing),
+    }
+
+    pre_raw = pre_row.get('raw_json') if isinstance(pre_row.get('raw_json'), dict) else {}
+    pre_raw = dict(pre_raw or {})
+    member_ids = [
+        _as_text(x).strip() for x in (pre_raw.get('article_esi_ids') or [])
+        if _as_text(x).strip() and _as_text(x).strip() != esi_id
+    ]
+    linked = []
+    for item in pre_raw.get('articles_lies') or []:
+        item_esi = _as_text(item.get('esi_id') if isinstance(item, dict) else item).strip()
+        if item_esi and item_esi != esi_id:
+            linked.append(item)
+    pre_raw['article_esi_ids'] = member_ids
+    pre_raw['articles_lies'] = linked
+    history = list(pre_raw.get('dissociation_history') or [])
+    history.append(event)
+    pre_raw['dissociation_history'] = history[-200:]
+    pre_extra = pre_raw.get('article_fields') if isinstance(pre_raw.get('article_fields'), dict) else {}
+    pre_extra = dict(pre_extra or {})
+    pre_extra['articles_lies'] = ', '.join(member_ids)
+    pre_raw['article_fields'] = pre_extra
+    pre_desc = f"{_display_prepacking_type(pre_public.get('type_colis')) or 'Pre-Packing'} - {len(member_ids)} Article{'s' if len(member_ids) != 1 else ''}"
+    pre_patch = {'raw_json': pre_raw, 'description': pre_desc, 'updated_at': now_iso}
+    pre_merged = dict(pre_row); pre_merged.update(pre_patch)
+    pre_patch['search_text'] = _article_search_text(pre_merged)
+
+    old_pre = {
+        'raw_json': pre_row.get('raw_json') if isinstance(pre_row.get('raw_json'), dict) else {},
+        'description': pre_row.get('description') or '',
+        'updated_at': pre_row.get('updated_at'),
+        'search_text': pre_row.get('search_text') or '',
+    }
+    old_article = {
+        'dernier_colis': article_row.get('dernier_colis') or '',
+        'ref_caisse': article_row.get('ref_caisse') or '',
+        'raw_json': article_row.get('raw_json') if isinstance(article_row.get('raw_json'), dict) else {},
+        'updated_at': article_row.get('updated_at'),
+        'search_text': article_row.get('search_text') or '',
+    }
+
+    try:
+        supabase_rest_request(
+            'PATCH', 'articles',
+            'esi_id=eq.' + urllib.parse.quote(_as_text(pre_row.get('esi_id')).strip(), safe='-'),
+            pre_patch, prefer='return=minimal'
+        )
+        article_changes = {'dernier_colis': ''}
+        if remove_from_packing and packing_ref:
+            article_changes['ref_caisse'] = ''
+        _patch_article_relation_row(
+            article_row, article_changes, event,
+            clear_prepacking=True,
+            clear_packing=bool(remove_from_packing and packing_ref),
+        )
+        if remove_from_packing and packing_ref:
+            _packing_ticket_remove_relations(dossier, packing_ref, article_ids=[esi_id])
+    except Exception:
+        try:
+            supabase_rest_request(
+                'PATCH', 'articles',
+                'esi_id=eq.' + urllib.parse.quote(_as_text(pre_row.get('esi_id')).strip(), safe='-'),
+                old_pre, prefer='return=minimal'
+            )
+            rollback_article = dict(old_article)
+            supabase_rest_request(
+                'PATCH', 'articles',
+                'esi_id=eq.' + urllib.parse.quote(esi_id, safe='-'),
+                rollback_article, prefer='return=minimal'
+            )
+        except Exception as rollback_error:
+            print(f'[DISSOCIATION] Rollback Article/Pré-Packing impossible: {rollback_error}')
+        raise
+
+    return {
+        'ok': True,
+        'action': 'dissociation_prepacking',
+        'esi_id': esi_id,
+        'prepacking': pre_ref,
+        'packing_conserve': packing_ref if packing_ref and not remove_from_packing else '',
+    }
+
+
+def _dissociate_article_from_packing(article_row):
+    """Retire un Article directement d'un Packing sans toucher à son Pré-Packing."""
+    article_row = dict(article_row or {})
+    article = _article_row_to_public(article_row)
+    esi_id = _as_text(article.get('esi_id')).strip()
+    dossier = _as_text(article.get('dossier')).strip()
+    packing_ref = _as_text(article.get('ref_caisse')).strip()
+    pre_ref = _as_text(article.get('dernier_colis')).strip()
+    if not packing_ref:
+        raise ValueError(f'{esi_id} n’est lié à aucun Packing.')
+
+    # Un Article physiquement dans un Pré-Packing lui-même dans ce Packing ne peut pas
+    # être retiré du Packing tout en restant dans ce Pré-Packing.
+    if pre_ref:
+        pre_row = _find_colis_record(pre_ref, dossier)
+        if pre_row:
+            pre_packing = _as_text(pre_row.get('ref_caisse')).strip()
+            equivalents = {packing_ref, _packing_reference(dossier, packing_ref), _legacy_packing_reference(dossier, packing_ref)}
+            if pre_packing and pre_packing in equivalents:
+                raise ValueError(
+                    f'{esi_id} est dans le Pré-Packing {pre_ref}, lui-même dans {packing_ref}. '
+                    'Dissocie l’Article du Pré-Packing (avec retrait du Packing) ou dissocie le Pré-Packing du Packing.'
+                )
+
+    event = {
+        'date': datetime.now().isoformat(),
+        'action': 'dissociation_packing',
+        'article_esi': esi_id,
+        'packing': packing_ref,
+    }
+    old = {
+        'ref_caisse': article_row.get('ref_caisse') or '',
+        'raw_json': article_row.get('raw_json') if isinstance(article_row.get('raw_json'), dict) else {},
+        'updated_at': article_row.get('updated_at'),
+        'search_text': article_row.get('search_text') or '',
+    }
+    try:
+        _patch_article_relation_row(article_row, {'ref_caisse': ''}, event, clear_packing=True)
+        _packing_ticket_remove_relations(dossier, packing_ref, article_ids=[esi_id])
+    except Exception:
+        try:
+            supabase_rest_request(
+                'PATCH', 'articles', 'esi_id=eq.' + urllib.parse.quote(esi_id, safe='-'),
+                old, prefer='return=minimal'
+            )
+        except Exception as rollback_error:
+            print(f'[DISSOCIATION] Rollback Article/Packing impossible: {rollback_error}')
+        raise
+    return {'ok': True, 'action': 'dissociation_packing', 'esi_id': esi_id, 'packing': packing_ref}
+
+
+def _dissociate_prepacking_from_packing(pre_row):
+    """Retire un Pré-Packing du Packing et retire ce Packing de tous ses Articles membres."""
+    pre_row = dict(pre_row or {})
+    pre = _article_row_to_public(pre_row)
+    pre_esi = _as_text(pre.get('esi_id')).strip()
+    dossier = _as_text(pre.get('dossier')).strip()
+    pre_ref = _as_text(pre.get('reference') or pre.get('numero_colis')).strip()
+    packing_ref = _as_text(pre.get('ref_caisse')).strip()
+    if not packing_ref:
+        raise ValueError(f'Le Pré-Packing {pre_ref or pre_esi} n’est lié à aucun Packing.')
+
+    member_ids = _mise_en_caisse_prepacking_member_ids(pre_row)
+    member_rows = _mise_en_caisse_rows_by_ids(member_ids)
+    now_iso = datetime.now().isoformat()
+    event = {
+        'date': now_iso,
+        'action': 'dissociation_prepacking_packing',
+        'prepacking_esi': pre_esi,
+        'prepacking': pre_ref,
+        'packing': packing_ref,
+    }
+    equivalents = {packing_ref, _packing_reference(dossier, packing_ref), _legacy_packing_reference(dossier, packing_ref)}
+    equivalents = {_as_text(x).strip() for x in equivalents if _as_text(x).strip()}
+
+    backups = []
+    try:
+        # Pré-Packing lui-même.
+        backups.append((pre_esi, {
+            'ref_caisse': pre_row.get('ref_caisse') or '',
+            'raw_json': pre_row.get('raw_json') if isinstance(pre_row.get('raw_json'), dict) else {},
+            'updated_at': pre_row.get('updated_at'),
+            'search_text': pre_row.get('search_text') or '',
+        }))
+        _patch_article_relation_row(pre_row, {'ref_caisse': ''}, event, clear_packing=True)
+
+        # Ses Articles restent dans le Pré-Packing (dernier_colis inchangé) mais quittent ce Packing.
+        for member_id in member_ids:
+            row = member_rows.get(member_id)
+            if not row:
+                continue
+            current_ref = _as_text(row.get('ref_caisse')).strip()
+            if current_ref not in equivalents:
+                continue
+            backups.append((member_id, {
+                'ref_caisse': row.get('ref_caisse') or '',
+                'raw_json': row.get('raw_json') if isinstance(row.get('raw_json'), dict) else {},
+                'updated_at': row.get('updated_at'),
+                'search_text': row.get('search_text') or '',
+            }))
+            member_event = dict(event)
+            member_event['article_esi'] = member_id
+            _patch_article_relation_row(row, {'ref_caisse': ''}, member_event, clear_packing=True)
+
+        _packing_ticket_remove_relations(
+            dossier, packing_ref,
+            article_ids=member_ids,
+            prepacking_ids=[pre_esi],
+        )
+    except Exception:
+        for restore_esi, restore in reversed(backups):
+            try:
+                supabase_rest_request(
+                    'PATCH', 'articles',
+                    'esi_id=eq.' + urllib.parse.quote(restore_esi, safe='-'),
+                    restore, prefer='return=minimal'
+                )
+            except Exception as rollback_error:
+                print(f'[DISSOCIATION] Rollback {restore_esi} impossible: {rollback_error}')
+        raise
+
+    return {
+        'ok': True,
+        'action': 'dissociation_prepacking_packing',
+        'esi_id': pre_esi,
+        'prepacking': pre_ref,
+        'packing': packing_ref,
+        'articles_conserves_dans_prepacking': len(member_ids),
+    }
+
+
+@app.route('/api/articles/<path:esi_id>/dissocier', methods=['POST'])
+def api_article_dissocier(esi_id):
+    """Dissocie proprement les relations Article / Pré-Packing / Packing depuis la carte d'identité."""
+    esi_id = _as_text(esi_id).strip()
+    safe_esi = urllib.parse.quote(esi_id, safe='-')
+    rows = supabase_rest_request('GET', 'articles', f'select=*&esi_id=eq.{safe_esi}&limit=1') or []
+    if not rows:
+        return jsonify({'ok': False, 'error': 'Élément introuvable'}), 404
+
+    row = dict(rows[0])
+    public = _article_row_to_public(row)
+    category = _as_text(public.get('categorie_metier')).strip().upper()
+    data = request.get_json(silent=True) or {}
+    relation = _as_text(data.get('relation')).strip().lower()
+
+    try:
+        with _ARTICLE_LOCK:
+            if relation == 'prepacking':
+                if category != 'ARTICLE':
+                    raise ValueError('Seul un Article peut être dissocié de son Pré-Packing par cette action.')
+                result = _dissociate_article_from_prepacking(
+                    row,
+                    remove_from_packing=bool(data.get('remove_from_packing')),
+                )
+            elif relation == 'packing':
+                if category == 'ARTICLE':
+                    result = _dissociate_article_from_packing(row)
+                elif category == 'PRE-PACKING':
+                    result = _dissociate_prepacking_from_packing(row)
+                else:
+                    raise ValueError('Un Packing ne peut pas être dissocié de lui-même.')
+            else:
+                raise ValueError('Relation à dissocier invalide.')
+        return jsonify(result)
+    except ValueError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 409
+    except Exception as e:
+        print(f'[DISSOCIATION] Erreur {esi_id}: {e}')
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/api/articles/<esi_id>')
 def api_article_detail(esi_id):
     esi_id = _as_text(esi_id).strip()
@@ -3957,10 +4461,27 @@ def api_article_detail(esi_id):
         "fiche_caisse": None,
         "packing_articles": [],
         "packing_prepackings": [],
+        "prepacking_articles": [],
         "receptions": [],
         "documents_source": [],
         "composition": {"is_part": bool(part_meta.get("parent_esi")), "parent": parent_summary, "partie_label": part_meta.get("partie_label") or "", "parts": composition_parts},
     }
+
+    # Pour une carte Pré-Packing, expose aussi sa composition actuelle afin de
+    # pouvoir dissocier un Article directement depuis la carte d'identité.
+    if _as_text(article.get('categorie_metier')).strip().upper() == 'PRE-PACKING':
+        member_ids = _mise_en_caisse_prepacking_member_ids(rows[0])
+        member_rows = _mise_en_caisse_rows_by_ids(member_ids)
+        detail["prepacking_articles"] = [
+            {
+                'esi_id': member_id,
+                'reference': _as_text(member_rows.get(member_id, {}).get('reference')).strip(),
+                'description': _as_text(member_rows.get(member_id, {}).get('description')).strip(),
+                'dernier_colis': _as_text(member_rows.get(member_id, {}).get('dernier_colis')).strip(),
+                'ref_caisse': _as_text(member_rows.get(member_id, {}).get('ref_caisse')).strip(),
+            }
+            for member_id in member_ids if member_id in member_rows
+        ]
 
     if ticket:
         detail["ticket"] = {
@@ -4018,7 +4539,22 @@ def api_article_detail(esi_id):
                 detail["packing_articles"] = _linked_articles_for_ticket(ticket)
             except Exception:
                 detail["packing_articles"] = _packing_article_link_summaries(ticket)
-            detail["packing_prepackings"] = list(ticket.get("prepackings_lies") or [])
+            stored_pre = list(ticket.get("prepackings_lies") or [])
+            pre_ids = [
+                _as_text(x.get('esi_id') if isinstance(x, dict) else x).strip()
+                for x in stored_pre
+                if _as_text(x.get('esi_id') if isinstance(x, dict) else x).strip()
+            ]
+            pre_rows = _mise_en_caisse_rows_by_ids(pre_ids)
+            detail["packing_prepackings"] = [
+                {
+                    'esi_id': pid,
+                    'reference': _as_text(pre_rows.get(pid, {}).get('reference')).strip(),
+                    'description': _as_text(pre_rows.get(pid, {}).get('description')).strip(),
+                    'ref_caisse': _as_text(pre_rows.get(pid, {}).get('ref_caisse')).strip(),
+                }
+                for pid in pre_ids if pid in pre_rows
+            ]
         elif module in ("Demande d'enlèvement", "Demande d'enlevement"):
             enl = ticket.get("enlevement") or {}
             detail["demande_enlevement"] = {
@@ -11810,7 +12346,7 @@ def _linked_articles_for_ticket(ticket):
         encoded = urllib.parse.quote(','.join(part), safe=',-_')
         rows = supabase_rest_request(
             'GET', 'articles',
-            'select=esi_id,dossier,reference,description,client,projet,type_objet&esi_id=in.(' + encoded + ')&limit=100'
+            'select=esi_id,dossier,reference,description,client,projet,type_objet,dernier_colis,ref_caisse&esi_id=in.(' + encoded + ')&limit=100'
         ) or []
         for row in rows:
             esi_id = _as_text(row.get('esi_id')).strip()
@@ -11824,6 +12360,8 @@ def _linked_articles_for_ticket(ticket):
                 'description': _as_text(row.get('description')).strip(),
                 'client': _as_text(row.get('client')).strip(),
                 'projet': _as_text(row.get('projet')).strip(),
+                'dernier_colis': _as_text(row.get('dernier_colis')).strip(),
+                'ref_caisse': _as_text(row.get('ref_caisse')).strip(),
             }
 
     return [rows_by_id[x] for x in esi_ids if x in rows_by_id]
