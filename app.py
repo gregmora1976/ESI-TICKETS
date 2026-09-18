@@ -982,6 +982,83 @@ def _find_colis_record(colis_ref, dossier=''):
     return dict(rows[0]) if rows else None
 
 
+def _find_business_container_record(reference, dossier='', wanted_category=''):
+    """Retrouve un PRE-PACKING ou un PACKING par sa référence métier.
+
+    Cette résolution est utilisée uniquement à l'ouverture d'une carte / d'un lien,
+    afin de ne pas alourdir le chargement de la grille principale.
+    """
+    reference = _as_text(reference).strip()
+    dossier = _as_text(dossier).strip()
+    wanted_category = _as_text(wanted_category).strip().upper()
+    if not reference:
+        return None
+
+    refs = [reference]
+    if wanted_category == 'PACKING' and dossier:
+        for candidate in (
+            _packing_reference(dossier, reference),
+            _legacy_packing_reference(dossier, reference),
+        ):
+            candidate = _as_text(candidate).strip()
+            if candidate and candidate not in refs:
+                refs.append(candidate)
+
+    for ref in refs:
+        query = (
+            'select=*'
+            '&type_objet=eq.CONTENANT'
+            '&reference=eq.' + urllib.parse.quote(ref, safe='-_')
+        )
+        if dossier:
+            query += '&dossier=eq.' + urllib.parse.quote(dossier, safe='')
+        query += '&order=article_no.desc&limit=20'
+        rows = supabase_rest_request('GET', 'articles', query) or []
+        for row in rows:
+            public = _article_row_to_public(row)
+            category = _as_text(public.get('categorie_metier')).strip().upper()
+            if not wanted_category or category == wanted_category:
+                return dict(row)
+    return None
+
+
+def _relation_summary(row):
+    if not row:
+        return None
+    public = _article_row_to_public(row)
+    return {
+        'esi_id': _as_text(public.get('esi_id')).strip(),
+        'categorie_metier': _as_text(public.get('categorie_metier')).strip().upper(),
+        'reference': _as_text(public.get('reference')).strip(),
+        'description': _as_text(public.get('description')).strip(),
+        'dossier': _as_text(public.get('dossier')).strip(),
+        'dernier_colis': _as_text(public.get('dernier_colis')).strip(),
+        'ref_caisse': _as_text(public.get('ref_caisse')).strip(),
+    }
+
+
+@app.route('/api/articles/resolve-relation')
+def api_article_resolve_relation():
+    """Résout une référence de Pré-Packing / Packing vers son N° ESI pour la navigation UI."""
+    dossier = _as_text(request.args.get('dossier')).strip()
+    reference = _as_text(request.args.get('reference')).strip()
+    category = _as_text(request.args.get('type')).strip().upper()
+    if category in ('PREPACKING', 'COLIS'):
+        category = 'PRE-PACKING'
+    if category not in ('PRE-PACKING', 'PACKING'):
+        return jsonify({'ok': False, 'error': 'Type de relation invalide'}), 400
+    if not reference:
+        return jsonify({'ok': False, 'error': 'Référence manquante'}), 400
+    try:
+        row = _find_business_container_record(reference, dossier, category)
+        if not row:
+            return jsonify({'ok': False, 'error': f'{category} introuvable'}), 404
+        summary = _relation_summary(row) or {}
+        return jsonify({'ok': True, **summary})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 def _ensure_colis_article_records(ticket_id, numero_dossier, colis_refs, colis_types, colis_by_esi,
                                   selected_items, client='', projet='', charge_projet='',
                                   lieu_stockage='', reception_ref=''):
@@ -4462,6 +4539,8 @@ def api_article_detail(esi_id):
         "packing_articles": [],
         "packing_prepackings": [],
         "prepacking_articles": [],
+        "linked_prepacking": None,
+        "linked_packing": None,
         "receptions": [],
         "documents_source": [],
         "composition": {"is_part": bool(part_meta.get("parent_esi")), "parent": parent_summary, "partie_label": part_meta.get("partie_label") or "", "parts": composition_parts},
@@ -4469,7 +4548,9 @@ def api_article_detail(esi_id):
 
     # Pour une carte Pré-Packing, expose aussi sa composition actuelle afin de
     # pouvoir dissocier un Article directement depuis la carte d'identité.
-    if _as_text(article.get('categorie_metier')).strip().upper() == 'PRE-PACKING':
+    article_category = _as_text(article.get('categorie_metier')).strip().upper()
+
+    if article_category == 'PRE-PACKING':
         member_ids = _mise_en_caisse_prepacking_member_ids(rows[0])
         member_rows = _mise_en_caisse_rows_by_ids(member_ids)
         detail["prepacking_articles"] = [
@@ -4482,6 +4563,23 @@ def api_article_detail(esi_id):
             }
             for member_id in member_ids if member_id in member_rows
         ]
+
+    # Relations directes pour les cartes ARTICLE et PRE-PACKING.
+    # On résout le N° ESI à partir des références afin que les anciennes lignes,
+    # qui ne stockaient pas toujours l'ESI du contenant, restent navigables.
+    if article_category == 'ARTICLE':
+        pre_ref = _as_text(article.get('dernier_colis')).strip()
+        if pre_ref:
+            detail['linked_prepacking'] = _relation_summary(
+                _find_business_container_record(pre_ref, article.get('dossier'), 'PRE-PACKING')
+            )
+
+    if article_category in ('ARTICLE', 'PRE-PACKING'):
+        packing_ref = _as_text(article.get('ref_caisse')).strip()
+        if packing_ref:
+            detail['linked_packing'] = _relation_summary(
+                _find_business_container_record(packing_ref, article.get('dossier'), 'PACKING')
+            )
 
     if ticket:
         detail["ticket"] = {
