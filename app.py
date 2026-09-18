@@ -3371,6 +3371,11 @@ def _apply_mise_en_caisse_to_articles(ticket):
             packing_ticket['updatedAt'] = now_iso
             save_ticket(packing_ticket)
 
+            # La composition vient d'être modifiée dans le ticket Packing :
+            # resynchronise immédiatement sa ligne synthétique dans la Base Articles
+            # afin que la carte d'identité du PACKING affiche les Articles / Pré-Packings liés.
+            _ensure_packing_article_record(packing_ticket)
+
         # Marque le ticket MEC comme effectivement appliqué. Le champ reste dans raw_json.
         mise['validation_mode'] = 'appliquee_base_articles'
         mise['appliquee_le'] = now_iso
@@ -5394,6 +5399,8 @@ def api_articles_migrate():
     stats = {
         "tickets": 0, "articles_crees": 0,
         "packings_traites": 0, "packings_crees": 0, "packings_mis_a_jour": 0,
+        "mises_en_caisse_traitees": 0, "mises_en_caisse_appliquees": 0,
+        "mises_en_caisse_ignorees": 0,
         "errors": []
     }
     try:
@@ -5416,6 +5423,31 @@ def api_articles_migrate():
     for key in ("packings_traites", "packings_crees", "packings_mis_a_jour"):
         stats[key] = packing_stats.get(key, 0)
     stats["errors"].extend(packing_stats.get("errors") or [])
+
+    # Rejoue ensuite les tickets Mise en caisse déjà existants. Cette opération est
+    # idempotente : elle sert notamment à reconstruire les liens créés avec une version
+    # antérieure qui attendait le statut Terminé avant de toucher à la Base Articles.
+    for ticket in tickets:
+        module = _as_text(ticket.get('module')).replace('’', "'").strip()
+        if module != 'Mise en caisse':
+            continue
+        status = _as_text(ticket.get('status')).strip().lower()
+        if 'annul' in status:
+            stats['mises_en_caisse_ignorees'] += 1
+            continue
+        stats['mises_en_caisse_traitees'] += 1
+        try:
+            result = _apply_mise_en_caisse_to_articles(ticket)
+            ticket['updatedAt'] = datetime.now().isoformat()
+            save_ticket(ticket)
+            if result.get('applied'):
+                stats['mises_en_caisse_appliquees'] += 1
+        except Exception as e:
+            stats['errors'].append({
+                'ticket_id': ticket.get('id'),
+                'module': 'Mise en caisse',
+                'error': str(e),
+            })
 
     return jsonify({
         "ok": not stats["errors"],
@@ -9742,6 +9774,32 @@ def api_create_ticket():
     # Attribue immédiatement un identifiant ESI à chaque unité d'un avis d'arrivée.
     # Le ticket est d'abord sauvegardé afin que les références Supabase soient cohérentes.
     save_ticket(ticket)
+
+    # Une Mise en caisse validée correspond déjà à une opération physique confirmée par
+    # l'utilisateur. Les liens Article -> Pré-Packing -> Packing sont donc appliqués
+    # immédiatement à la création du ticket, sans attendre un passage ultérieur à Terminé.
+    mise_en_caisse_result = None
+    if is_mise_en_caisse:
+        try:
+            mise_en_caisse_result = _apply_mise_en_caisse_to_articles(ticket)
+            ticket['updatedAt'] = datetime.now().isoformat()
+            save_ticket(ticket)
+        except ValueError as e:
+            return jsonify({
+                'ok': False,
+                'id': ticket_id,
+                'error': str(e),
+                'mise_en_caisse_appliquee': False,
+            }), 409
+        except Exception as e:
+            print(f"[MISE EN CAISSE] Application immédiate du ticket {ticket_id} impossible: {e}")
+            return jsonify({
+                'ok': False,
+                'id': ticket_id,
+                'error': 'Le ticket a été créé, mais les liens de mise en caisse n’ont pas pu être appliqués : ' + str(e),
+                'mise_en_caisse_appliquee': False,
+            }), 500
+
     if is_avis_arrivee:
         try:
             _ensure_articles_for_ticket(ticket, save=True)
@@ -9775,7 +9833,8 @@ def api_create_ticket():
     return jsonify({
         'ok': True,
         'id': ticket_id,
-        'analysis_status': ('ready' if is_enlevement and enlevement_analyse else ('pending' if is_enlevement else None))
+        'analysis_status': ('ready' if is_enlevement and enlevement_analyse else ('pending' if is_enlevement else None)),
+        'mise_en_caisse': mise_en_caisse_result if is_mise_en_caisse else None,
     })
 
 
@@ -11911,10 +11970,9 @@ def api_update_status(ticket_id):
     now_iso = datetime.now().isoformat()
     mise_en_caisse_result = None
 
-    # Une demande "Mise en caisse" ne modifie la Base Articles qu'au moment où
-    # elle est réellement validée par le passage au statut Terminé.
-    # L'appel reste volontairement idempotent : un ancien ticket déjà Terminé peut
-    # être resoumis au même statut afin de reconstruire ses liens si nécessaire.
+    # Les liens d'une Mise en caisse sont désormais appliqués dès la création du ticket.
+    # On rejoue néanmoins l'opération au passage à Terminé : l'appel est idempotent et
+    # permet aussi de réparer un ancien ticket créé avant cette correction.
     if nouveau_statut == 'Terminé' and _as_text(ticket.get('module')).strip() == 'Mise en caisse':
         try:
             mise_en_caisse_result = _apply_mise_en_caisse_to_articles(ticket)
