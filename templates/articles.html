@@ -61,13 +61,14 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
 .linked-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.linked-card{border:1px solid var(--line);border-radius:12px;background:#f8fbfd;padding:11px}.linked-card.span-2{grid-column:span 2}.linked-label{font-size:10px;color:#47657d;font-weight:950;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px}.linked-value{font-size:13px;font-weight:750;color:#213a50;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.4}
 .document-list{display:flex;gap:8px;flex-wrap:wrap}.article-modal .file-link{background:#eaf6ff;border-color:#b8d9ec;color:#0369a1;padding:9px 12px;border-radius:10px}.article-modal .file-link:hover{background:#dff2ff}
 .reception-list{display:grid;gap:12px}.reception-card{background:#fff;border:1px solid var(--line);border-left:5px solid var(--blue);border-radius:14px;padding:14px}.reception-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:11px}.reception-title{font-size:15px;font-weight:950;color:var(--navy)}.reception-date{font-size:11px;font-weight:850;color:#0369a1;background:#eaf6ff;border-radius:999px;padding:6px 9px}.reception-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.reception-field{background:#f8fafc;border:1px solid #e2edf4;border-radius:10px;padding:9px}.reception-field-label{font-size:9px;color:#64748b;font-weight:950;text-transform:uppercase;letter-spacing:.04em}.reception-field-value{font-size:12px;font-weight:800;color:#273a4c;margin-top:4px;overflow-wrap:anywhere}.article-meta{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:10px;color:#7a8c9c;padding:14px 2px 2px}.article-empty{padding:16px;border:1px dashed #b9d4e4;border-radius:12px;background:#f8fbfd;color:var(--muted);font-size:12px;text-align:center}.composition-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.composition-card{border:1px solid #bae6fd;background:#f0f9ff;border-radius:13px;padding:12px}.composition-card .part-title{font-size:13px;font-weight:950;color:#075985}.composition-card .part-esi{margin-top:4px;font-size:12px;font-weight:900;color:var(--navy)}.composition-card .part-meta{margin-top:7px;font-size:11px;color:#475569;line-height:1.4}.composition-card .part-open{display:inline-block;margin-top:8px;color:#0369a1;font-size:11px;font-weight:900;text-decoration:none}.composition-card .part-open:hover{text-decoration:underline}
+.relation-cell{min-width:235px}.relation-stack{display:grid;gap:5px}.relation-line{font-size:10px;line-height:1.35;color:#475569}.relation-line b{color:#0f2f4f}.relation-open{color:#0369a1;font-weight:950;text-decoration:none;cursor:pointer}.relation-open:hover{text-decoration:underline}.relation-empty{color:#94a3b8;font-size:10px}.relation-flow{display:grid;gap:10px}.relation-group{border:1px solid #cfe3ee;background:#f8fbff;border-radius:14px;padding:12px}.relation-group-title{font-size:10px;font-weight:950;text-transform:uppercase;letter-spacing:.05em;color:#0284c7;margin-bottom:8px}.relation-items{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.relation-card{border:1px solid #dbeafe;background:#fff;border-radius:12px;padding:10px;min-width:0}.relation-card-type{font-size:9px;font-weight:950;text-transform:uppercase;color:#64748b;letter-spacing:.05em}.relation-card-main{margin-top:4px;font-size:13px;font-weight:950;color:#0f2f4f;overflow-wrap:anywhere}.relation-card-sub{margin-top:4px;font-size:10px;color:#64748b;overflow-wrap:anywhere}.relation-card-link{display:inline-block;margin-top:7px;color:#0369a1;font-size:11px;font-weight:950;text-decoration:none}.relation-card-link:hover{text-decoration:underline}
 
 .article-hero-right{display:flex;flex-direction:column;align-items:flex-end;gap:10px}.article-hero-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.btn.hero-action{background:#fff;border-color:#fff;color:var(--navy);box-shadow:0 5px 14px rgba(0,0,0,.12)}.btn.hero-action:hover{background:#eaf6ff}.btn.hero-action.secondary{background:transparent;color:#fff;border-color:rgba(255,255,255,.55);box-shadow:none}.btn.hero-action.secondary:hover{background:rgba(255,255,255,.1)}
 .article-edit-input,.article-edit-textarea{width:100%;border:1px solid #8fc6e6;background:#fff;border-radius:9px;padding:9px 10px;font:inherit;color:var(--navy);font-weight:750;outline:none}.article-edit-input:focus,.article-edit-textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(14,165,233,.12)}.article-edit-textarea{min-height:74px;resize:vertical;line-height:1.4}.metric-card .article-edit-input{margin-top:8px;font-size:17px;font-weight:900}.article-readonly{background:#f1f5f9;border-color:#dbe7f0}.article-readonly .identity-field-value{color:#64748b}
 .article-photo-edit-wrap{display:flex;flex-direction:column;gap:9px}.article-photo-actions{display:flex;gap:8px;flex-wrap:wrap}.article-photo-actions .btn{flex:1;min-width:110px}.photo-help{font-size:10px;color:var(--muted);line-height:1.35}.photo-help strong{color:var(--navy)}.article-photo.editing{outline:2px dashed #7dd3fc;outline-offset:-7px;background:#f0f9ff}.article-photo.editing:hover{background:#e8f7ff}.article-photo img.photo-hidden{display:none}.article-photo-empty.photo-hidden{display:none}.colis-edit-note{font-size:10px;color:var(--muted);margin-top:6px}
 
 @media(max-width:1000px){.identity-layout{grid-template-columns:1fr}.article-photo{min-height:210px}.metric-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.logistics-grid,.reception-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:700px){.edit-grid{grid-template-columns:1fr}.detail-grid{grid-template-columns:1fr}.detail-value{margin-bottom:6px}.article-modal .modal-body{padding-left:13px;padding-right:13px}.article-hero{margin-left:-13px;margin-right:-13px;padding-left:13px;padding-right:13px}.article-modal-heading{padding:14px}.article-modal-heading img{width:52px}.article-modal-heading .modal-title{font-size:18px}.article-modal .modal-close{margin:12px 10px 0 0}.article-hero-title{font-size:24px}.identity-section{padding:13px}.identity-fields,.linked-grid,.logistics-grid,.reception-grid{grid-template-columns:1fr}.identity-field.span-2,.linked-card.span-2{grid-column:span 1}.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.colis-editor{grid-template-columns:1fr}.colis-editor .btn{width:100%}}
+@media(max-width:700px){.edit-grid{grid-template-columns:1fr}.relation-items{grid-template-columns:1fr}.detail-grid{grid-template-columns:1fr}.detail-value{margin-bottom:6px}.article-modal .modal-body{padding-left:13px;padding-right:13px}.article-hero{margin-left:-13px;margin-right:-13px;padding-left:13px;padding-right:13px}.article-modal-heading{padding:14px}.article-modal-heading img{width:52px}.article-modal-heading .modal-title{font-size:18px}.article-modal .modal-close{margin:12px 10px 0 0}.article-hero-title{font-size:24px}.identity-section{padding:13px}.identity-fields,.linked-grid,.logistics-grid,.reception-grid{grid-template-columns:1fr}.identity-field.span-2,.linked-card.span-2{grid-column:span 1}.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.colis-editor{grid-template-columns:1fr}.colis-editor .btn{width:100%}}
 </style>
 </head>
 <body>
@@ -107,7 +108,7 @@ table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:11px 10p
         <thead><tr>
           <th class="select-col"><input class="select-all" id="selectAll" type="checkbox" title="Tout sélectionner"></th>
           <th>N° ESI</th><th>Type</th><th>Référence</th><th>Description</th><th>Dossier</th><th>Client</th>
-          <th>Projet</th><th>Dimensions</th><th>Poids</th><th>Stockage</th><th>N° Pre-Packing</th><th>Type Pre-Packing</th><th>Réf. Packing</th>
+          <th>Projet</th><th>Dimensions</th><th>Poids</th><th>Stockage</th><th>N° Pre-Packing</th><th>Type Pre-Packing</th><th>Réf. Packing</th><th>Relations</th>
         </tr></thead>
         <tbody id="body"></tbody>
       </table>
@@ -189,6 +190,24 @@ function articleType(a){const c=String((a&&a.categorie_metier)||'').trim().toUpp
 function prePackingTypeLabel(v){return String(v||'').trim()==='Caisse bois'?'Packing bois':String(v||'').trim()}
 function packingReferenceDisplay(value,dossier=''){const v0=String(value||'').trim(),d=String(dossier||'').trim();if(!v0)return '-';if(/^C-/i.test(v0))return v0;if(!d)return v0;let v=v0.startsWith(d+'-')?v0.slice(d.length+1):v0;if(/^\d+$/.test(v))v=v.padStart(2,'0');return `C-${d}-${v}`;}
 function typeBadge(a){const t=articleType(a),cls=t==='PACKING'?'packing':(t==='PRE-PACKING'?'contenant':'produit');return `<span class="type-badge ${cls}">${esc(t)}</span>`}
+function relationRefLink(kind,reference,dossier,label){const ref=String(reference||'').trim();if(!ref)return '';return `<a href="#" class="relation-open" data-related-type="${esc(kind)}" data-related-ref="${esc(ref)}" data-related-dossier="${esc(dossier||'')}">${esc(label||ref)}</a>`}
+function relationEsiLink(esi,label){const id=String(esi||'').trim();if(!id)return '';return `<a href="#" class="relation-open" data-related-esi="${esc(id)}">${esc(label||id)}</a>`}
+function csvEsiLinks(value){const ids=String(value||'').split(',').map(x=>x.trim()).filter(Boolean);return ids.map(id=>relationEsiLink(id,id)).join(', ')}
+function relationsCell(a){
+  const type=articleType(a),dossier=dossierAuto(a);
+  const lines=[];
+  if(type==='ARTICLE'){
+    if(a.dernier_colis){const label=a.colis_esi?`${a.dernier_colis} · ${a.colis_esi}`:a.dernier_colis;lines.push(`<div class="relation-line"><b>Pré-Packing :</b> ${a.colis_esi?relationEsiLink(a.colis_esi,label):relationRefLink('PRE-PACKING',a.dernier_colis,dossier,label)}</div>`)}
+    if(a.ref_caisse)lines.push(`<div class="relation-line"><b>Packing :</b> ${relationRefLink('PACKING',a.ref_caisse,dossier,packingReferenceDisplay(a.ref_caisse,dossier))}</div>`);
+  }else if(type==='PRE-PACKING'){
+    if(a.articles_lies)lines.push(`<div class="relation-line"><b>Articles :</b> ${csvEsiLinks(a.articles_lies)}</div>`);
+    if(a.ref_caisse)lines.push(`<div class="relation-line"><b>Packing :</b> ${relationRefLink('PACKING',a.ref_caisse,dossier,packingReferenceDisplay(a.ref_caisse,dossier))}</div>`);
+  }else if(type==='PACKING'){
+    if(a.prepackings_lies)lines.push(`<div class="relation-line"><b>Pré-Packings :</b> ${csvEsiLinks(a.prepackings_lies)}</div>`);
+    if(a.articles_lies)lines.push(`<div class="relation-line"><b>Articles :</b> ${csvEsiLinks(a.articles_lies)}</div>`);
+  }
+  return `<div class="relation-stack">${lines.length?lines.join(''):'<span class="relation-empty">Aucun lien</span>'}</div>`;
+}
 async function apiJson(response){
   const text=await response.text();
   if(!text) return {};
@@ -237,7 +256,7 @@ async function load(){
       <td><strong>${esc(a.reference||'-')}</strong></td>
       <td>${esc(a.description||'-')}</td><td>${esc(dossierAuto(a))}</td><td>${esc(a.client||'-')}</td>
       <td>${esc(a.projet||'-')}</td><td>${esc(dims||'-')}</td><td>${esc(a.poids_kg||'-')}</td>
-      <td>${esc(a.lieu_stockage||'-')}</td><td><strong>${esc(type==='PACKING'?'-':(a.dernier_colis||'-'))}</strong></td><td><strong>${esc(type==='PACKING'?'-':(prePackingTypeLabel(a.type_colis)||'-'))}</strong></td><td><strong>${esc(type==='PACKING'?(a.reference||'-'):packingReferenceDisplay(a.ref_caisse,dossierAuto(a)))}</strong></td>`;
+      <td>${esc(a.lieu_stockage||'-')}</td><td><strong>${esc(type==='PACKING'?'-':(a.dernier_colis||'-'))}</strong></td><td><strong>${esc(type==='PACKING'?'-':(prePackingTypeLabel(a.type_colis)||'-'))}</strong></td><td><strong>${esc(type==='PACKING'?(a.reference||'-'):packingReferenceDisplay(a.ref_caisse,dossierAuto(a)))}</strong></td><td class="relation-cell">${relationsCell(a)}</td>`;
     body.appendChild(tr);
   });
     const label=typeFilter.value==='PRE-PACKING'?'Pre-Packing(s)':(typeFilter.value==='PACKING'?'Packing(s)':(typeFilter.value==='ARTICLE'?'Article(s)':'élément(s)'));
@@ -366,6 +385,30 @@ function metricEditCard(label,field,value,unit=''){
 }
 function linkedCard(label,value,cls=''){
   return `<div class="linked-card ${cls}"><div class="linked-label">${esc(label)}</div><div class="linked-value">${esc(valueText(value))}</div></div>`;
+}
+function relationCard(kind,item,extra=''){
+  const x=item||{},esi=String(x.esi_id||'').trim(),ref=String(x.reference||'').trim(),desc=String(x.description||'').trim();
+  const main=ref||esi||'-';
+  const open=esi?`<a href="#" class="relation-card-link" data-related-esi="${esc(esi)}">Ouvrir ${esc(kind)}</a>`:'';
+  return `<div class="relation-card"><div class="relation-card-type">${esc(kind)}</div><div class="relation-card-main">${esc(main)}</div>${esi&&esi!==main?`<div class="relation-card-sub">${esc(esi)}</div>`:''}${desc?`<div class="relation-card-sub">${esc(desc)}</div>`:''}${extra?`<div class="relation-card-sub">${esc(extra)}</div>`:''}${open}</div>`;
+}
+function relationSectionHtml(d,a,type){
+  const groups=[];
+  if(type==='ARTICLE'){
+    const cards=[];if(d.linked_prepacking)cards.push(relationCard('Pré-Packing',d.linked_prepacking));if(d.linked_packing)cards.push(relationCard('Packing',d.linked_packing));
+    if(cards.length)groups.push(`<div class="relation-group"><div class="relation-group-title">Chaîne logistique de l’Article</div><div class="relation-items">${cards.join('')}</div></div>`);
+  }else if(type==='PRE-PACKING'){
+    const members=(d.prepacking_articles||[]).map(x=>relationCard('Article',x));
+    if(members.length)groups.push(`<div class="relation-group"><div class="relation-group-title">Articles contenus</div><div class="relation-items">${members.join('')}</div></div>`);
+    if(d.linked_packing)groups.push(`<div class="relation-group"><div class="relation-group-title">Packing parent</div><div class="relation-items">${relationCard('Packing',d.linked_packing)}</div></div>`);
+  }else if(type==='PACKING'){
+    const pres=(d.packing_prepackings||[]).map(x=>relationCard('Pré-Packing',x));
+    const arts=(d.packing_articles||[]).map(x=>relationCard('Article',x));
+    if(pres.length)groups.push(`<div class="relation-group"><div class="relation-group-title">Pré-Packings contenus</div><div class="relation-items">${pres.join('')}</div></div>`);
+    if(arts.length)groups.push(`<div class="relation-group"><div class="relation-group-title">Articles liés</div><div class="relation-items">${arts.join('')}</div></div>`);
+  }
+  if(!groups.length)return `<div class="identity-section"><div class="identity-section-title">Liens logistiques</div><div class="article-empty">Aucun lien Article / Pré-Packing / Packing enregistré.</div></div>`;
+  return `<div class="identity-section"><div class="identity-section-title">Liens logistiques <span class="identity-section-sub">Navigation Article → Pré-Packing → Packing</span></div><div class="relation-flow">${groups.join('')}</div></div>`;
 }
 function logisticsCard(label,value){return `<div class="logistics-card"><div class="identity-field-label">${esc(label)}</div><div class="identity-field-value">${esc(valueText(value))}</div></div>`}
 function logisticsEditCard(label,field,value){return `<div class="logistics-card"><div class="identity-field-label">${esc(label)}</div><input class="article-edit-input" data-article-field="${esc(field)}" value="${esc(String(value??''))}"></div>`}
@@ -537,7 +580,8 @@ function renderArticleDetail(d,editing=false){
     </div><div class="colis-editor"><div><label for="articleColisSelect">Association du Pre-Packing</label><select id="articleColisSelect" class="import-input"><option value="">Aucun Pre-Packing</option></select>${editing?'<div class="colis-edit-note">Le Pre-Packing sélectionné sera enregistré avec la fiche.</div>':''}</div>${editing?'':'<button class="btn primary" type="button" id="saveArticleColisBtn">Enregistrer le Pre-Packing</button>'}</div></div>`;
   }
 
-  if(isPacking&&(d.packing_articles||[]).length){html+=`<div class="identity-section"><div class="identity-section-title">Articles liés au Packing <span class="identity-section-sub">Composition actuelle</span></div><div class="composition-grid">`;d.packing_articles.forEach(p=>{html+=`<div class="composition-card"><div class="part-title">${esc(p.reference||p.esi_id||'-')}</div><div class="part-esi">${esc(p.esi_id||'-')}</div><div class="part-meta">${esc(p.description||'')}<br>Dossier : ${esc(p.dossier||'-')}</div><a href="#" class="part-open" data-related-esi="${esc(p.esi_id||'')}">Ouvrir l’Article</a></div>`});html+=`</div></div>`;}
+  html+=relationSectionHtml(d,a,type);
+
   if(d.fiche_caisse){const x=d.fiche_caisse;html+=`<div class="identity-section"><div class="identity-section-title">Fiche de Packing liée <span class="identity-section-sub">Synchronisation automatique</span></div><div class="linked-grid">${linkedCard('Ticket Packing',x.ticket_id)}${linkedCard('Référence Packing',packingReferenceDisplay(x.reference,a.dossier))}${linkedCard('Statut ticket',x.status)}${linkedCard('Type de Packing',x.type_caisse)}${linkedCard('Dimensions extérieures',x.dimensions_ext)}${linkedCard('Poids',x.poids)}${linkedCard('Date mise à disposition',x.date_mise_dispo)}${linkedCard('Chargé de projet',x.charge_projet)}${linkedCard('Prêteur',x.preteur)}${linkedCard('Projet / exposition',x.projet)}${linkedCard('Localisation',x.localisation)}${linkedCard('Réceptionnée',x.receptionnee?'Oui':'Non')}${linkedCard('Réceptionnée le',fmtDate(x.receptionnee_le))}${linkedCard('BL fournisseur',x.bl_numero)}${linkedCard('Date BL',x.bl_date)}</div></div>`}
   if(d.avis_arrivee){const x=d.avis_arrivee,exp=x.expediteur||{},tr=x.transporteur||{};html+=`<div class="identity-section"><div class="identity-section-title">Avis d’arrivée lié</div><div class="linked-grid">${linkedCard('Réf. dossier',x.dossier_ref)}${linkedCard('Réception prévue',x.date_reception_prevue)}${linkedCard('Client',x.client)}${linkedCard('Projet / exposition',x.projet)}${linkedCard('Coordinateur',x.coordinateur)}${linkedCard('Expéditeur',exp.nom)}${linkedCard('Adresse expéditeur',exp.adresse,'span-2')}${linkedCard('Contact expéditeur',exp.contact)}${linkedCard('Transporteur',tr.nom)}${linkedCard('Adresse transporteur',tr.adresse,'span-2')}${linkedCard('Contact transporteur',tr.contact)}${linkedCard('Référence transporteur',tr.reference)}${linkedCard('Commentaire',x.commentaire,'span-2')}</div></div>`}
   if(d.demande_enlevement){const x=d.demande_enlevement;html+=`<div class="identity-section"><div class="identity-section-title">Demande d’enlèvement liée</div><div class="linked-grid">${linkedCard('N° bon enlèvement',x.numero_bon)}${linkedCard('Date enlèvement',x.date_enlevement)}${linkedCard('Client',x.client)}${linkedCard('Projet / exposition',x.projet)}${linkedCard('Coordinateur',x.coordinateur)}${linkedCard('Adresse départ',x.adresse_depart)}${linkedCard('Adresse destination',x.adresse_destination)}${linkedCard('Notes',x.notes)}${linkedCard('Instructions',x.instructions,'span-2')}</div></div>`}
@@ -601,7 +645,14 @@ document.getElementById('deleteSelectedBtn').onclick=async()=>{
 };
 document.getElementById('selectAll').addEventListener('change',e=>{document.querySelectorAll('.row-check').forEach(cb=>cb.checked=e.target.checked);updateSelectionActions()});
 body.addEventListener('change',e=>{if(!e.target.classList.contains('row-check'))return;const boxes=[...document.querySelectorAll('.row-check')];document.getElementById('selectAll').checked=boxes.length>0&&boxes.every(x=>x.checked);updateSelectionActions()});
-body.addEventListener('click',e=>{const link=e.target.closest('.esi-link');if(!link)return;e.preventDefault();openArticleDetail(link.dataset.esi)});
+body.addEventListener('click',async e=>{
+  const link=e.target.closest('.esi-link,.relation-open');if(!link)return;e.preventDefault();
+  if(link.dataset.esi){openArticleDetail(link.dataset.esi);return}
+  if(link.dataset.relatedEsi){openArticleDetail(link.dataset.relatedEsi);return}
+  const kind=String(link.dataset.relatedType||'').trim(),ref=String(link.dataset.relatedRef||'').trim(),dossier=String(link.dataset.relatedDossier||'').trim();
+  if(!kind||!ref)return;
+  try{const r=await fetch('/api/articles/resolve-relation?type='+encodeURIComponent(kind)+'&reference='+encodeURIComponent(ref)+'&dossier='+encodeURIComponent(dossier),{cache:'no-store'}),d=await apiJson(r);if(!r.ok||!d.esi_id)throw new Error(d.error||'Relation introuvable');openArticleDetail(d.esi_id)}catch(err){alert(err.message||'Impossible d’ouvrir la relation')}
+});
 document.getElementById('articleModalClose').onclick=closeArticleModal;document.getElementById('articleModalBackdrop').addEventListener('click',e=>{if(e.target.id==='articleModalBackdrop')closeArticleModal()});document.addEventListener('keydown',e=>{if(e.key==='Escape')closeArticleModal()});
 // Chargement direct de la Base Articles.
 // Les Packings historiques ne sont plus resynchronisés à chaque ouverture :
