@@ -12811,6 +12811,12 @@ def _reporting_parse_datetime(value):
     return None
 
 
+def _reporting_ticket_is_cancelled(ticket):
+    """Retourne True si le ticket doit être exclu de tous les reportings."""
+    status = _as_text((ticket or {}).get('status')).strip().casefold()
+    return status in ('annulé', 'annule', 'annulée', 'annulee')
+
+
 def _reporting_business_days(start_date, end_date):
     """Jours ouvrés écoulés entre deux dates, week-ends exclus.
 
@@ -12863,6 +12869,8 @@ def _reporting_aller_voir_rows(date_debut='', date_fin='', charge_projet='', cli
     client_q = _as_text(client).strip().casefold()
 
     for ticket in list_tickets():
+        if _reporting_ticket_is_cancelled(ticket):
+            continue
         if _as_text(ticket.get('module')).strip() != 'Demande Aller voir':
             continue
         if _as_text(ticket.get('status')).strip() != 'Terminé':
@@ -12974,6 +12982,8 @@ def _reporting_devis_rows(date_debut='', date_fin='', charge_projet='', client='
     client_q = _as_text(client).strip().casefold()
 
     for ticket in list_tickets():
+        if _reporting_ticket_is_cancelled(ticket):
+            continue
         if _as_text(ticket.get('module')).strip() != 'Demande de devis':
             continue
 
@@ -13138,7 +13148,7 @@ def reporting_page():
 <article class="card future"><div class="eyebrow">À construire</div><h3>EXPEDITION</h3><p>Suivi des enlèvements et expéditions ainsi que de leurs délais de traitement.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
 <article class="card future"><div class="eyebrow">À construire</div><h3>COLISAGE</h3><p>Suivi des opérations de mise en caisse et de la composition des Packings.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
 </div></section>
-<div class="rule"><strong>Principe commun :</strong> chaque reporting utilisera les dates réellement enregistrées dans ESI TICKETS afin d'éviter de recalculer les délais à partir d'une simple date de dernière modification.</div>
+<div class="rule"><strong>Principe commun :</strong> les tickets annulés sont exclus de tous les reportings. Les calculs utilisent les dates réellement enregistrées dans ESI TICKETS afin d'éviter de recalculer les délais à partir d'une simple date de dernière modification.</div>
 </div></body></html>"""
     response = app.make_response(page)
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
