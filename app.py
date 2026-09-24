@@ -13054,6 +13054,142 @@ def _reporting_stats(values):
     }
 
 
+# -----------------------------------------------------------------------------
+# Reporting - CAISSES / PACKINGS
+# -----------------------------------------------------------------------------
+def _reporting_parse_amount(value):
+    """Convertit les montants historiques (texte, virgule, symbole euro) en float."""
+    import re
+    if value is None:
+        return None
+    txt = _as_text(value).strip()
+    if not txt or txt == '-':
+        return None
+    txt = txt.replace('\\xa0', ' ').replace('€', '').replace(' ', '').replace(',', '.')
+    txt = re.sub(r'[^0-9.\\-]', '', txt)
+    if not txt:
+        return None
+    try:
+        return float(txt)
+    except Exception:
+        return None
+
+
+def _reporting_caisse_rows(date_debut='', date_fin='', charge_projet='', client='', type_caisse=''):
+    rows = []
+    start_dt = _reporting_parse_datetime(date_debut)
+    end_dt = _reporting_parse_datetime(date_fin)
+    start_date = start_dt.date() if start_dt else None
+    end_date = end_dt.date() if end_dt else None
+    charge_q = _as_text(charge_projet).strip().casefold()
+    client_q = _as_text(client).strip().casefold()
+    type_q = _as_text(type_caisse).strip().casefold()
+
+    for ticket in list_tickets():
+        if _reporting_ticket_is_cancelled(ticket):
+            continue
+        if _as_text(ticket.get('module')).strip() != 'Fiche de caisse':
+            continue
+
+        created_dt = _reporting_parse_datetime(ticket.get('createdAt'))
+        created_date = created_dt.date() if created_dt else None
+        if start_date and (created_date is None or created_date < start_date):
+            continue
+        if end_date and (created_date is None or created_date > end_date):
+            continue
+
+        fiche = ticket.get('fiche') if isinstance(ticket.get('fiche'), dict) else {}
+        charge = _as_text(ticket.get('chargeProjet')).strip()
+        client_name = _as_text(ticket.get('preteur') or ticket.get('dossier')).strip()
+        type_name = _as_text(fiche.get('typeCaisseFiche') or ticket.get('typeCaisse')).strip()
+        if charge_q and charge_q not in charge.casefold():
+            continue
+        if client_q and client_q not in client_name.casefold():
+            continue
+        if type_q and type_q not in type_name.casefold():
+            continue
+
+        achat = _reporting_parse_amount(fiche.get('prixAchat'))
+        cession = _reporting_parse_amount(fiche.get('prixCession'))
+        marge = (cession - achat) if achat is not None and cession is not None else None
+        taux_marge = (marge / achat * 100) if marge is not None and achat not in (None, 0) else None
+
+        rows.append({
+            'id': _as_text(ticket.get('id')).strip(),
+            'dossier': _as_text(ticket.get('dossier')).strip(),
+            'reference': _packing_reference(ticket.get('dossier'), ticket.get('ref')),
+            'client': client_name,
+            'projet': _as_text(ticket.get('expo') or ticket.get('objet')).strip(),
+            'charge_projet': charge,
+            'status': _as_text(ticket.get('status')).strip(),
+            'type_caisse': type_name,
+            'dimensions': _as_text(fiche.get('dimensionsExt') or ticket.get('dimensions')).strip(),
+            'date_creation': created_date.isoformat() if created_date else '',
+            'prix_achat': round(achat, 2) if achat is not None else None,
+            'prix_cession': round(cession, 2) if cession is not None else None,
+            'marge_euros': round(marge, 2) if marge is not None else None,
+            'taux_marge_pct': round(taux_marge, 2) if taux_marge is not None else None,
+        })
+
+    rows.sort(key=lambda x: (x['date_creation'], x['id']), reverse=True)
+    return rows
+
+
+@app.route('/api/reporting/caisse')
+def api_reporting_caisse():
+    rows = _reporting_caisse_rows(
+        request.args.get('date_debut', ''),
+        request.args.get('date_fin', ''),
+        request.args.get('charge_projet', ''),
+        request.args.get('client', ''),
+        request.args.get('type_caisse', ''),
+    )
+    total_achat = sum(x['prix_achat'] for x in rows if x.get('prix_achat') is not None)
+    total_cession = sum(x['prix_cession'] for x in rows if x.get('prix_cession') is not None)
+    rows_marge = [x for x in rows if x.get('marge_euros') is not None]
+    total_marge = sum(x['marge_euros'] for x in rows_marge)
+    achats_mesurables = sum(x['prix_achat'] for x in rows_marge if x.get('prix_achat') is not None)
+    taux_global = (total_marge / achats_mesurables * 100) if achats_mesurables else None
+    return jsonify({
+        'ok': True,
+        'count': len(rows),
+        'count_financial': len(rows_marge),
+        'total_prix_achat': round(total_achat, 2),
+        'total_prix_cession': round(total_cession, 2),
+        'marge_totale': round(total_marge, 2),
+        'taux_marge_global_pct': round(taux_global, 2) if taux_global is not None else None,
+        'rows': rows,
+    })
+
+
+@app.route('/reporting/caisse')
+def reporting_caisse_page():
+    page = """<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reporting CAISSE - ESI Tickets</title>
+<style>
+:root{--blue:#0f2f4f;--cyan:#0284c7;--bg:#f4f8fb;--line:#d7e4ec;--muted:#64748b;--green:#15803d}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:#17324a}.wrap{max-width:1600px;margin:0 auto;padding:24px}.hero{background:linear-gradient(135deg,#0f2f4f,#174f79);color:#fff;border-radius:18px;padding:22px}.hero h1{margin:0 0 5px;font-size:27px}.hero p{margin:0;opacity:.85}
+.filters{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr)) auto;gap:10px;margin:16px 0;background:#fff;padding:14px;border:1px solid var(--line);border-radius:14px}label{font-size:10px;font-weight:900;text-transform:uppercase;color:var(--muted)}input{width:100%;margin-top:5px;border:1px solid var(--line);border-radius:9px;padding:10px;background:#fff}.btn{align-self:end;border:0;border-radius:10px;padding:11px 16px;background:var(--cyan);color:#fff;font-weight:900;cursor:pointer}
+.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:14px 0}.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px}.card b{display:block;font-size:10px;color:var(--muted);text-transform:uppercase}.card strong{display:block;font-size:25px;margin-top:6px}.card small{color:var(--muted)}
+.table-wrap{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:auto;max-height:62vh}table{width:100%;border-collapse:collapse;min-width:1450px}th,td{padding:10px 12px;border-bottom:1px solid #e8eef3;text-align:left;font-size:12px}th{position:sticky;top:0;background:#f8fbfd;font-size:10px;text-transform:uppercase;color:var(--muted);z-index:1}.money{font-weight:800}.margin{font-weight:900;color:var(--green)}.muted{color:var(--muted)}.note{font-size:11px;color:var(--muted);margin:10px 2px}@media(max-width:1000px){.filters{grid-template-columns:1fr 1fr}.cards{grid-template-columns:1fr 1fr}.wrap{padding:12px}}
+</style></head><body><div class="wrap">
+<div class="hero" style="display:flex;justify-content:space-between;gap:16px;align-items:center"><div><h1>REPORTING · CAISSE</h1><p>Suivi des Packings et de leur marge · tickets annulés exclus</p></div><a href="/reporting" style="text-decoration:none;background:#fff;color:#0f2f4f;font-weight:900;border-radius:10px;padding:10px 13px;white-space:nowrap">← REPORTING</a></div>
+<div class="filters"><div><label>Du</label><input id="dateDebut" type="date"></div><div><label>Au</label><input id="dateFin" type="date"></div><div><label>Chargé de projet</label><input id="chargeProjet" placeholder="Tous"></div><div><label>Client</label><input id="client" placeholder="Tous"></div><div><label>Type de caisse</label><input id="typeCaisse" placeholder="Tous"></div><button class="btn" id="refresh">Actualiser</button></div>
+<div class="cards"><div class="card"><b>Nombre de caisses</b><strong id="count">-</strong></div><div class="card"><b>Total prix d'achat</b><strong id="achat">-</strong></div><div class="card"><b>Total prix de cession</b><strong id="cession">-</strong></div><div class="card"><b>Marge totale</b><strong id="marge">-</strong></div><div class="card"><b>Taux de marge global</b><strong id="taux">-</strong><small>marge / prix d'achat</small></div></div>
+<div class="table-wrap"><table><thead><tr><th>Ticket</th><th>Dossier</th><th>N° caisse</th><th>Client</th><th>Projet</th><th>Chargé de projet</th><th>Statut</th><th>Type de caisse</th><th>Dimensions</th><th>Date création</th><th>Prix achat</th><th>Prix cession</th><th>Marge €</th><th>Marge %</th></tr></thead><tbody id="rows"></tbody></table></div>
+<div class="note">Le taux de marge est calculé sur le prix d'achat : (prix de cession − prix d'achat) / prix d'achat × 100. Les tickets annulés sont exclus. Une caisse sans prix d'achat ou sans prix de cession reste visible mais n'entre pas dans le calcul de marge.</div>
+</div><script>
+const el=id=>document.getElementById(id);const fmtDate=v=>{if(!v)return '-';const p=v.split('-');return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:v};const esc=v=>String(v??'').replace(/[&<>\\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\\"':'&quot;'}[c]));const euro=v=>v==null?'-':new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR'}).format(v);const pct=v=>v==null?'-':new Intl.NumberFormat('fr-FR',{maximumFractionDigits:2}).format(v)+' %';
+async function load(){const q=new URLSearchParams();[['date_debut','dateDebut'],['date_fin','dateFin'],['charge_projet','chargeProjet'],['client','client'],['type_caisse','typeCaisse']].forEach(([k,id])=>{const v=el(id).value.trim();if(v)q.set(k,v)});const r=await fetch('/api/reporting/caisse?'+q.toString(),{cache:'no-store'});const d=await r.json();if(!r.ok){alert(d.error||'Erreur reporting');return}el('count').textContent=d.count??0;el('achat').textContent=euro(d.total_prix_achat);el('cession').textContent=euro(d.total_prix_cession);el('marge').textContent=euro(d.marge_totale);el('taux').textContent=pct(d.taux_marge_global_pct);el('rows').innerHTML=(d.rows||[]).map(x=>`<tr><td>${esc(x.id)||'-'}</td><td>${esc(x.dossier)||'-'}</td><td>${esc(x.reference)||'-'}</td><td>${esc(x.client)||'-'}</td><td>${esc(x.projet)||'-'}</td><td>${esc(x.charge_projet)||'-'}</td><td>${esc(x.status)||'-'}</td><td>${esc(x.type_caisse)||'-'}</td><td>${esc(x.dimensions)||'-'}</td><td>${fmtDate(x.date_creation)}</td><td class="money">${euro(x.prix_achat)}</td><td class="money">${euro(x.prix_cession)}</td><td class="margin">${euro(x.marge_euros)}</td><td class="margin">${pct(x.taux_marge_pct)}</td></tr>`).join('')||'<tr><td colspan="14">Aucune caisse pour ces filtres.</td></tr>'}
+el('refresh').onclick=load;load();
+</script></body></html>"""
+    response = app.make_response(page)
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    return response
+
+
 @app.route('/api/reporting/devis')
 def api_reporting_devis():
     rows, excluded_created, excluded_deadline, excluded_completion = _reporting_devis_rows(
@@ -13143,7 +13279,7 @@ def reporting_page():
 <section class="section"><h2>Reportings disponibles</h2><div class="grid">
 <article class="card active"><div class="eyebrow">Disponible</div><h3>ALLER VOIR</h3><p>Mesure le délai entre la date du RDV et le premier passage du ticket au statut « Terminé ».</p><div class="meta">Calcul en jours ouvrés · samedi et dimanche exclus</div><div class="actions"><a class="btn" href="/reporting/aller-voir">Ouvrir le reporting</a></div></article>
 <article class="card active"><div class="eyebrow">Disponible</div><h3>DEVIS</h3><p>Compare le délai accordé entre la demande et la date de rendu demandée avec le délai réel jusqu’au passage au statut « Terminé ».</p><div class="meta">Calcul en jours ouvrés · samedi et dimanche exclus</div><div class="actions"><a class="btn" href="/reporting/devis">Ouvrir le reporting</a></div></article>
-<article class="card future"><div class="eyebrow">À construire</div><h3>CAISSE</h3><p>Suivi des demandes de Packing, délais de réalisation et volumes traités.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
+<article class="card active"><div class="eyebrow">Disponible</div><h3>CAISSE</h3><p>Suivi des Packings, prix d’achat, prix de cession et marge.</p><div class="meta">Tickets annulés exclus · marge calculée sur le prix d’achat</div><div class="actions"><a class="btn" href="/reporting/caisse">Ouvrir le reporting</a></div></article>
 <article class="card future"><div class="eyebrow">À construire</div><h3>RECEPTION</h3><p>Suivi des réceptions, délais, volumes et activité par période.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
 <article class="card future"><div class="eyebrow">À construire</div><h3>EXPEDITION</h3><p>Suivi des enlèvements et expéditions ainsi que de leurs délais de traitement.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
 <article class="card future"><div class="eyebrow">À construire</div><h3>COLISAGE</h3><p>Suivi des opérations de mise en caisse et de la composition des Packings.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
