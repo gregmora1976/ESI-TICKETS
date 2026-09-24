@@ -7083,8 +7083,12 @@ def _extract_reception_pdf(pdf_bytes):
     """
     Extrait les informations utiles d'un bordereau PDF.
 
-    1) Essaie d'abord l'extraction texte native avec pypdf.
-    2) Si le PDF contient trop peu de texte, lance automatiquement un OCR.
+    Chaque page est traitée indépendamment :
+      1) extraction texte native avec pypdf ;
+      2) OCR uniquement pour les pages dont le texte natif est insuffisant.
+
+    Cette logique évite qu'une première page lisible empêche l'OCR des pages
+    suivantes dans un PDF multi-pages scanné ou partiellement image.
 
     Format SECO actuellement reconnu :
       - BORDEREAU D'EXPEDITION N° 26400467 du 17/08/2026
@@ -7102,19 +7106,31 @@ def _extract_reception_pdf(pdf_bytes):
     except Exception as e:
         raise ValueError(f"PDF illisible : {e}")
 
+    page_count = len(reader.pages)
     pages_text = []
+    ocr_used = False
+
+    # Extraction native page par page.
     for page in reader.pages:
         try:
             pages_text.append(page.extract_text() or "")
         except Exception:
             pages_text.append("")
 
-    text = "\n".join(pages_text).strip()
-    ocr_used = False
+    # Détermine les pages qui nécessitent un OCR.
+    # Un seuil par page est essentiel : un PDF peut contenir une page 1 lisible
+    # et une page 2 entièrement scannée.
+    pages_to_ocr = [
+        index
+        for index, page_text in enumerate(pages_text, start=1)
+        if len((page_text or "").strip()) < 50
+    ]
 
-    # Un scan image peut renvoyer une chaine vide ou quelques caracteres inutilisables.
-    if len(text) < 50:
-        print("[RECEPTION OCR] Texte natif insuffisant, lancement de l'OCR")
+    if pages_to_ocr:
+        print(
+            "[RECEPTION OCR] OCR requis pour page(s) : "
+            + ", ".join(str(x) for x in pages_to_ocr)
+        )
         try:
             from pdf2image import convert_from_bytes
             import pytesseract
@@ -7124,46 +7140,60 @@ def _extract_reception_pdf(pdf_bytes):
                 "puis installe tesseract-ocr et poppler-utils sur Render."
             ) from e
 
-        # Un seul OCR lourd à la fois par worker. Cela évite les pics mémoire
-        # si le navigateur/proxy soumet plusieurs fois le même PDF.
+        # Un seul OCR lourd à la fois par worker.
         with _RECEPTION_OCR_LOCK:
-            try:
-                images = convert_from_bytes(
-                    pdf_bytes,
-                    dpi=200,
-                    grayscale=True,
-                    thread_count=1
-                )
-            except Exception as e:
-                raise RuntimeError(
-                    "Impossible de convertir le PDF en image pour l'OCR. "
-                    "Verifie que poppler-utils est installe sur Render."
-                ) from e
-
-            ocr_pages = []
-            total_pages = len(images)
-            for index, image in enumerate(images, start=1):
+            for page_no in pages_to_ocr:
+                images = []
                 try:
-                    page_text = pytesseract.image_to_string(
-                        image,
-                        lang="fra",
-                        config="--psm 6"
+                    images = convert_from_bytes(
+                        pdf_bytes,
+                        dpi=200,
+                        grayscale=True,
+                        first_page=page_no,
+                        last_page=page_no,
+                        thread_count=1
                     )
-                except Exception as e:
-                    raise RuntimeError(
-                        "Echec OCR Tesseract. Verifie que tesseract-ocr et la langue francaise sont installes."
-                    ) from e
-                print(f"[RECEPTION OCR] Page {index}/{total_pages} analysee")
-                ocr_pages.append(page_text or "")
-                try:
-                    image.close()
-                except Exception:
-                    pass
+                    if not images:
+                        continue
+                    image = images[0]
+                    try:
+                        page_text = pytesseract.image_to_string(
+                            image,
+                            lang="fra",
+                            config="--psm 6"
+                        )
+                    except Exception as e:
+                        raise RuntimeError(
+                            "Echec OCR Tesseract. Verifie que tesseract-ocr et la langue francaise sont installes."
+                        ) from e
 
-            # Libère explicitement les images avant le rapprochement Supabase.
-            images.clear()
-            text = "\n".join(ocr_pages).strip()
-        ocr_used = True
+                    # Secours sur les pages où le premier mode OCR renvoie peu de texte.
+                    if len((page_text or "").strip()) < 50:
+                        try:
+                            alt_text = pytesseract.image_to_string(
+                                image,
+                                lang="fra",
+                                config="--psm 11"
+                            )
+                            if len((alt_text or "").strip()) > len((page_text or "").strip()):
+                                page_text = alt_text
+                        except Exception:
+                            pass
+
+                    pages_text[page_no - 1] = page_text or ""
+                    print(f"[RECEPTION OCR] Page {page_no}/{page_count} analysee")
+                    ocr_used = True
+                finally:
+                    for image in images:
+                        try:
+                            image.close()
+                        except Exception:
+                            pass
+                    images.clear()
+
+    text = "\n".join(pages_text).strip()
+
+    if ocr_used:
         print(f"[RECEPTION OCR] OCR termine, {len(text)} caracteres detectes")
 
     if not text:
@@ -7171,7 +7201,8 @@ def _extract_reception_pdf(pdf_bytes):
             "Aucun texte exploitable trouve dans le PDF, meme apres OCR."
         )
 
-    # Numéro et date du bordereau.
+    # Numéro et date du bordereau. Pour un PDF contenant plusieurs BL,
+    # on conserve le premier numéro/date à titre d'identification du fichier.
     bl_numero = ""
     bl_date = ""
     m = re.search(
@@ -7183,17 +7214,14 @@ def _extract_reception_pdf(pdf_bytes):
         bl_numero = m.group(1)
         bl_date = m.group(2)
     else:
-        # Secours, plus tolérant.
         m = re.search(r"N\s*[°ºo]?\s*([0-9]{6,})\s+du\s+([0-9]{2}/[0-9]{2}/[0-9]{4})", text)
         if m:
             bl_numero = m.group(1)
             bl_date = m.group(2)
 
-    # Extrait toutes les références V/Cde : dossier/numero.
+    # Extrait toutes les références V/Cde : dossier/numero sur toutes les pages.
     refs = []
     seen = set()
-    # OCR peut lire "V/Cde" comme "ViCde", "VICde", "V Cde", etc.
-    # On tolère donc un séparateur imparfait entre V et Cde.
     for dossier, numero in re.findall(
         r"V\s*[/|Il1i\-]?\s*Cde\s*:\s*([A-Za-z0-9_-]+)\s*/\s*([0-9]+)",
         text,
@@ -7219,7 +7247,7 @@ def _extract_reception_pdf(pdf_bytes):
         "bl_numero": bl_numero,
         "bl_date": bl_date,
         "references": refs,
-        "page_count": len(reader.pages),
+        "page_count": page_count,
         "ocr_used": ocr_used,
     }
 
