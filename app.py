@@ -7881,6 +7881,19 @@ def gestionnaire():
     # Injection inline volontaire : pas de fichier JS externe, donc pas de probleme de cache/404.
     page = render_template('gestionnaire.html')
     inline = '<script>' + GESTIONNAIRE_ARTICLES_LIES_JS + '</script>'
+    reporting_button_js = r'''<script>(function(){
+      function addReportingButton(){
+        if(document.getElementById('esiReportingBtn')) return;
+        var candidates=[document.querySelector('.actions'),document.querySelector('.top-actions'),document.querySelector('header .actions'),document.querySelector('header')];
+        var host=candidates.find(function(x){return !!x;});
+        if(!host) return;
+        var a=document.createElement('a');a.id='esiReportingBtn';a.href='/reporting';a.textContent='REPORTING';
+        a.style.cssText='display:inline-flex;align-items:center;justify-content:center;text-decoration:none;border:0;border-radius:10px;padding:10px 14px;font-weight:900;background:#0284c7;color:#fff;margin-left:8px';
+        host.appendChild(a);
+      }
+      if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',addReportingButton,{once:true});else addReportingButton();
+    })();</script>'''
+    inline += reporting_button_js
     if '</body>' in page:
         page = page.replace('</body>', inline + '\n</body>', 1)
     else:
@@ -12928,6 +12941,41 @@ def api_reporting_aller_voir():
     })
 
 
+@app.route('/reporting')
+def reporting_page():
+    page = """<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reporting - ESI Tickets</title>
+<style>
+:root{--blue:#0f2f4f;--blue2:#174f79;--cyan:#0284c7;--bg:#f4f8fb;--line:#d7e4ec;--muted:#64748b;--green:#15803d;--orange:#c96a12}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:#17324a}
+.wrap{max-width:1320px;margin:0 auto;padding:24px}.hero{background:linear-gradient(135deg,var(--blue),var(--blue2));color:#fff;border-radius:20px;padding:26px;display:flex;justify-content:space-between;gap:18px;align-items:center;box-shadow:0 10px 28px rgba(15,47,79,.13)}
+.hero h1{margin:0 0 6px;font-size:31px}.hero p{margin:0;opacity:.86}.back{display:inline-flex;align-items:center;text-decoration:none;background:#fff;color:var(--blue);font-weight:900;border-radius:11px;padding:10px 14px;white-space:nowrap}
+.section{margin-top:22px}.section h2{font-size:16px;margin:0 0 12px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.card{background:#fff;border:1px solid var(--line);border-radius:17px;padding:18px;min-height:180px;display:flex;flex-direction:column;box-shadow:0 3px 14px rgba(15,47,79,.05)}
+.card.active{border-top:5px solid var(--cyan)}.card.future{opacity:.7}.eyebrow{font-size:10px;font-weight:950;letter-spacing:.06em;text-transform:uppercase;color:var(--cyan)}
+.card h3{margin:8px 0 8px;font-size:20px}.card p{margin:0;color:var(--muted);font-size:13px;line-height:1.45}.meta{margin-top:12px;font-size:11px;color:var(--muted)}
+.actions{margin-top:auto;padding-top:16px}.btn{display:inline-flex;text-decoration:none;border:0;border-radius:10px;padding:10px 13px;font-weight:900;font-size:12px;background:var(--cyan);color:#fff}.soon{display:inline-block;border-radius:999px;background:#eef2f6;color:#64748b;padding:6px 9px;font-size:10px;font-weight:900;text-transform:uppercase}
+.rule{margin-top:18px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 16px;color:var(--muted);font-size:12px;line-height:1.45}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.hero{align-items:flex-start;flex-direction:column}.wrap{padding:12px}}
+</style></head><body><div class="wrap">
+<header class="hero"><div><h1>REPORTING</h1><p>Indicateurs de suivi opérationnel ESI TICKETS</p></div><a class="back" href="/gestionnaire?pwd=1234">← Retour gestion</a></header>
+<section class="section"><h2>Reportings disponibles</h2><div class="grid">
+<article class="card active"><div class="eyebrow">Disponible</div><h3>ALLER VOIR</h3><p>Mesure le délai entre la date du RDV et le premier passage du ticket au statut « Terminé ».</p><div class="meta">Calcul en jours ouvrés · samedi et dimanche exclus</div><div class="actions"><a class="btn" href="/reporting/aller-voir">Ouvrir le reporting</a></div></article>
+<article class="card future"><div class="eyebrow">À construire</div><h3>DEVIS</h3><p>Suivi des délais de traitement et de réponse des demandes de devis.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
+<article class="card future"><div class="eyebrow">À construire</div><h3>CAISSE</h3><p>Suivi des demandes de Packing, délais de réalisation et volumes traités.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
+<article class="card future"><div class="eyebrow">À construire</div><h3>RECEPTION</h3><p>Suivi des réceptions, délais, volumes et activité par période.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
+<article class="card future"><div class="eyebrow">À construire</div><h3>EXPEDITION</h3><p>Suivi des enlèvements et expéditions ainsi que de leurs délais de traitement.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
+<article class="card future"><div class="eyebrow">À construire</div><h3>COLISAGE</h3><p>Suivi des opérations de mise en caisse et de la composition des Packings.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
+</div></section>
+<div class="rule"><strong>Principe commun :</strong> chaque reporting utilisera les dates réellement enregistrées dans ESI TICKETS afin d'éviter de recalculer les délais à partir d'une simple date de dernière modification.</div>
+</div></body></html>"""
+    response = app.make_response(page)
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    return response
+
+
 @app.route('/reporting/aller-voir')
 def reporting_aller_voir_page():
     page = """<!doctype html>
@@ -12943,7 +12991,7 @@ label{font-size:10px;font-weight:900;text-transform:uppercase;color:var(--muted)
 .table-wrap{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:auto;max-height:62vh}table{width:100%;border-collapse:collapse;min-width:1050px}th,td{padding:10px 12px;border-bottom:1px solid #e8eef3;text-align:left;font-size:12px}th{position:sticky;top:0;background:#f8fbfd;font-size:10px;text-transform:uppercase;color:var(--muted);z-index:1}.delay{font-weight:900;color:var(--cyan)}.note{font-size:11px;color:var(--muted);margin:10px 2px}
 @media(max-width:900px){.filters{grid-template-columns:1fr 1fr}.cards{grid-template-columns:1fr 1fr}.wrap{padding:12px}}
 </style></head><body><div class="wrap">
-<div class="hero"><h1>REPORTING · ALLER VOIR</h1><p>Délai entre la date du RDV et le premier passage au statut « Terminé » · week-ends exclus</p></div>
+<div class="hero" style="display:flex;justify-content:space-between;gap:16px;align-items:center"><div><h1>REPORTING · ALLER VOIR</h1><p>Délai entre la date du RDV et le premier passage au statut « Terminé » · week-ends exclus</p></div><a href="/reporting" style="text-decoration:none;background:#fff;color:#0f2f4f;font-weight:900;border-radius:10px;padding:10px 13px;white-space:nowrap">← REPORTING</a></div>
 <div class="filters">
 <div><label>Du</label><input id="dateDebut" type="date"></div><div><label>Au</label><input id="dateFin" type="date"></div>
 <div><label>Chargé de projet</label><input id="chargeProjet" placeholder="Tous"></div><div><label>Client</label><input id="client" placeholder="Tous"></div>
