@@ -12814,7 +12814,9 @@ def _reporting_parse_datetime(value):
 def _reporting_business_days(start_date, end_date):
     """Jours ouvrés écoulés entre deux dates, week-ends exclus.
 
-    Le jour du RDV n'est pas compté. Exemple : vendredi -> lundi = 1 jour ouvré.
+    Le jour du RDV n'est pas compté dans l'écart, mais tout délai mesurable
+    est affiché avec un minimum de 1 jour ouvré.
+    Exemples : même jour = 1 jour ; vendredi -> lundi = 1 jour ouvré.
     """
     if start_date is None or end_date is None or end_date < start_date:
         return None
@@ -12824,7 +12826,7 @@ def _reporting_business_days(start_date, end_date):
         if current.weekday() < 5:
             count += 1
         current += timedelta(days=1)
-    return count
+    return max(1, count)
 
 
 def _reporting_aller_voir_termine_datetime(ticket):
@@ -12998,7 +13000,7 @@ label{font-size:10px;font-weight:900;text-transform:uppercase;color:var(--muted)
 <button class="btn" id="refresh">Actualiser</button></div>
 <div class="cards"><div class="card"><b>Visites analysées</b><strong id="count">-</strong></div><div class="card"><b>Délai moyen</b><strong id="avg">-</strong><small>jours ouvrés</small></div><div class="card"><b>Médiane</b><strong id="median">-</strong><small>jours ouvrés</small></div><div class="card"><b>≤ 3 jours</b><strong id="pct">-</strong></div><div class="card"><b>Historique incomplet</b><strong id="excluded">-</strong><small>tickets non mesurables</small></div></div>
 <div class="table-wrap"><table><thead><tr><th>Ticket</th><th>Dossier</th><th>Client</th><th>Projet</th><th>Chargé de projet</th><th>Date RDV</th><th>Date terminée</th><th>Délai</th><th>Lieu</th></tr></thead><tbody id="rows"></tbody></table></div>
-<div class="note">Règle : le jour du RDV n’est pas compté. Samedi et dimanche sont exclus. Exemple : vendredi → lundi = 1 jour ouvré.</div>
+<div class="note">Règle : tout délai mesurable est affiché avec un minimum de 1 jour ouvré. Samedi et dimanche sont exclus. Exemples : RDV et clôture le même jour = 1 jour ; vendredi → lundi = 1 jour ouvré.</div>
 </div><script>
 const el=id=>document.getElementById(id); const fmt=v=>{if(!v)return '-';const p=v.split('-');return p[2]+'/'+p[1]+'/'+p[0]}; const esc=v=>String(v??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
 async function load(){const q=new URLSearchParams();[['date_debut','dateDebut'],['date_fin','dateFin'],['charge_projet','chargeProjet'],['client','client']].forEach(([k,id])=>{const v=el(id).value.trim();if(v)q.set(k,v)});const r=await fetch('/api/reporting/aller-voir?'+q.toString(),{cache:'no-store'});const d=await r.json();if(!r.ok){alert(d.error||'Erreur reporting');return}el('count').textContent=d.count;el('avg').textContent=d.average??'-';el('median').textContent=d.median??'-';el('pct').textContent=d.pct_under_or_equal_3_days==null?'-':d.pct_under_or_equal_3_days+' %';el('excluded').textContent=(d.excluded_missing_completion_date||0)+(d.excluded_missing_rdv_date||0);el('rows').innerHTML=(d.rows||[]).map(x=>`<tr><td>${esc(x.id)||'-'}</td><td>${esc(x.dossier)||'-'}</td><td>${esc(x.client)||'-'}</td><td>${esc(x.projet)||'-'}</td><td>${esc(x.charge_projet)||'-'}</td><td>${fmt(x.date_rdv)}</td><td>${fmt(x.date_terminee)}</td><td class="delay">${x.delai_jours_ouvres} j</td><td>${esc(x.lieu_rdv)||'-'}</td></tr>`).join('')||'<tr><td colspan="9">Aucune donnée mesurable pour ces filtres.</td></tr>'}
