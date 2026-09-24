@@ -10,7 +10,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
-from datetime import datetime
+from datetime import datetime, timedelta
 import html
 
 APP_DIR = Path(__file__).resolve().parent
@@ -12778,6 +12778,189 @@ def api_ticket_articles_lies(ticket_id):
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+# -----------------------------------------------------------------------------
+# Reporting - Demandes ALLER VOIR
+# -----------------------------------------------------------------------------
+def _reporting_parse_datetime(value):
+    """Parse les formats de date historiques d'ESI TICKETS sans lever d'erreur."""
+    txt = _as_text(value).strip()
+    if not txt or txt == '-':
+        return None
+    try:
+        return datetime.fromisoformat(txt.replace('Z', '+00:00'))
+    except Exception:
+        pass
+    for fmt in ('%Y-%m-%d', '%d/%m/%Y %H:%M', '%d/%m/%Y'):
+        try:
+            return datetime.strptime(txt, fmt)
+        except Exception:
+            pass
+    return None
+
+
+def _reporting_business_days(start_date, end_date):
+    """Jours ouvrés écoulés entre deux dates, week-ends exclus.
+
+    Le jour du RDV n'est pas compté. Exemple : vendredi -> lundi = 1 jour ouvré.
+    """
+    if start_date is None or end_date is None or end_date < start_date:
+        return None
+    count = 0
+    current = start_date + timedelta(days=1)
+    while current <= end_date:
+        if current.weekday() < 5:
+            count += 1
+        current += timedelta(days=1)
+    return count
+
+
+def _reporting_aller_voir_termine_datetime(ticket):
+    """Retourne la meilleure date de clôture fiable pour un ticket Aller voir."""
+    if _as_text(ticket.get('status')).strip() != 'Terminé':
+        return None
+    for key in (
+        'termineAt', 'termine_at', 'terminatedAt', 'completedAt',
+        'finishedAt', 'closedAt', 'termine_le', 'dateTerminee'
+    ):
+        dt = _reporting_parse_datetime(ticket.get(key))
+        if dt is not None:
+            return dt
+
+    # Historique ancien : fallback volontairement prudent, déjà cohérent avec l'export.
+    rdv_dt = _reporting_parse_datetime(ticket.get('dateRdv'))
+    updated_dt = _reporting_parse_datetime(ticket.get('updatedAt'))
+    if rdv_dt is not None and updated_dt is not None:
+        delta = (updated_dt.date() - rdv_dt.date()).days
+        if 0 <= delta <= 1:
+            return updated_dt
+    return None
+
+
+def _reporting_aller_voir_rows(date_debut='', date_fin='', charge_projet='', client=''):
+    rows = []
+    excluded_missing_end = 0
+    excluded_missing_rdv = 0
+    start_dt = _reporting_parse_datetime(date_debut)
+    end_dt = _reporting_parse_datetime(date_fin)
+    start_date = start_dt.date() if start_dt else None
+    end_date = end_dt.date() if end_dt else None
+    charge_q = _as_text(charge_projet).strip().casefold()
+    client_q = _as_text(client).strip().casefold()
+
+    for ticket in list_tickets():
+        if _as_text(ticket.get('module')).strip() != 'Demande Aller voir':
+            continue
+        if _as_text(ticket.get('status')).strip() != 'Terminé':
+            continue
+
+        rdv_dt = _reporting_parse_datetime(ticket.get('dateRdv'))
+        if rdv_dt is None:
+            excluded_missing_rdv += 1
+            continue
+        rdv_date = rdv_dt.date()
+        if start_date and rdv_date < start_date:
+            continue
+        if end_date and rdv_date > end_date:
+            continue
+
+        charge = _as_text(ticket.get('chargeProjet')).strip()
+        client_name = _as_text(ticket.get('preteur') or ticket.get('dossier')).strip()
+        if charge_q and charge_q not in charge.casefold():
+            continue
+        if client_q and client_q not in client_name.casefold():
+            continue
+
+        termine_dt = _reporting_aller_voir_termine_datetime(ticket)
+        if termine_dt is None:
+            excluded_missing_end += 1
+            continue
+        termine_date = termine_dt.date()
+        delai = _reporting_business_days(rdv_date, termine_date)
+        if delai is None:
+            continue
+
+        rows.append({
+            'id': _as_text(ticket.get('id')).strip(),
+            'dossier': _as_text(ticket.get('dossier')).strip(),
+            'client': client_name,
+            'projet': _as_text(ticket.get('expo') or ticket.get('objet')).strip(),
+            'charge_projet': charge,
+            'date_rdv': rdv_date.isoformat(),
+            'date_terminee': termine_date.isoformat(),
+            'delai_jours_ouvres': delai,
+            'lieu_rdv': _as_text(ticket.get('lieuRdv')).strip(),
+        })
+
+    rows.sort(key=lambda x: (x['date_rdv'], x['id']), reverse=True)
+    return rows, excluded_missing_end, excluded_missing_rdv
+
+
+@app.route('/api/reporting/aller-voir')
+def api_reporting_aller_voir():
+    rows, excluded_missing_end, excluded_missing_rdv = _reporting_aller_voir_rows(
+        request.args.get('date_debut', ''),
+        request.args.get('date_fin', ''),
+        request.args.get('charge_projet', ''),
+        request.args.get('client', ''),
+    )
+    delays = sorted(row['delai_jours_ouvres'] for row in rows)
+    count = len(delays)
+    average = (sum(delays) / count) if count else None
+    if count:
+        mid = count // 2
+        median = delays[mid] if count % 2 else (delays[mid - 1] + delays[mid]) / 2
+        pct_under_3 = round((sum(1 for v in delays if v <= 3) / count) * 100, 1)
+    else:
+        median = None
+        pct_under_3 = None
+
+    return jsonify({
+        'ok': True,
+        'metric': 'Délai RDV -> passage au statut Terminé',
+        'unit': 'jours ouvrés (lundi-vendredi)',
+        'count': count,
+        'average': round(average, 2) if average is not None else None,
+        'median': round(median, 2) if median is not None else None,
+        'pct_under_or_equal_3_days': pct_under_3,
+        'excluded_missing_completion_date': excluded_missing_end,
+        'excluded_missing_rdv_date': excluded_missing_rdv,
+        'rows': rows,
+    })
+
+
+@app.route('/reporting/aller-voir')
+def reporting_aller_voir_page():
+    page = """<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reporting ALLER VOIR - ESI Tickets</title>
+<style>
+:root{--blue:#0f2f4f;--cyan:#0284c7;--bg:#f4f8fb;--line:#d7e4ec;--muted:#64748b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:#17324a}
+.wrap{max-width:1450px;margin:0 auto;padding:24px}.hero{background:linear-gradient(135deg,#0f2f4f,#174f79);color:#fff;border-radius:18px;padding:22px}
+.hero h1{margin:0 0 5px;font-size:27px}.hero p{margin:0;opacity:.85}.filters{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr)) auto;gap:10px;margin:16px 0;background:#fff;padding:14px;border:1px solid var(--line);border-radius:14px}
+label{font-size:10px;font-weight:900;text-transform:uppercase;color:var(--muted)}input{width:100%;margin-top:5px;border:1px solid var(--line);border-radius:9px;padding:10px;background:#fff}.btn{align-self:end;border:0;border-radius:10px;padding:11px 16px;background:var(--cyan);color:#fff;font-weight:900;cursor:pointer}
+.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:14px 0}.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px}.card b{display:block;font-size:11px;color:var(--muted);text-transform:uppercase}.card strong{display:block;font-size:27px;margin-top:6px}.card small{color:var(--muted)}
+.table-wrap{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:auto;max-height:62vh}table{width:100%;border-collapse:collapse;min-width:1050px}th,td{padding:10px 12px;border-bottom:1px solid #e8eef3;text-align:left;font-size:12px}th{position:sticky;top:0;background:#f8fbfd;font-size:10px;text-transform:uppercase;color:var(--muted);z-index:1}.delay{font-weight:900;color:var(--cyan)}.note{font-size:11px;color:var(--muted);margin:10px 2px}
+@media(max-width:900px){.filters{grid-template-columns:1fr 1fr}.cards{grid-template-columns:1fr 1fr}.wrap{padding:12px}}
+</style></head><body><div class="wrap">
+<div class="hero"><h1>REPORTING · ALLER VOIR</h1><p>Délai entre la date du RDV et le premier passage au statut « Terminé » · week-ends exclus</p></div>
+<div class="filters">
+<div><label>Du</label><input id="dateDebut" type="date"></div><div><label>Au</label><input id="dateFin" type="date"></div>
+<div><label>Chargé de projet</label><input id="chargeProjet" placeholder="Tous"></div><div><label>Client</label><input id="client" placeholder="Tous"></div>
+<button class="btn" id="refresh">Actualiser</button></div>
+<div class="cards"><div class="card"><b>Visites analysées</b><strong id="count">-</strong></div><div class="card"><b>Délai moyen</b><strong id="avg">-</strong><small>jours ouvrés</small></div><div class="card"><b>Médiane</b><strong id="median">-</strong><small>jours ouvrés</small></div><div class="card"><b>≤ 3 jours</b><strong id="pct">-</strong></div><div class="card"><b>Historique incomplet</b><strong id="excluded">-</strong><small>tickets non mesurables</small></div></div>
+<div class="table-wrap"><table><thead><tr><th>Ticket</th><th>Dossier</th><th>Client</th><th>Projet</th><th>Chargé de projet</th><th>Date RDV</th><th>Date terminée</th><th>Délai</th><th>Lieu</th></tr></thead><tbody id="rows"></tbody></table></div>
+<div class="note">Règle : le jour du RDV n’est pas compté. Samedi et dimanche sont exclus. Exemple : vendredi → lundi = 1 jour ouvré.</div>
+</div><script>
+const el=id=>document.getElementById(id); const fmt=v=>{if(!v)return '-';const p=v.split('-');return p[2]+'/'+p[1]+'/'+p[0]}; const esc=v=>String(v??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
+async function load(){const q=new URLSearchParams();[['date_debut','dateDebut'],['date_fin','dateFin'],['charge_projet','chargeProjet'],['client','client']].forEach(([k,id])=>{const v=el(id).value.trim();if(v)q.set(k,v)});const r=await fetch('/api/reporting/aller-voir?'+q.toString(),{cache:'no-store'});const d=await r.json();if(!r.ok){alert(d.error||'Erreur reporting');return}el('count').textContent=d.count;el('avg').textContent=d.average??'-';el('median').textContent=d.median??'-';el('pct').textContent=d.pct_under_or_equal_3_days==null?'-':d.pct_under_or_equal_3_days+' %';el('excluded').textContent=(d.excluded_missing_completion_date||0)+(d.excluded_missing_rdv_date||0);el('rows').innerHTML=(d.rows||[]).map(x=>`<tr><td>${esc(x.id)||'-'}</td><td>${esc(x.dossier)||'-'}</td><td>${esc(x.client)||'-'}</td><td>${esc(x.projet)||'-'}</td><td>${esc(x.charge_projet)||'-'}</td><td>${fmt(x.date_rdv)}</td><td>${fmt(x.date_terminee)}</td><td class="delay">${x.delai_jours_ouvres} j</td><td>${esc(x.lieu_rdv)||'-'}</td></tr>`).join('')||'<tr><td colspan="9">Aucune donnée mesurable pour ces filtres.</td></tr>'}
+el('refresh').onclick=load;load();
+</script></body></html>"""
+    response = app.make_response(page)
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return response
+
+
 @app.route('/api/export/excel')
 def api_export_excel():
     try:
@@ -12794,7 +12977,7 @@ def api_export_excel():
     ws.title = "Tickets"
 
     ws.append([
-        "ID","Module","Statut","Date création","Date rendu","Délai RDV → rendu (jours)",
+        "ID","Module","Statut","Date création","Date rendu","Délai RDV → rendu (jours ouvrés)",
         "Dossier / Client","Réf / N° Packing","Chargé de projet","Projet / Expo",
         "Type de Packing","Dimensions","Prix devis",
         "Prix d'achat","Prix cession","Commentaire","Choix du caissier",
@@ -12945,9 +13128,7 @@ def api_export_excel():
         date_rdv = parse_date_only(t.get('dateRdv'))
         delai_jours = None
         if date_rdv is not None and date_terminee is not None:
-            delta = (date_terminee - date_rdv).days
-            if delta >= 0:
-                delai_jours = delta
+            delai_jours = _reporting_business_days(date_rdv, date_terminee)
 
         ws.append([
             t.get('id',''),
