@@ -12943,6 +12943,174 @@ def api_reporting_aller_voir():
     })
 
 
+# -----------------------------------------------------------------------------
+# Reporting - Demandes DEVIS
+# -----------------------------------------------------------------------------
+def _reporting_devis_termine_datetime(ticket):
+    """Retourne la date fiable du premier passage au statut Terminé pour un devis."""
+    if _as_text(ticket.get('status')).strip() != 'Terminé':
+        return None
+    for key in (
+        'termineAt', 'termine_at', 'terminatedAt', 'completedAt',
+        'finishedAt', 'closedAt', 'termine_le', 'dateTerminee'
+    ):
+        dt = _reporting_parse_datetime(ticket.get(key))
+        if dt is not None:
+            return dt
+    return None
+
+
+def _reporting_devis_rows(date_debut='', date_fin='', charge_projet='', client=''):
+    rows = []
+    excluded_missing_created = 0
+    excluded_missing_deadline = 0
+    excluded_missing_completion = 0
+
+    start_dt = _reporting_parse_datetime(date_debut)
+    end_dt = _reporting_parse_datetime(date_fin)
+    start_date = start_dt.date() if start_dt else None
+    end_date = end_dt.date() if end_dt else None
+    charge_q = _as_text(charge_projet).strip().casefold()
+    client_q = _as_text(client).strip().casefold()
+
+    for ticket in list_tickets():
+        if _as_text(ticket.get('module')).strip() != 'Demande de devis':
+            continue
+
+        created_dt = _reporting_parse_datetime(ticket.get('createdAt'))
+        if created_dt is None:
+            excluded_missing_created += 1
+            continue
+        created_date = created_dt.date()
+        if start_date and created_date < start_date:
+            continue
+        if end_date and created_date > end_date:
+            continue
+
+        charge = _as_text(ticket.get('chargeProjet')).strip()
+        client_name = _as_text(ticket.get('preteur') or ticket.get('dossier')).strip()
+        if charge_q and charge_q not in charge.casefold():
+            continue
+        if client_q and client_q not in client_name.casefold():
+            continue
+
+        deadline_dt = _reporting_parse_datetime(ticket.get('dateEmballage'))
+        deadline_date = deadline_dt.date() if deadline_dt else None
+        delai_demande = None
+        if deadline_date is None:
+            excluded_missing_deadline += 1
+        else:
+            delai_demande = _reporting_business_days(created_date, deadline_date)
+
+        termine_dt = _reporting_devis_termine_datetime(ticket)
+        termine_date = termine_dt.date() if termine_dt else None
+        delai_reel = None
+        if _as_text(ticket.get('status')).strip() == 'Terminé':
+            if termine_date is None:
+                excluded_missing_completion += 1
+            else:
+                delai_reel = _reporting_business_days(created_date, termine_date)
+
+        rows.append({
+            'id': _as_text(ticket.get('id')).strip(),
+            'dossier': _as_text(ticket.get('dossier')).strip(),
+            'client': client_name,
+            'projet': _as_text(ticket.get('expo') or ticket.get('objet')).strip(),
+            'charge_projet': charge,
+            'status': _as_text(ticket.get('status')).strip(),
+            'date_demande': created_date.isoformat(),
+            'date_rendu_demandee': deadline_date.isoformat() if deadline_date else '',
+            'date_terminee': termine_date.isoformat() if termine_date else '',
+            'delai_demande_jours_ouvres': delai_demande,
+            'delai_reel_jours_ouvres': delai_reel,
+        })
+
+    rows.sort(key=lambda x: (x['date_demande'], x['id']), reverse=True)
+    return rows, excluded_missing_created, excluded_missing_deadline, excluded_missing_completion
+
+
+def _reporting_stats(values):
+    vals = sorted(v for v in values if isinstance(v, (int, float)))
+    count = len(vals)
+    if not count:
+        return {'count': 0, 'average': None, 'median': None}
+    average = sum(vals) / count
+    mid = count // 2
+    median = vals[mid] if count % 2 else (vals[mid - 1] + vals[mid]) / 2
+    return {
+        'count': count,
+        'average': round(average, 2),
+        'median': round(median, 2),
+    }
+
+
+@app.route('/api/reporting/devis')
+def api_reporting_devis():
+    rows, excluded_created, excluded_deadline, excluded_completion = _reporting_devis_rows(
+        request.args.get('date_debut', ''),
+        request.args.get('date_fin', ''),
+        request.args.get('charge_projet', ''),
+        request.args.get('client', ''),
+    )
+
+    requested_stats = _reporting_stats(
+        row['delai_demande_jours_ouvres'] for row in rows
+        if row.get('delai_demande_jours_ouvres') is not None
+    )
+    actual_stats = _reporting_stats(
+        row['delai_reel_jours_ouvres'] for row in rows
+        if row.get('delai_reel_jours_ouvres') is not None
+    )
+
+    return jsonify({
+        'ok': True,
+        'unit': 'jours ouvrés (lundi-vendredi)',
+        'total_tickets': len(rows),
+        'requested_delay': requested_stats,
+        'actual_delay': actual_stats,
+        'excluded_missing_created_date': excluded_created,
+        'excluded_missing_deadline': excluded_deadline,
+        'excluded_missing_completion_date': excluded_completion,
+        'rows': rows,
+    })
+
+
+@app.route('/reporting/devis')
+def reporting_devis_page():
+    page = """<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reporting DEVIS - ESI Tickets</title>
+<style>
+:root{--blue:#0f2f4f;--cyan:#0284c7;--bg:#f4f8fb;--line:#d7e4ec;--muted:#64748b;--green:#15803d;--orange:#c96a12}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:#17324a}
+.wrap{max-width:1500px;margin:0 auto;padding:24px}.hero{background:linear-gradient(135deg,#0f2f4f,#174f79);color:#fff;border-radius:18px;padding:22px}
+.hero h1{margin:0 0 5px;font-size:27px}.hero p{margin:0;opacity:.85}.filters{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr)) auto;gap:10px;margin:16px 0;background:#fff;padding:14px;border:1px solid var(--line);border-radius:14px}
+label{font-size:10px;font-weight:900;text-transform:uppercase;color:var(--muted)}input{width:100%;margin-top:5px;border:1px solid var(--line);border-radius:9px;padding:10px;background:#fff}.btn{align-self:end;border:0;border-radius:10px;padding:11px 16px;background:var(--cyan);color:#fff;font-weight:900;cursor:pointer}
+.groups{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}.group{background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px}.group h2{font-size:14px;margin:0 0 10px}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.card{border:1px solid #e5edf2;border-radius:12px;padding:12px;background:#fbfdff}.card b{display:block;font-size:10px;color:var(--muted);text-transform:uppercase}.card strong{display:block;font-size:25px;margin-top:5px}.card small{color:var(--muted)}
+.table-wrap{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:auto;max-height:61vh}table{width:100%;border-collapse:collapse;min-width:1250px}th,td{padding:10px 12px;border-bottom:1px solid #e8eef3;text-align:left;font-size:12px}th{position:sticky;top:0;background:#f8fbfd;font-size:10px;text-transform:uppercase;color:var(--muted);z-index:1}.delay-requested{font-weight:900;color:var(--orange)}.delay-actual{font-weight:900;color:var(--green)}.muted{color:var(--muted)}.note{font-size:11px;color:var(--muted);margin:10px 2px}
+@media(max-width:900px){.filters{grid-template-columns:1fr 1fr}.groups{grid-template-columns:1fr}.cards{grid-template-columns:1fr 1fr}.wrap{padding:12px}}
+</style></head><body><div class="wrap">
+<div class="hero" style="display:flex;justify-content:space-between;gap:16px;align-items:center"><div><h1>REPORTING · DEVIS</h1><p>Comparaison du délai demandé et du délai réel de traitement · week-ends exclus</p></div><a href="/reporting" style="text-decoration:none;background:#fff;color:#0f2f4f;font-weight:900;border-radius:10px;padding:10px 13px;white-space:nowrap">← REPORTING</a></div>
+<div class="filters">
+<div><label>Du</label><input id="dateDebut" type="date"></div><div><label>Au</label><input id="dateFin" type="date"></div>
+<div><label>Chargé de projet</label><input id="chargeProjet" placeholder="Tous"></div><div><label>Client</label><input id="client" placeholder="Tous"></div>
+<button class="btn" id="refresh">Actualiser</button></div>
+<div class="groups">
+<section class="group"><h2>1 · Délai demandé : date de demande → date de rendu demandée</h2><div class="cards"><div class="card"><b>Devis mesurables</b><strong id="requestedCount">-</strong></div><div class="card"><b>Délai moyen</b><strong id="requestedAvg">-</strong><small>jours ouvrés</small></div><div class="card"><b>Médiane</b><strong id="requestedMedian">-</strong><small>jours ouvrés</small></div></div></section>
+<section class="group"><h2>2 · Délai réel : date de demande → passage au statut Terminé</h2><div class="cards"><div class="card"><b>Devis terminés mesurables</b><strong id="actualCount">-</strong></div><div class="card"><b>Délai moyen</b><strong id="actualAvg">-</strong><small>jours ouvrés</small></div><div class="card"><b>Médiane</b><strong id="actualMedian">-</strong><small>jours ouvrés</small></div></div></section>
+</div>
+<div class="table-wrap"><table><thead><tr><th>Ticket</th><th>Dossier</th><th>Client</th><th>Projet</th><th>Chargé de projet</th><th>Statut</th><th>Date demande</th><th>Rendu demandé</th><th>Délai demandé</th><th>Date terminée</th><th>Délai réel</th></tr></thead><tbody id="rows"></tbody></table></div>
+<div class="note">Règle : samedi et dimanche sont exclus. Tout délai mesurable est affiché avec un minimum de 1 jour ouvré. Les anciens devis sans date fiable de passage à « Terminé » restent non mesurables pour le délai réel.</div>
+</div><script>
+const el=id=>document.getElementById(id);const fmt=v=>{if(!v)return '-';const p=v.split('-');return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:v};const esc=v=>String(v??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
+async function load(){const q=new URLSearchParams();[['date_debut','dateDebut'],['date_fin','dateFin'],['charge_projet','chargeProjet'],['client','client']].forEach(([k,id])=>{const v=el(id).value.trim();if(v)q.set(k,v)});const r=await fetch('/api/reporting/devis?'+q.toString(),{cache:'no-store'});const d=await r.json();if(!r.ok){alert(d.error||'Erreur reporting');return}const rq=d.requested_delay||{},ac=d.actual_delay||{};el('requestedCount').textContent=rq.count??0;el('requestedAvg').textContent=rq.average??'-';el('requestedMedian').textContent=rq.median??'-';el('actualCount').textContent=ac.count??0;el('actualAvg').textContent=ac.average??'-';el('actualMedian').textContent=ac.median??'-';el('rows').innerHTML=(d.rows||[]).map(x=>`<tr><td>${esc(x.id)||'-'}</td><td>${esc(x.dossier)||'-'}</td><td>${esc(x.client)||'-'}</td><td>${esc(x.projet)||'-'}</td><td>${esc(x.charge_projet)||'-'}</td><td>${esc(x.status)||'-'}</td><td>${fmt(x.date_demande)}</td><td>${fmt(x.date_rendu_demandee)}</td><td class="delay-requested">${x.delai_demande_jours_ouvres==null?'<span class="muted">-</span>':x.delai_demande_jours_ouvres+' j'}</td><td>${fmt(x.date_terminee)}</td><td class="delay-actual">${x.delai_reel_jours_ouvres==null?'<span class="muted">-</span>':x.delai_reel_jours_ouvres+' j'}</td></tr>`).join('')||'<tr><td colspan="11">Aucun devis pour ces filtres.</td></tr>'}
+el('refresh').onclick=load;load();
+</script></body></html>"""
+    response = app.make_response(page)
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return response
+
+
 @app.route('/reporting')
 def reporting_page():
     page = """<!doctype html>
@@ -12964,7 +13132,7 @@ def reporting_page():
 <header class="hero"><div><h1>REPORTING</h1><p>Indicateurs de suivi opérationnel ESI TICKETS</p></div><a class="back" href="/gestionnaire?pwd=esi2026">← Retour gestion</a></header>
 <section class="section"><h2>Reportings disponibles</h2><div class="grid">
 <article class="card active"><div class="eyebrow">Disponible</div><h3>ALLER VOIR</h3><p>Mesure le délai entre la date du RDV et le premier passage du ticket au statut « Terminé ».</p><div class="meta">Calcul en jours ouvrés · samedi et dimanche exclus</div><div class="actions"><a class="btn" href="/reporting/aller-voir">Ouvrir le reporting</a></div></article>
-<article class="card future"><div class="eyebrow">À construire</div><h3>DEVIS</h3><p>Suivi des délais de traitement et de réponse des demandes de devis.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
+<article class="card active"><div class="eyebrow">Disponible</div><h3>DEVIS</h3><p>Compare le délai accordé entre la demande et la date de rendu demandée avec le délai réel jusqu’au passage au statut « Terminé ».</p><div class="meta">Calcul en jours ouvrés · samedi et dimanche exclus</div><div class="actions"><a class="btn" href="/reporting/devis">Ouvrir le reporting</a></div></article>
 <article class="card future"><div class="eyebrow">À construire</div><h3>CAISSE</h3><p>Suivi des demandes de Packing, délais de réalisation et volumes traités.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
 <article class="card future"><div class="eyebrow">À construire</div><h3>RECEPTION</h3><p>Suivi des réceptions, délais, volumes et activité par période.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
 <article class="card future"><div class="eyebrow">À construire</div><h3>EXPEDITION</h3><p>Suivi des enlèvements et expéditions ainsi que de leurs délais de traitement.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
