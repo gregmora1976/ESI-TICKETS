@@ -7081,18 +7081,14 @@ def _normalise_numero_caisse(value):
 
 def _extract_reception_pdf(pdf_bytes):
     """
-    Extrait les informations utiles d'un bordereau PDF.
+    Extrait les informations utiles d'un bordereau PDF multi-pages.
 
     Chaque page est traitée indépendamment :
       1) extraction texte native avec pypdf ;
-      2) OCR uniquement pour les pages dont le texte natif est insuffisant.
+      2) OCR de la page si le texte natif est insuffisant.
 
-    Cette logique évite qu'une première page lisible empêche l'OCR des pages
-    suivantes dans un PDF multi-pages scanné ou partiellement image.
-
-    Format SECO actuellement reconnu :
-      - BORDEREAU D'EXPEDITION N° 26400467 du 17/08/2026
-      - V/Cde : 101138/01
+    Le rapprochement des Packings tolère les variantes OCR courantes de "V/Cde"
+    (VICde, ViICde, V1ICde, etc.).
     """
     try:
         from pypdf import PdfReader
@@ -7117,12 +7113,11 @@ def _extract_reception_pdf(pdf_bytes):
         except Exception:
             pages_text.append("")
 
-    # Détermine les pages qui nécessitent un OCR.
-    # Un seuil par page est essentiel : un PDF peut contenir une page 1 lisible
-    # et une page 2 entièrement scannée.
+    # Un PDF peut contenir une page 1 lisible et des pages suivantes scannées.
+    # On décide donc l'OCR page par page, et non sur la longueur totale du PDF.
     pages_to_ocr = [
-        index
-        for index, page_text in enumerate(pages_text, start=1)
+        page_no
+        for page_no, page_text in enumerate(pages_text, start=1)
         if len((page_text or "").strip()) < 50
     ]
 
@@ -7140,7 +7135,6 @@ def _extract_reception_pdf(pdf_bytes):
                 "puis installe tesseract-ocr et poppler-utils sur Render."
             ) from e
 
-        # Un seul OCR lourd à la fois par worker.
         with _RECEPTION_OCR_LOCK:
             for page_no in pages_to_ocr:
                 images = []
@@ -7155,6 +7149,7 @@ def _extract_reception_pdf(pdf_bytes):
                     )
                     if not images:
                         continue
+
                     image = images[0]
                     try:
                         page_text = pytesseract.image_to_string(
@@ -7167,7 +7162,7 @@ def _extract_reception_pdf(pdf_bytes):
                             "Echec OCR Tesseract. Verifie que tesseract-ocr et la langue francaise sont installes."
                         ) from e
 
-                    # Secours sur les pages où le premier mode OCR renvoie peu de texte.
+                    # Deuxième passe si le premier mode renvoie très peu de texte.
                     if len((page_text or "").strip()) < 50:
                         try:
                             alt_text = pytesseract.image_to_string(
@@ -7181,8 +7176,8 @@ def _extract_reception_pdf(pdf_bytes):
                             pass
 
                     pages_text[page_no - 1] = page_text or ""
-                    print(f"[RECEPTION OCR] Page {page_no}/{page_count} analysee")
                     ocr_used = True
+                    print(f"[RECEPTION OCR] Page {page_no}/{page_count} analysee")
                 finally:
                     for image in images:
                         try:
@@ -7201,8 +7196,7 @@ def _extract_reception_pdf(pdf_bytes):
             "Aucun texte exploitable trouve dans le PDF, meme apres OCR."
         )
 
-    # Numéro et date du bordereau. Pour un PDF contenant plusieurs BL,
-    # on conserve le premier numéro/date à titre d'identification du fichier.
+    # Numéro et date du premier bordereau du fichier, utilisés comme référence du PDF.
     bl_numero = ""
     bl_date = ""
     m = re.search(
@@ -7214,19 +7208,25 @@ def _extract_reception_pdf(pdf_bytes):
         bl_numero = m.group(1)
         bl_date = m.group(2)
     else:
-        m = re.search(r"N\s*[°ºo]?\s*([0-9]{6,})\s+du\s+([0-9]{2}/[0-9]{2}/[0-9]{4})", text)
+        m = re.search(
+            r"N\s*[°ºo]?\s*([0-9]{6,})\s+du\s+([0-9]{2}/[0-9]{2}/[0-9]{4})",
+            text,
+            flags=re.IGNORECASE
+        )
         if m:
             bl_numero = m.group(1)
             bl_date = m.group(2)
 
-    # Extrait toutes les références V/Cde : dossier/numero sur toutes les pages.
+    # Extrait toutes les références de Packing sur toutes les pages.
+    # Exemples OCR observés : V/Cde, VICde, ViICde, V1ICde.
     refs = []
     seen = set()
-    for dossier, numero in re.findall(
-        r"V\s*[/|Il1i\-]?\s*Cde\s*:\s*([A-Za-z0-9_-]+)\s*/\s*([0-9]+)",
-        text,
+    packing_pattern = re.compile(
+        r"V\s*[/|Il1i\-]{0,4}\s*Cde\s*[:;]?\s*([A-Za-z0-9_-]+)\s*/\s*([0-9]+)",
         flags=re.IGNORECASE
-    ):
+    )
+
+    for dossier, numero in packing_pattern.findall(text):
         dossier = dossier.strip()
         numero_norm = _normalise_numero_caisse(numero)
         key = (dossier, numero_norm)
@@ -7242,6 +7242,11 @@ def _extract_reception_pdf(pdf_bytes):
         raise ValueError(
             "Aucune référence de Packing de type 'V/Cde : dossier/numéro' n'a été détectée, même après OCR."
         )
+
+    print(
+        "[RECEPTION PDF] Références détectées : "
+        + ", ".join(f"{x['dossier']}/{x['numero_pdf']}" for x in refs)
+    )
 
     return {
         "bl_numero": bl_numero,
