@@ -7875,7 +7875,7 @@ setTimeout(()=>{try{loadLinks(true)}catch(e){}},100);
 @app.route('/gestionnaire')
 def gestionnaire():
     from flask import request, redirect, url_for
-    if request.args.get('pwd') != '1234':
+    if request.args.get('pwd') != 'esi2026':
         return redirect(url_for('login'))
 
     # Injection inline volontaire : pas de fichier JS externe, donc pas de probleme de cache/404.
@@ -7908,7 +7908,7 @@ def gestionnaire():
 @app.route('/cleaner')
 def cleaner_page():
     """Portail CLEANER - moteur documentaire transversal d'ESI TICKETS."""
-    if request.args.get('pwd') != '1234':
+    if request.args.get('pwd') != 'esi2026':
         return redirect(url_for('login'))
 
     response = app.make_response(render_template('cleaner.html'))
@@ -8047,7 +8047,7 @@ def _cleaner_rule_upsert(mode, profile_key, target_field, source_alias='', sourc
 
 @app.route('/api/cleaner/config')
 def api_cleaner_config():
-    if request.args.get('pwd') != '1234':
+    if request.args.get('pwd') != 'esi2026':
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
     mode = _as_text(request.args.get('mode') or 'douanes').strip().lower()
     ready, error = _cleaner_db_state()
@@ -8086,7 +8086,7 @@ def api_cleaner_config():
 
 @app.route('/api/cleaner/fields/<mode>/<field_id>', methods=['DELETE'])
 def api_cleaner_delete_field(mode, field_id):
-    if request.args.get('pwd') != '1234':
+    if request.args.get('pwd') != 'esi2026':
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
     ready, error = _cleaner_db_state()
     if not ready:
@@ -8105,7 +8105,7 @@ def api_cleaner_delete_field(mode, field_id):
 @app.route('/api/cleaner/learn', methods=['POST'])
 def api_cleaner_learn():
     """Valide une extraction et mémorise uniquement des règles de structure, jamais des valeurs métier."""
-    if request.args.get('pwd') != '1234':
+    if request.args.get('pwd') != 'esi2026':
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
 
     ready, error = _cleaner_db_state()
@@ -8264,7 +8264,7 @@ def api_cleaner_learn():
 @app.route('/api/cleaner/analyse', methods=['POST'])
 def api_cleaner_analyse():
     """Analyse des documents depuis CLEANER, sans IA ni écriture métier automatique."""
-    if request.args.get('pwd') != '1234':
+    if request.args.get('pwd') != 'esi2026':
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
 
     mode = _as_text(request.form.get('mode')).strip().lower()
@@ -8495,7 +8495,7 @@ def api_cleaner_analyse():
 # CLEANER V3.3 - destinations métier après contrôle
 # -----------------------------------------------------------------------------
 def _cleaner_check_pwd():
-    return request.args.get('pwd') == '1234'
+    return request.args.get('pwd') == 'esi2026'
 
 
 def _cleaner_num(value, default=0.0):
@@ -9190,7 +9190,7 @@ def api_cleaner_create_enlevement():
 @app.route('/api/cleaner/export-excel', methods=['POST'])
 def api_cleaner_export_excel():
     """Exporte exactement le tableau contrôlé/modifié dans CLEANER."""
-    if request.args.get('pwd') != '1234':
+    if request.args.get('pwd') != 'esi2026':
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
 
     data = request.get_json(silent=True) or {}
@@ -9251,8 +9251,8 @@ def login():
     from flask import request, redirect, render_template_string
     error = ''
     if request.method == 'POST':
-        if request.form.get('password') == '1234':
-            return redirect('/gestionnaire?pwd=1234')
+        if request.form.get('password') == 'esi2026':
+            return redirect('/gestionnaire?pwd=esi2026')
         error = 'Mot de passe incorrect'
     return render_template_string("""<!DOCTYPE html>
 <html lang='fr'>
@@ -12961,7 +12961,7 @@ def reporting_page():
 .rule{margin-top:18px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 16px;color:var(--muted);font-size:12px;line-height:1.45}
 @media(max-width:900px){.grid{grid-template-columns:1fr}.hero{align-items:flex-start;flex-direction:column}.wrap{padding:12px}}
 </style></head><body><div class="wrap">
-<header class="hero"><div><h1>REPORTING</h1><p>Indicateurs de suivi opérationnel ESI TICKETS</p></div><a class="back" href="/gestionnaire?pwd=1234">← Retour gestion</a></header>
+<header class="hero"><div><h1>REPORTING</h1><p>Indicateurs de suivi opérationnel ESI TICKETS</p></div><a class="back" href="/gestionnaire?pwd=esi2026">← Retour gestion</a></header>
 <section class="section"><h2>Reportings disponibles</h2><div class="grid">
 <article class="card active"><div class="eyebrow">Disponible</div><h3>ALLER VOIR</h3><p>Mesure le délai entre la date du RDV et le premier passage du ticket au statut « Terminé ».</p><div class="meta">Calcul en jours ouvrés · samedi et dimanche exclus</div><div class="actions"><a class="btn" href="/reporting/aller-voir">Ouvrir le reporting</a></div></article>
 <article class="card future"><div class="eyebrow">À construire</div><h3>DEVIS</h3><p>Suivi des délais de traitement et de réponse des demandes de devis.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
