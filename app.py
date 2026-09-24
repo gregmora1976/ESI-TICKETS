@@ -13111,6 +13111,11 @@ def _reporting_caisse_rows(date_debut='', date_fin='', charge_projet='', client=
 
         achat = _reporting_parse_amount(fiche.get('prixAchat'))
         cession = _reporting_parse_amount(fiche.get('prixCession'))
+        # Règle reporting : si le prix de cession n'est pas renseigné mais que
+        # le prix d'achat l'est, on considère prix de cession = prix d'achat.
+        # La caisse est ainsi intégrée aux totaux avec une marge nulle.
+        if achat is not None and cession is None:
+            cession = achat
         marge = (cession - achat) if achat is not None and cession is not None else None
         taux_marge = (marge / achat * 100) if marge is not None and achat not in (None, 0) else None
 
@@ -13144,12 +13149,17 @@ def api_reporting_caisse():
         request.args.get('client', ''),
         request.args.get('type_caisse', ''),
     )
-    total_achat = sum(x['prix_achat'] for x in rows if x.get('prix_achat') is not None)
-    total_cession = sum(x['prix_cession'] for x in rows if x.get('prix_cession') is not None)
-    rows_marge = [x for x in rows if x.get('marge_euros') is not None]
-    total_marge = sum(x['marge_euros'] for x in rows_marge)
-    achats_mesurables = sum(x['prix_achat'] for x in rows_marge if x.get('prix_achat') is not None)
-    taux_global = (total_marge / achats_mesurables * 100) if achats_mesurables else None
+    # Les indicateurs financiers portent sur les caisses disposant d'un prix d'achat.
+    # Si le prix de cession manque, _reporting_caisse_rows applique la règle métier
+    # prix de cession = prix d'achat, soit une marge nulle pour cette caisse.
+    rows_marge = [
+        x for x in rows
+        if x.get('prix_achat') is not None and x.get('prix_cession') is not None
+    ]
+    total_achat = sum(x['prix_achat'] for x in rows_marge)
+    total_cession = sum(x['prix_cession'] for x in rows_marge)
+    total_marge = total_cession - total_achat
+    taux_global = (total_marge / total_achat * 100) if total_achat else None
     return jsonify({
         'ok': True,
         'count': len(rows),
@@ -13176,9 +13186,9 @@ def reporting_caisse_page():
 </style></head><body><div class="wrap">
 <div class="hero" style="display:flex;justify-content:space-between;gap:16px;align-items:center"><div><h1>REPORTING · CAISSE</h1><p>Suivi des Packings et de leur marge · tickets annulés exclus</p></div><a href="/reporting" style="text-decoration:none;background:#fff;color:#0f2f4f;font-weight:900;border-radius:10px;padding:10px 13px;white-space:nowrap">← REPORTING</a></div>
 <div class="filters"><div><label>Du</label><input id="dateDebut" type="date"></div><div><label>Au</label><input id="dateFin" type="date"></div><div><label>Chargé de projet</label><input id="chargeProjet" placeholder="Tous"></div><div><label>Client</label><input id="client" placeholder="Tous"></div><div><label>Type de caisse</label><input id="typeCaisse" placeholder="Tous"></div><button class="btn" id="refresh">Actualiser</button></div>
-<div class="cards"><div class="card"><b>Nombre de caisses</b><strong id="count">-</strong></div><div class="card"><b>Total prix d'achat</b><strong id="achat">-</strong></div><div class="card"><b>Total prix de cession</b><strong id="cession">-</strong></div><div class="card"><b>Marge totale</b><strong id="marge">-</strong></div><div class="card"><b>Taux de marge global</b><strong id="taux">-</strong><small>marge / prix d'achat</small></div></div>
+<div class="cards"><div class="card"><b>Nombre de caisses</b><strong id="count">-</strong></div><div class="card"><b>Total prix d'achat</b><strong id="achat">-</strong></div><div class="card"><b>Total prix de cession</b><strong id="cession">-</strong><small>caisses avec achat + cession</small></div><div class="card"><b>Marge totale</b><strong id="marge">-</strong><small>cession − achat, même périmètre</small></div><div class="card"><b>Taux de marge global</b><strong id="taux">-</strong><small>marge / prix d'achat</small></div></div>
 <div class="table-wrap"><table><thead><tr><th>Ticket</th><th>Dossier</th><th>N° caisse</th><th>Client</th><th>Projet</th><th>Chargé de projet</th><th>Statut</th><th>Type de caisse</th><th>Dimensions</th><th>Date création</th><th>Prix achat</th><th>Prix cession</th><th>Marge €</th><th>Marge %</th></tr></thead><tbody id="rows"></tbody></table></div>
-<div class="note">Le taux de marge est calculé sur le prix d'achat : (prix de cession − prix d'achat) / prix d'achat × 100. Les tickets annulés sont exclus. Une caisse sans prix d'achat ou sans prix de cession reste visible mais n'entre pas dans le calcul de marge.</div>
+<div class="note">Le taux de marge est calculé sur le prix d'achat : (prix de cession − prix d'achat) / prix d'achat × 100. Les tickets annulés sont exclus. Si le prix de cession n'est pas renseigné mais que le prix d'achat l'est, le reporting considère prix de cession = prix d'achat : la caisse est donc comptabilisée avec une marge de 0 €.</div>
 </div><script>
 const el=id=>document.getElementById(id);const fmtDate=v=>{if(!v)return '-';const p=v.split('-');return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:v};const esc=v=>String(v??'').replace(/[&<>\\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\\"':'&quot;'}[c]));const euro=v=>v==null?'-':new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR'}).format(v);const pct=v=>v==null?'-':new Intl.NumberFormat('fr-FR',{maximumFractionDigits:2}).format(v)+' %';
 async function load(){const q=new URLSearchParams();[['date_debut','dateDebut'],['date_fin','dateFin'],['charge_projet','chargeProjet'],['client','client'],['type_caisse','typeCaisse']].forEach(([k,id])=>{const v=el(id).value.trim();if(v)q.set(k,v)});const r=await fetch('/api/reporting/caisse?'+q.toString(),{cache:'no-store'});const d=await r.json();if(!r.ok){alert(d.error||'Erreur reporting');return}el('count').textContent=d.count??0;el('achat').textContent=euro(d.total_prix_achat);el('cession').textContent=euro(d.total_prix_cession);el('marge').textContent=euro(d.marge_totale);el('taux').textContent=pct(d.taux_marge_global_pct);el('rows').innerHTML=(d.rows||[]).map(x=>`<tr><td>${esc(x.id)||'-'}</td><td>${esc(x.dossier)||'-'}</td><td>${esc(x.reference)||'-'}</td><td>${esc(x.client)||'-'}</td><td>${esc(x.projet)||'-'}</td><td>${esc(x.charge_projet)||'-'}</td><td>${esc(x.status)||'-'}</td><td>${esc(x.type_caisse)||'-'}</td><td>${esc(x.dimensions)||'-'}</td><td>${fmtDate(x.date_creation)}</td><td class="money">${euro(x.prix_achat)}</td><td class="money">${euro(x.prix_cession)}</td><td class="margin">${euro(x.marge_euros)}</td><td class="margin">${pct(x.taux_marge_pct)}</td></tr>`).join('')||'<tr><td colspan="14">Aucune caisse pour ces filtres.</td></tr>'}
