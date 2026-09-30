@@ -11357,6 +11357,14 @@ def _build_labels_pdf_bytes(labels, kind="article"):
         value = _as_text(value)
         return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
+    def _approx_pdf_text_width(value, font_size, weight='regular'):
+        """Approximation simple de largeur pour garder le titre dans la zone imprimable."""
+        txt = _as_text(value).strip()
+        if not txt:
+            return 0
+        factor = 0.60 if str(weight).lower() == 'bold' else 0.56
+        return len(txt) * float(font_size) * factor
+
     # Charge le vrai logo du projet. Il n'est jamais recadré : on conserve son ratio.
     logo_path = APP_DIR / 'static' / 'logo.png'
     logo_image_bytes = None
@@ -11460,11 +11468,15 @@ def _build_labels_pdf_bytes(labels, kind="article"):
             ]
 
         # Titre de l'emballage en haut à droite du logo.
+        # Position et taille ajustées pour que PRE-PACKING ne soit jamais coupé.
         title = _as_text(label.get('titre') or 'PRE-PACKING').strip()
         is_packing_label = title.upper() == 'PACKING'
         packaging_name = 'PACKING' if is_packing_label else 'PRE-PACKING'
+        title_size = 15 if is_packing_label else 13.5
+        title_width = _approx_pdf_text_width(title, title_size, weight='bold')
+        title_x = max(margin + 118, page_width - margin - title_width)
         stream_lines += [
-            'BT', '/F2 17 Tf', f'{page_width - 72:.2f} {page_height - 36:.2f} Td',
+            'BT', f'/F2 {title_size} Tf', f'{title_x:.2f} {page_height - 36:.2f} Td',
             f'({pdf_escape(title)}) Tj', 'ET'
         ]
 
@@ -11497,27 +11509,29 @@ def _build_labels_pdf_bytes(labels, kind="article"):
             (('packing_type' if is_packing_label else 'type_colis'), ('Type de Packing' if is_packing_label else 'Type de Pre-Packing')),
             ('dossier', 'Dossier'),
             ('client', 'Client'),
-            ('charge_projet', 'Charge de projet'),
+            ('charge_projet', 'Chargé de projet'),
             ('lieu', 'Stockage'),
-            ('bon', 'N° Bon reception'),
+            ('bon', 'N° bon réception'),
         ]
         for key, field_label in fields:
             value = _display_prepacking_type(label.get(key)) if key == 'type_colis' else _as_text(label.get(key)).strip()
             if not value:
                 continue
+            # Intitulé : plus petit et non gras.
             stream_lines += [
-                'BT', '/F2 9 Tf', f'{margin} {y:.2f} Td',
-                f'({pdf_escape(field_label.upper())}) Tj', 'ET'
+                'BT', '/F1 8 Tf', f'{margin} {y:.2f} Td',
+                f'({pdf_escape(field_label)}) Tj', 'ET'
             ]
-            y -= 14
-            wrapped = _tw.wrap(value, width=34) or [value]
+            y -= 12
+            wrapped = _tw.wrap(value, width=32) or [value]
             for part in wrapped[:3]:
+                # Valeur : plus grande et en gras.
                 stream_lines += [
-                    'BT', '/F1 11 Tf', f'{margin} {y:.2f} Td',
+                    'BT', '/F2 12.5 Tf', f'{margin} {y:.2f} Td',
                     f'({pdf_escape(part)}) Tj', 'ET'
                 ]
-                y -= 14
-            y -= 8
+                y -= 15
+            y -= 6
 
         # QR code : 27 mm environ, positionné en bas à droite pour ne pas perturber
         # la mise en page historique de l'étiquette 100 x 148 mm.
