@@ -13848,6 +13848,188 @@ END:VCALENDAR"""
 
 
 
+
+# -----------------------------------------------------------------------------
+# BON DE SORTIE - validation physique et mise a jour de la Base Articles
+# -----------------------------------------------------------------------------
+def _sortie_stock_data(ticket):
+    data = ticket.get('sortieStock') or ticket.get('sortie') or ticket.get('bonSortie') or ticket.get('bon_sortie') or {}
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def _sortie_expand_esi_ids(ticket):
+    """Retourne les elements selectionnes et leur contenu physique a marquer SORTI.
+
+    - ARTICLE : l'article lui-meme ;
+    - PRE-PACKING : le Pre-Packing + les Articles qu'il contient ;
+    - PACKING : le Packing + ses Pre-Packings + tous les Articles relies au Packing.
+    """
+    sortie = _sortie_stock_data(ticket)
+    dossier = _as_text(sortie.get('dossier') or ticket.get('dossier')).strip()
+    selected = list(dict.fromkeys(
+        _as_text(x).strip() for x in (sortie.get('esi_ids') or []) if _as_text(x).strip()
+    ))
+    if not selected:
+        raise ValueError('Aucun element n\'est selectionne dans ce bon de sortie.')
+
+    selected_rows = _mise_en_caisse_rows_by_ids(selected)
+    missing = [x for x in selected if x not in selected_rows]
+    if missing:
+        raise ValueError('Element(s) introuvable(s) dans la Base Articles : ' + ', '.join(missing[:10]))
+
+    affected = set(selected)
+    packing_refs = set()
+
+    for esi_id in selected:
+        row = selected_rows[esi_id]
+        public = _article_row_to_public(row)
+        category = _as_text(public.get('categorie_metier')).strip().upper()
+        row_dossier = _as_text(public.get('dossier')).strip()
+        if dossier and row_dossier and row_dossier != dossier:
+            raise ValueError(f'{esi_id} appartient au dossier {row_dossier}, pas au dossier {dossier}.')
+
+        raw = row.get('raw_json') if isinstance(row.get('raw_json'), dict) else {}
+        if category == 'PRE-PACKING':
+            members = raw.get('article_esi_ids') or []
+            if isinstance(members, list):
+                affected.update(_as_text(x).strip() for x in members if _as_text(x).strip())
+        elif category == 'PACKING':
+            packing_ref = _as_text(public.get('packing_reference') or public.get('reference')).strip()
+            if packing_ref:
+                packing_refs.add(packing_ref)
+            for key in ('packing_article_esi_ids', 'packing_prepacking_esi_ids'):
+                values = raw.get(key) or []
+                if isinstance(values, list):
+                    affected.update(_as_text(x).strip() for x in values if _as_text(x).strip())
+
+    # Complete depuis l'etat courant du dossier : utile pour les anciens Packings dont
+    # toute la composition n'etait pas encore persistee dans raw_json.
+    if packing_refs and dossier:
+        current = _mise_en_caisse_dossier_data(dossier)
+        equivalents = set(packing_refs)
+        for ref in list(packing_refs):
+            equivalents.add(_legacy_packing_reference(dossier, ref))
+        for group in ('articles', 'prepackings'):
+            for item in current.get(group) or []:
+                ref_caisse = _as_text(item.get('packing_actuel') or item.get('ref_caisse')).strip()
+                if ref_caisse and ref_caisse in equivalents:
+                    esi = _as_text(item.get('esi_id')).strip()
+                    if esi:
+                        affected.add(esi)
+                        if group == 'prepackings':
+                            affected.update(_as_text(x).strip() for x in (item.get('member_esi_ids') or []) if _as_text(x).strip())
+
+    affected = list(dict.fromkeys(x for x in affected if x))
+    rows = _mise_en_caisse_rows_by_ids(affected)
+    # On ignore seulement les identifiants de contenu historique devenus absents ; les
+    # elements selectionnes explicitement ont deja ete controles plus haut.
+    return selected, affected, rows
+
+
+def _apply_sortie_to_articles(ticket, validee_par=''):
+    sortie = _sortie_stock_data(ticket)
+    selected, affected, rows = _sortie_expand_esi_ids(ticket)
+    now = datetime.now().isoformat()
+    destination = _as_text(sortie.get('destination')).strip()
+    type_sortie = _as_text(sortie.get('type_sortie')).strip()
+    ticket_id = _as_text(ticket.get('id')).strip()
+    changed = []
+
+    for esi_id in affected:
+        row = rows.get(esi_id)
+        if not row:
+            continue
+        raw = row.get('raw_json') if isinstance(row.get('raw_json'), dict) else {}
+        raw = dict(raw or {})
+        history = list(raw.get('sorties') or [])
+        if not any(_as_text(x.get('ticket_id')).strip() == ticket_id for x in history if isinstance(x, dict)):
+            history.append({
+                'ticket_id': ticket_id,
+                'date': now,
+                'destination': destination,
+                'type_sortie': type_sortie,
+                'validee_par': _as_text(validee_par).strip(),
+            })
+        raw['sorties'] = history
+        raw['derniere_sortie'] = history[-1] if history else {}
+        extra = raw.get('article_fields') if isinstance(raw.get('article_fields'), dict) else {}
+        extra = dict(extra or {})
+        extra['derniere_sortie_ref'] = ticket_id
+        extra['derniere_sortie_destination'] = destination
+        extra['derniere_sortie_date'] = now
+        raw['article_fields'] = extra
+
+        patch = {
+            'statut_logistique': 'Sorti',
+            'lieu_stockage': destination,
+            'updated_at': now,
+            'raw_json': raw,
+        }
+        merged = dict(row)
+        merged.update(patch)
+        patch['search_text'] = _article_search_text(merged)
+        safe_esi = urllib.parse.quote(esi_id, safe='-')
+        supabase_rest_request('PATCH', 'articles', f'esi_id=eq.{safe_esi}', patch, prefer='return=minimal')
+        changed.append(esi_id)
+
+    return {
+        'selected_ids': selected,
+        'affected_ids': changed,
+        'count': len(changed),
+        'validated_at': now,
+    }
+
+
+@app.route('/api/tickets/<ticket_id>/valider-sortie', methods=['POST'])
+def api_valider_sortie(ticket_id):
+    ticket = load_ticket(ticket_id)
+    if not ticket:
+        return jsonify({'ok': False, 'error': 'Bon de sortie introuvable'}), 404
+    if _as_text(ticket.get('module')).strip() != 'Sortie de stock':
+        return jsonify({'ok': False, 'error': "Ce ticket n'est pas un bon de sortie"}), 400
+
+    sortie = _sortie_stock_data(ticket)
+    if sortie.get('sortie_validee') is True or _as_text(sortie.get('sortie_validee_le')).strip():
+        return jsonify({
+            'ok': True,
+            'already_validated': True,
+            'validated_at': sortie.get('sortie_validee_le') or sortie.get('date_sortie_reelle'),
+        })
+
+    data = request.get_json(silent=True) or {}
+    validee_par = _as_text(data.get('validee_par')).strip()
+    if not validee_par:
+        return jsonify({'ok': False, 'error': 'Renseigne le nom de la personne qui valide la sortie.'}), 400
+
+    try:
+        result = _apply_sortie_to_articles(ticket, validee_par=validee_par)
+        now = result['validated_at']
+        sortie['sortie_validee'] = True
+        sortie['validee'] = True
+        sortie['sortie_validee_le'] = now
+        sortie['date_sortie_reelle'] = now[:10]
+        sortie['validee_par'] = validee_par
+        sortie['esi_ids_valides'] = result['affected_ids']
+        ticket['sortieStock'] = sortie
+        ticket['status'] = 'Terminée'
+        ticket['completedAt'] = now
+        ticket['updatedAt'] = now
+        save_ticket(ticket)
+        return jsonify({
+            'ok': True,
+            'ticket_id': ticket_id,
+            'status': ticket['status'],
+            'sortie_validee_le': now,
+            'validee_par': validee_par,
+            'elements_sortis': result['count'],
+            'esi_ids': result['affected_ids'],
+        })
+    except ValueError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+    except Exception as e:
+        print(f'[SORTIE] Validation impossible pour {ticket_id}: {e}')
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
 def open_browser():
     webbrowser.open('http://127.0.0.1:5050/splash')
 
