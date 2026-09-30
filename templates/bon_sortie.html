@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ESI - Bon de sortie</title>
+<link rel="icon" type="image/png" href="/static/logo.png">
+<style>
+:root{--bg:#f1f5f9;--panel:#fff;--line:#dbe7f0;--text:#0f172a;--muted:#64748b;--blue:#0ea5e9;--blue-dark:#0284c7;--green:#16a34a;--orange:#f59e0b;--danger:#dc2626}
+*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)}
+.topbar{background:#fff;border-bottom:1px solid var(--line);padding:12px 18px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:20}.topbar img{height:42px;max-width:130px;object-fit:contain}.title{font-size:22px;font-weight:900}.sub{font-size:12px;color:var(--muted);margin-top:3px}.actions{margin-left:auto;display:flex;gap:8px}.btn{border:1px solid var(--line);background:#fff;border-radius:12px;padding:10px 14px;font-weight:800;cursor:pointer}.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}.btn.success{background:var(--green);border-color:var(--green);color:#fff}.btn:disabled{opacity:.5;cursor:not-allowed}
+.wrap{max-width:1420px;margin:0 auto;padding:18px}.grid{display:grid;grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr);gap:16px;align-items:start}.panel{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 3px 14px rgba(15,23,42,.05)}.panel-head{padding:16px 18px 12px;border-bottom:1px solid var(--line)}.panel-title{font-size:17px;font-weight:900}.panel-sub{font-size:12px;color:var(--muted);margin-top:4px}.panel-body{padding:16px 18px}
+.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.field.full{grid-column:1/-1}.field label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:900;margin-bottom:6px}.field input,.field select,.field textarea{width:100%;border:1px solid #bfd4e3;background:#f8fbfd;border-radius:10px;padding:11px 12px;font-size:14px;color:var(--text)}.field textarea{min-height:88px;resize:vertical}.field input:focus,.field select:focus,.field textarea:focus{outline:2px solid rgba(14,165,233,.15);border-color:var(--blue)}.readonly{background:#eef6fb!important;color:#33536e}.hint{font-size:12px;color:var(--muted);margin-top:7px}.feedback{margin-top:12px;font-size:13px;font-weight:800;min-height:18px}.feedback.error{color:#991b1b}.feedback.success{color:#166534}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.search{flex:1;min-width:220px;border:1px solid var(--line);background:#f8fafc;border-radius:10px;padding:10px 12px}.badge{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:900;background:#e0f2fe;color:#075985}.badge.stock{background:#dcfce7;color:#166534}.badge.out{background:#e2e8f0;color:#475569}.list{border:1px solid var(--line);border-radius:12px;overflow:hidden}.row{display:grid;grid-template-columns:36px 92px 120px minmax(160px,1fr) 130px 120px;gap:10px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line);font-size:12px}.row:last-child{border-bottom:none}.row.head{background:#f8fafc;font-weight:900;color:#475569;font-size:11px;text-transform:uppercase}.row.item:hover{background:#f8fbff}.row.item.unavailable{opacity:.55;background:#f8fafc}.row input[type=checkbox]{width:18px;height:18px}.esi{font-weight:900;color:#0369a1}.ref{font-weight:800}.desc{overflow-wrap:anywhere}.empty{padding:24px;text-align:center;color:var(--muted);font-weight:800}.summary{margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#f8fafc;display:flex;justify-content:space-between;gap:12px;align-items:center}.summary strong{font-size:16px}.footer-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}
+@media(max-width:980px){.grid{grid-template-columns:1fr}.topbar{flex-wrap:wrap}.actions{width:100%;margin-left:0}.row{grid-template-columns:34px 82px 1fr 110px}.hide-mobile{display:none}.form-grid{grid-template-columns:1fr}.field.full{grid-column:auto}}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <img src="/static/logo.png" alt="ESI">
+  <div><div class="title">Bon de sortie</div><div class="sub">Préparer une sortie de stock depuis la Base Articles</div></div>
+  <div class="actions"><button class="btn" type="button" onclick="history.back()">Retour</button></div>
+</div>
+<div class="wrap">
+  <div class="grid">
+    <section class="panel">
+      <div class="panel-head"><div class="panel-title">Informations de sortie</div><div class="panel-sub">Le N° dossier récupère automatiquement les informations déjà connues.</div></div>
+      <div class="panel-body">
+        <div class="form-grid">
+          <div class="field"><label>N° dossier *</label><input id="dossier" autocomplete="off" placeholder="Ex. 100527"></div>
+          <div class="field"><label>Type de sortie *</label><select id="typeSortie"><option value="Définitive">Définitive</option><option value="Temporaire">Temporaire</option></select></div>
+          <div class="field"><label>Client</label><input id="client" class="readonly" readonly></div>
+          <div class="field"><label>Chargé de projet</label><input id="chargeProjet" class="readonly" readonly></div>
+          <div class="field full"><label>Projet / exposition</label><input id="projet" class="readonly" readonly></div>
+          <div class="field"><label>Date de sortie prévue *</label><input id="dateSortie" type="date"></div>
+          <div class="field"><label>Heure de sortie</label><input id="heureSortie" type="time"></div>
+          <div class="field full"><label>Destination</label><input id="destination" placeholder="Musée, adresse, site, transport..."></div>
+          <div class="field"><label>Transporteur</label><input id="transporteur"></div>
+          <div class="field"><label>Contact / destinataire</label><input id="contactDestinataire"></div>
+          <div class="field full"><label>Référence transport / BL</label><input id="referenceTransport"></div>
+          <div class="field full"><label>Notes / instructions</label><textarea id="notes"></textarea></div>
+        </div>
+        <div id="identityFeedback" class="feedback"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><div class="panel-title">Éléments à sortir</div><div class="panel-sub">Articles, Pré-Packings et Packings du dossier sélectionné.</div></div>
+      <div class="panel-body">
+        <div class="toolbar">
+          <input class="search" id="search" type="search" placeholder="Rechercher N° ESI, référence, désignation, colis, emplacement...">
+          <button class="btn" id="selectAllBtn" type="button">Tout sélectionner</button>
+          <button class="btn" id="clearBtn" type="button">Effacer</button>
+        </div>
+        <div class="list">
+          <div class="row head"><div></div><div>N° ESI</div><div>Type</div><div>Désignation</div><div class="hide-mobile">Stockage</div><div>Statut</div></div>
+          <div id="articleRows"><div class="empty">Renseigne un N° dossier pour afficher le stock.</div></div>
+        </div>
+        <div class="summary"><div><span class="badge">Sélection</span> <strong id="selectedCount">0</strong> élément(s)</div><div id="stockCount" class="hint">0 élément en stock</div></div>
+        <div id="saveFeedback" class="feedback"></div>
+        <div class="footer-actions"><button class="btn success" id="createBtn" type="button">Créer le ticket SORTIE</button></div>
+      </div>
+    </section>
+  </div>
+</div>
+<script>
+let dossierArticles=[];
+let selected=new Set();
+const $=id=>document.getElementById(id);
+function normalise(v){return String(v||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')}
+function isAvailable(a){const s=normalise(a.statut_logistique);return !(s.includes('sorti')||s.includes('annul'))}
+function typeLabel(a){return String(a.categorie_metier||a.type_objet||'ARTICLE').replace('PRODUIT','ARTICLE').replace('CONTENANT','PRE-PACKING')}
+function setFeedback(id,text='',kind=''){const e=$(id);e.textContent=text;e.className='feedback'+(kind?' '+kind:'')}
+async function loadDossier(){
+ const dossier=$('dossier').value.trim(); selected.clear(); dossierArticles=[]; render();
+ if(!dossier){$('client').value='';$('projet').value='';$('chargeProjet').value='';return}
+ setFeedback('identityFeedback','Recherche du dossier...');
+ try{
+  const [ri,ra]=await Promise.all([
+    fetch('/api/dossiers/lookup?dossier='+encodeURIComponent(dossier),{cache:'no-store'}),
+    fetch('/api/articles/by-dossier?dossier='+encodeURIComponent(dossier),{cache:'no-store'})
+  ]);
+  const identity=await ri.json(); const articles=await ra.json();
+  if(!ri.ok)throw new Error(identity.error||'Dossier introuvable');
+  if(!ra.ok)throw new Error(articles.error||'Impossible de charger les articles');
+  $('client').value=identity.client||'';$('projet').value=identity.projet||'';$('chargeProjet').value=identity.charge_projet||'';
+  dossierArticles=Array.isArray(articles.articles)?articles.articles:[];
+  setFeedback('identityFeedback',dossierArticles.length+' élément(s) trouvé(s) dans la Base Articles.','success');
+  render();
+ }catch(e){setFeedback('identityFeedback',e.message||'Chargement impossible','error');render()}
+}
+function render(){
+ const root=$('articleRows'); const q=normalise($('search').value); root.innerHTML='';
+ const filtered=dossierArticles.filter(a=>!q||normalise([a.esi_id,a.categorie_metier,a.reference,a.description,a.dernier_colis,a.ref_caisse,a.lieu_stockage,a.statut_logistique].join(' ')).includes(q));
+ if(!filtered.length){root.innerHTML='<div class="empty">Aucun élément à afficher.</div>';updateSummary();return}
+ filtered.forEach(a=>{
+  const available=isAvailable(a); const row=document.createElement('div');row.className='row item'+(available?'':' unavailable');
+  const cb=document.createElement('input');cb.type='checkbox';cb.disabled=!available;cb.checked=selected.has(a.esi_id);cb.onchange=()=>{cb.checked?selected.add(a.esi_id):selected.delete(a.esi_id);updateSummary()};
+  const type=typeLabel(a); const desc=[a.reference,a.description].filter(Boolean).join(' — ')||'-';
+  row.innerHTML='<div></div><div class="esi"></div><div></div><div class="desc"></div><div class="hide-mobile"></div><div></div>';
+  row.children[0].appendChild(cb);row.children[1].textContent=a.esi_id||'-';row.children[2].textContent=type;row.children[3].textContent=desc;row.children[4].textContent=a.lieu_stockage||'-';
+  const badge=document.createElement('span');badge.className='badge '+(available?'stock':'out');badge.textContent=a.statut_logistique||'Non renseigné';row.children[5].appendChild(badge);root.appendChild(row)
+ });
+ updateSummary();
+}
+function updateSummary(){ $('selectedCount').textContent=selected.size; $('stockCount').textContent=dossierArticles.filter(isAvailable).length+' élément(s) disponibles'; }
+$('dossier').addEventListener('change',loadDossier);$('dossier').addEventListener('blur',loadDossier);$('search').addEventListener('input',render);
+$('selectAllBtn').onclick=()=>{dossierArticles.filter(isAvailable).forEach(a=>selected.add(a.esi_id));render()};$('clearBtn').onclick=()=>{selected.clear();render()};
+$('createBtn').onclick=async()=>{
+ const dossier=$('dossier').value.trim(),date=$('dateSortie').value,type=$('typeSortie').value;
+ if(!dossier){setFeedback('saveFeedback','Le N° dossier est obligatoire.','error');return}
+ if(!date){setFeedback('saveFeedback','La date de sortie prévue est obligatoire.','error');return}
+ if(!selected.size){setFeedback('saveFeedback','Sélectionne au moins un élément à sortir.','error');return}
+ const payload={dossier,client:$('client').value.trim(),projet:$('projet').value.trim(),charge_projet:$('chargeProjet').value.trim(),date_sortie_prevue:date,heure_sortie:$('heureSortie').value,type_sortie:type,destination:$('destination').value.trim(),transporteur:$('transporteur').value.trim(),contact_destinataire:$('contactDestinataire').value.trim(),reference_transport:$('referenceTransport').value.trim(),notes:$('notes').value.trim(),esi_ids:[...selected]};
+ const fd=new FormData();fd.append('module','Sortie de stock');fd.append('dossier',dossier);fd.append('preteur',payload.client);fd.append('expo',payload.projet);fd.append('objet',payload.projet);fd.append('chargeProjet',payload.charge_projet);fd.append('dateRdv',date);fd.append('heureRdv',payload.heure_sortie);fd.append('lieuRdv',payload.destination);fd.append('contactRdv',payload.contact_destinataire);fd.append('commentaire',payload.notes);fd.append('sortieStock',JSON.stringify(payload));
+ const btn=$('createBtn');btn.disabled=true;btn.textContent='Création...';setFeedback('saveFeedback','');
+ try{const r=await fetch('/api/tickets',{method:'POST',body:fd});const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'Création impossible');setFeedback('saveFeedback','Ticket '+d.id+' créé. La sortie n’est pas encore validée physiquement.','success');selected.clear();render()}
+ catch(e){setFeedback('saveFeedback',e.message||'Création impossible','error')}
+ finally{btn.disabled=false;btn.textContent='Créer le ticket SORTIE'}
+};
+</script>
+</body>
+</html>
