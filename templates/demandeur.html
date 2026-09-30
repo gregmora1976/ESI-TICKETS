@@ -136,7 +136,7 @@
                 <button class="tab" id="tab-aller-voir" type="button">ALLER VOIR</button>
               </div>
               <div class="ticket-tab-row">
-                <button class="tab" id="tab-enlevement" type="button">EXPÉDITION</button>
+                <button class="tab" id="tab-enlevement" type="button">BON SORTIE</button>
                 <button class="tab" id="tab-avis-arrivee" type="button">RECEPTION</button>
                 <button class="tab" id="tab-mise-en-caisse" type="button">COLISAGE</button>
               </div>
@@ -2067,7 +2067,7 @@ document.addEventListener('keydown', (e) => {
 els.tabCaisse.addEventListener('click', ()=>{activateModule('caisse'); refreshReferenceAutocompleteBindings(); renderDoneTickets();});
 els.tabDevis.addEventListener('click', ()=>{activateModule('devis'); refreshReferenceAutocompleteBindings(); renderDoneTickets();});
 els.tabAllerVoir.addEventListener('click', ()=>{activateModule('aller-voir'); refreshReferenceAutocompleteBindings(); renderDoneTickets();});
-els.tabEnlevement.addEventListener('click', ()=>{activateModule('enlevement'); renderDoneTickets();});
+els.tabEnlevement.addEventListener('click', ()=>{ window.location.href = '/bon-sortie'; });
 els.tabAvisArrivee.addEventListener('click', ()=>{activateModule('avis-arrivee'); refreshReferenceAutocompleteBindings(); renderDoneTickets();});
 els.tabMiseEnCaisse.addEventListener('click', ()=>{ window.location.href = '/mise-en-caisse'; });
 document.getElementById('chooseCaisseFiles').addEventListener('click', (e)=>{e.stopPropagation(); els.fileInputCaisse.click();});
