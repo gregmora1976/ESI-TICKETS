@@ -29,9 +29,10 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .week-head{display:grid;grid-template-columns:repeat(5,1fr);border-bottom:1px solid var(--line);background:#f8fafc}
 .week-head div{padding:12px 10px;font-weight:900;text-transform:lowercase;border-right:1px solid var(--line)}.week-head div:last-child{border-right:none}
 .month-grid{display:grid;grid-template-columns:repeat(5,1fr)}
-.day{height:145px;min-height:145px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px;position:relative;background:#fff;display:flex;flex-direction:column;overflow:hidden}
+.day{height:145px;min-height:145px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px;position:relative;background:#fff;display:flex;flex-direction:column;overflow:hidden;cursor:pointer}
+.day:hover{background:#f8fbff}.day.today:hover{background:#eaf3ff}
 .day:nth-child(5n){border-right:none}.day.other-month{background:#f8fafc;color:#94a3b8}.day.today{background:#eff6ff}
-.day-number{font-size:18px;font-weight:900;margin-bottom:6px;flex:0 0 auto}.day-number.small{font-size:14px;color:#94a3b8}
+.day-number{font-size:18px;font-weight:900;margin-bottom:6px;flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:8px}.day-number.small{font-size:14px;color:#94a3b8}.day-count{font-size:11px;font-weight:900;color:#475569;background:#e2e8f0;border-radius:999px;padding:3px 7px;white-space:nowrap}
 .day-events{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:3px;scrollbar-gutter:stable}
 .day-events::-webkit-scrollbar{width:8px}.day-events::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:999px}.day-events::-webkit-scrollbar-track{background:transparent}
 .event{display:block;width:100%;border:none;border-left:5px solid var(--event-border);background:var(--event);color:#111827;border-radius:3px;padding:6px 7px;margin:4px 0;font-size:13px;line-height:1.25;text-align:left;cursor:pointer;font-weight:800;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
@@ -44,6 +45,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .ticket-modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:18px 20px 14px;border-bottom:1px solid var(--line)}
 .ticket-modal-title{font-size:20px;font-weight:900}.ticket-modal-sub{margin-top:4px;color:var(--muted);font-size:13px}
 .modal-close{border:none;background:#f1f5f9;width:36px;height:36px;border-radius:10px;cursor:pointer;font-size:22px;line-height:1;color:#334155}
+.day-list{display:flex;flex-direction:column;gap:10px}.day-list-ticket{display:block;width:100%;border:1px solid var(--line);border-left:5px solid var(--event-border);background:#fff;border-radius:10px;padding:12px 14px;text-align:left;cursor:pointer}.day-list-ticket.arrival-event{background:#fffbeb;border-left-color:#d97706}.day-list-ticket.reception-validated{background:#f0fdf4;border-left-color:#16a34a}.day-list-ticket-title{font-size:14px;font-weight:900;color:#0f172a}.day-list-ticket-meta{margin-top:5px;font-size:12px;color:var(--muted)}.day-list-empty{padding:10px 0;color:var(--muted);font-size:13px}
 .ticket-modal-body{padding:18px 20px 20px}.detail-grid{display:grid;grid-template-columns:170px 1fr;gap:10px 16px;align-items:start}
 .detail-label{color:var(--muted);font-size:13px;font-weight:800}.detail-value{font-weight:800;overflow-wrap:anywhere;white-space:pre-wrap}
 .section{margin-top:20px;padding:16px;border-radius:14px;border:1px solid var(--line);background:#f8fafc}
@@ -106,6 +108,22 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
     <div class="legend">
       <div>Affichage : demandes d'enlèvement + avis d'arrivée (jaune)</div>
       <div>Format : Client — Référence du bon</div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="dayModalBackdrop" aria-hidden="true">
+  <div class="ticket-modal" role="dialog" aria-modal="true" aria-labelledby="dayModalTitle">
+    <div class="ticket-modal-head">
+      <div>
+        <div class="ticket-modal-title" id="dayModalTitle">Tickets du jour</div>
+        <div class="ticket-modal-sub" id="dayModalSub">-</div>
+      </div>
+      <button class="modal-close" id="dayModalClose" type="button">×</button>
+    </div>
+    <div class="ticket-modal-body" id="dayModalBody"></div>
+    <div class="ticket-modal-foot">
+      <button class="btn" id="dayModalCloseBottom" type="button">Fermer</button>
     </div>
   </div>
 </div>
@@ -1142,6 +1160,41 @@ async function validateDelivery(){
   }
 }
 
+function formatPlanningDateLabel(dateKey){
+  const [y,m,d]=String(dateKey||'').split('-').map(Number);
+  if(!y||!m||!d) return dateKey||'-';
+  return new Date(y,m-1,d).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+}
+function openDayModal(dateKey, dayTickets){
+  const list=(dayTickets||[]).slice().sort((a,b)=>planningEventText(a).localeCompare(planningEventText(b)));
+  document.getElementById('dayModalTitle').textContent=formatPlanningDateLabel(dateKey);
+  document.getElementById('dayModalSub').textContent=`${list.length} ticket${list.length>1?'s':''}`;
+  const body=document.getElementById('dayModalBody');
+  body.innerHTML='';
+  const wrap=document.createElement('div');wrap.className='day-list';
+  if(!list.length){wrap.innerHTML='<div class="day-list-empty">Aucun ticket pour cette journée.</div>';}
+  list.forEach(t=>{
+    const b=document.createElement('button');
+    const classes=['day-list-ticket'];
+    if(isAvisArrivee(t))classes.push('arrival-event');
+    if(hasValidatedReception(t))classes.push('reception-validated');
+    b.className=classes.join(' ');b.type='button';
+    const title=document.createElement('div');title.className='day-list-ticket-title';title.textContent=planningEventText(t);
+    const meta=document.createElement('div');meta.className='day-list-ticket-meta';
+    const original=planningDate(t);
+    const type=isAvisArrivee(t)?"Avis d'arrivée":"Demande d'enlèvement";
+    meta.textContent=(original&&original!==dateKey)?`${type} · reporté depuis le ${original.split('-').reverse().join('/')}`:type;
+    b.appendChild(title);b.appendChild(meta);
+    b.addEventListener('click',()=>{closeDayModal();openTicket(t);});
+    wrap.appendChild(b);
+  });
+  body.appendChild(wrap);
+  const backdrop=document.getElementById('dayModalBackdrop');backdrop.classList.add('open');backdrop.setAttribute('aria-hidden','false');
+}
+function closeDayModal(){
+  const backdrop=document.getElementById('dayModalBackdrop');backdrop.classList.remove('open');backdrop.setAttribute('aria-hidden','true');
+}
+
 function renderPending(){
   const el=document.getElementById('pendingList');
   const list=tickets.filter(t=>isEnlevement(t)&&!isCancelled(t)&&!enlDate(t)&&matches(t));
@@ -1163,10 +1216,14 @@ function renderCalendar(){
     if(isWeekday(d)){
       const key=isoDate(d),day=document.createElement('div');day.className='day';
       if(d.getMonth()!==currentDate.getMonth())day.classList.add('other-month');if(key===today)day.classList.add('today');
+      const dayTickets=(g[key]||[]).sort((a,b)=>planningEventText(a).localeCompare(planningEventText(b)));
       const num=document.createElement('div');num.className=d.getMonth()!==currentDate.getMonth()?'day-number small':'day-number';
-      num.textContent=d.getDate()===1?d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'}):d.getDate();day.appendChild(num);
+      const numLabel=document.createElement('span');numLabel.textContent=d.getDate()===1?d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'}):d.getDate();num.appendChild(numLabel);
+      if(dayTickets.length){const count=document.createElement('span');count.className='day-count';count.textContent=`${dayTickets.length} ticket${dayTickets.length>1?'s':''}`;num.appendChild(count);}
+      day.appendChild(num);
+      day.addEventListener('click',()=>openDayModal(key,dayTickets));
       const eventsBox=document.createElement('div');eventsBox.className='day-events';day.appendChild(eventsBox);
-      (g[key]||[]).sort((a,b)=>planningEventText(a).localeCompare(planningEventText(b))).forEach(t=>{
+      dayTickets.forEach(t=>{
         const e=document.createElement('button');
         const classes=['event'];
         if(isAvisArrivee(t))classes.push('arrival-event');
@@ -1176,7 +1233,7 @@ function renderCalendar(){
         e.textContent=planningEventText(t);
         const original=planningDate(t);
         e.title=(original&&original!==key)?`${e.textContent} — reporté depuis le ${original.split('-').reverse().join('/')}`:e.textContent;
-        e.addEventListener('click',()=>openTicket(t));
+        e.addEventListener('click',ev=>{ev.stopPropagation();openTicket(t);});
         eventsBox.appendChild(e);
       });
       grid.appendChild(day);
@@ -1197,6 +1254,9 @@ document.getElementById('nextMonth').addEventListener('click',()=>{currentDate=n
 document.getElementById('todayBtn').addEventListener('click',()=>{currentDate=new Date();renderCalendar();});
 document.getElementById('refreshBtn').addEventListener('click',()=>{window.location.href='/reception';});
 document.getElementById('searchInput').addEventListener('input',e=>{searchTerm=e.target.value.trim();renderCalendar();});
+document.getElementById('dayModalClose').addEventListener('click',closeDayModal);
+document.getElementById('dayModalCloseBottom').addEventListener('click',closeDayModal);
+document.getElementById('dayModalBackdrop').addEventListener('click',e=>{if(e.target.id==='dayModalBackdrop')closeDayModal();});
 document.getElementById('ticketCancelBtn').addEventListener('click',async()=>{
   if(!openedTicket) return;
   const label=eventText(openedTicket);
@@ -1236,7 +1296,7 @@ document.getElementById('ticketSaveBtn').addEventListener('click',saveTicketEdit
 document.getElementById('ticketModalClose').addEventListener('click',closeTicket);
 document.getElementById('ticketModalCloseBottom').addEventListener('click',closeTicket);
 document.getElementById('ticketModalBackdrop').addEventListener('click',e=>{if(e.target.id==='ticketModalBackdrop')closeTicket();});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closeTicket();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDayModal();closeTicket();}});
 loadTickets();setInterval(loadTickets,30000);
 </script>
 </body>
