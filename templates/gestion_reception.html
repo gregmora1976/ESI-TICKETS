@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESI - Gestion réception</title>
+<title>ESI - Planning Dépôt</title>
 <link rel="icon" type="image/png" href="/static/logo.png">
 <style>
 :root{
@@ -37,7 +37,9 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .day-events::-webkit-scrollbar{width:8px}.day-events::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:999px}.day-events::-webkit-scrollbar-track{background:transparent}
 .event{display:block;width:100%;border:none;border-left:5px solid var(--event-border);background:var(--event);color:#111827;border-radius:3px;padding:6px 7px;margin:4px 0;font-size:13px;line-height:1.25;text-align:left;cursor:pointer;font-weight:800;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .event.arrival-event{background:#fef3c7;border-left-color:#d97706;color:#78350f}
-.event.reception-validated{background:#dcfce7;border-left-color:#16a34a;color:#166534}
+.event.reception-validated{background:#e5e7eb;border-left-color:#6b7280;color:#374151}
+.event.sortie-event{background:#ede9fe;border-left-color:#7c3aed;color:#5b21b6}
+.event.sortie-validated{background:#e5e7eb;border-left-color:#6b7280;color:#374151}
 .event:hover{filter:brightness(.97)}
 .legend{padding:10px 14px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#fff;border-top:1px solid var(--line)}
 .modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.42);display:none;align-items:center;justify-content:center;padding:20px;z-index:1000}.modal-backdrop.open{display:flex}
@@ -45,7 +47,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 .ticket-modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:18px 20px 14px;border-bottom:1px solid var(--line)}
 .ticket-modal-title{font-size:20px;font-weight:900}.ticket-modal-sub{margin-top:4px;color:var(--muted);font-size:13px}
 .modal-close{border:none;background:#f1f5f9;width:36px;height:36px;border-radius:10px;cursor:pointer;font-size:22px;line-height:1;color:#334155}
-.day-list{display:flex;flex-direction:column;gap:10px}.day-list-ticket{display:block;width:100%;border:1px solid var(--line);border-left:5px solid var(--event-border);background:#fff;border-radius:10px;padding:12px 14px;text-align:left;cursor:pointer}.day-list-ticket.arrival-event{background:#fffbeb;border-left-color:#d97706}.day-list-ticket.reception-validated{background:#f0fdf4;border-left-color:#16a34a}.day-list-ticket-title{font-size:14px;font-weight:900;color:#0f172a}.day-list-ticket-meta{margin-top:5px;font-size:12px;color:var(--muted)}.day-list-empty{padding:10px 0;color:var(--muted);font-size:13px}
+.day-list{display:flex;flex-direction:column;gap:10px}.day-list-ticket{display:block;width:100%;border:1px solid var(--line);border-left:5px solid var(--event-border);background:#fff;border-radius:10px;padding:12px 14px;text-align:left;cursor:pointer}.day-list-ticket.arrival-event{background:#fffbeb;border-left-color:#d97706}.day-list-ticket.reception-validated{background:#f3f4f6;border-left-color:#6b7280}.day-list-ticket.sortie-event{background:#f5f3ff;border-left-color:#7c3aed}.day-list-ticket.sortie-validated{background:#f3f4f6;border-left-color:#6b7280}.day-list-ticket-title{font-size:14px;font-weight:900;color:#0f172a}.day-list-ticket-meta{margin-top:5px;font-size:12px;color:var(--muted)}.day-list-empty{padding:10px 0;color:var(--muted);font-size:13px}
 .ticket-modal-body{padding:18px 20px 20px}.detail-grid{display:grid;grid-template-columns:170px 1fr;gap:10px 16px;align-items:start}
 .detail-label{color:var(--muted);font-size:13px;font-weight:800}.detail-value{font-weight:800;overflow-wrap:anywhere;white-space:pre-wrap}
 .section{margin-top:20px;padding:16px;border-radius:14px;border:1px solid var(--line);background:#f8fafc}
@@ -80,8 +82,8 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 <body>
 <div class="topbar">
   <div>
-    <div class="title">Gestion réception</div>
-    <div class="sub">Demandes d'enlèvement et avis d'arrivée classés par date</div>
+    <div class="title">Planning Dépôt</div>
+    <div class="sub">Réceptions et bons de sortie classés par date</div>
   </div>
   <div class="actions">
     <button class="btn" id="prevMonth" type="button">‹ Mois précédent</button>
@@ -106,7 +108,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
     <div class="week-head"><div>lundi</div><div>mardi</div><div>mercredi</div><div>jeudi</div><div>vendredi</div></div>
     <div class="month-grid" id="monthGrid"></div>
     <div class="legend">
-      <div>Affichage : demandes d'enlèvement + avis d'arrivée (jaune)</div>
+      <div>Affichage : réceptions à venir (jaune) · bons de sortie à venir (violet) · opérations validées (gris)</div>
       <div>Format : Client — Référence du bon</div>
     </div>
   </div>
@@ -237,22 +239,54 @@ function eventText(t){return `${val(client(t))} — ${val(bonRef(t))}`;}
 function matches(t){
   if(!searchTerm) return true;
   const refs=items(t).map(i=>`${i.reference||i.ref||''} ${i.designation||i.description||''}`).join(' ');
-  return `${t.id||''} ${client(t)} ${bonRef(t)} ${refs} ${JSON.stringify(extraction(t))} ${JSON.stringify(avisData(t))}`.toLowerCase().includes(searchTerm.toLowerCase());
+  return `${t.id||''} ${client(t)} ${bonRef(t)} ${refs} ${JSON.stringify(extraction(t))} ${JSON.stringify(avisData(t))} ${JSON.stringify(sortieData(t))}`.toLowerCase().includes(searchTerm.toLowerCase());
 }
 function isEnlevement(t){return t.module==="Demande d'enlèvement"||t.module==='Demande d’enlèvement'||String(t.id||'').startsWith('ENL-');}
 function isAvisArrivee(t){return t.module==="Avis d'arrivée"||t.module==='Avis d’arrivée'||String(t.id||'').startsWith('ARR-');}
+function isSortie(t){return t.module==='Bon de sortie'||t.module==='Sortie de stock'||t.module==='SORTIE'||String(t.id||'').startsWith('SOR-');}
+function sortieData(t){return t.sortie||t.bonSortie||t.bon_sortie||{};}
+function sortieDate(t){const s=sortieData(t);const v=String(s.date_sortie_prevue||s.date_sortie||t.dateSortie||t.dateEmballage||'').trim();return /^\d{4}-\d{2}-\d{2}$/.test(v)?v:'';}
+function isSortieFinalisee(t){const s=sortieData(t);const st=String(t.status||'').trim().toLowerCase();return s.validee===true||s.sortie_validee===true||!!s.sortie_validee_le||!!s.date_validation||st.includes('termine')||st.includes('valid');}
 function avisData(t){return t.avisArrivee||t.avis_arrivee||{};}
 function avisDate(t){
   const a=avisData(t);
   const v=String(a.date_reception_prevue||t.date_reception_prevue||t.dateEmballage||'').trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(v)?v:'';
 }
-function planningDate(t){return isAvisArrivee(t)?avisDate(t):enlDate(t);}
+function planningDate(t){if(isSortie(t)) return sortieDate(t); return isAvisArrivee(t)?avisDate(t):enlDate(t);}
 
 // Une réception passée mais pas totalement finalisée reste visible aujourd'hui.
 // Dès qu'elle est entièrement réceptionnée, elle retrouve sa date prévue d'origine.
 function isReceptionFinalisee(t){
   let its=[];
+  if(isSortie(t)){
+    const s=sortieData(t);
+    document.getElementById('ticketModalTitle').textContent='Bon de sortie';
+    document.getElementById('ticketModalSub').textContent=`${val(s.dossier||t.dossier)} — ${val(s.client||t.preteur||'')}`;
+    const elems=Array.isArray(s.elements)?s.elements:(Array.isArray(s.items)?s.items:[]);
+    let html=`<div class="detail-grid">
+      <div class="detail-label">N° dossier</div><div class="detail-value">${esc(val(s.dossier||t.dossier))}</div>
+      <div class="detail-label">Client</div><div class="detail-value">${esc(val(s.client||t.preteur))}</div>
+      <div class="detail-label">Projet / expo</div><div class="detail-value">${esc(val(s.projet||t.expo||t.objet))}</div>
+      <div class="detail-label">Chargé de projet</div><div class="detail-value">${esc(val(s.charge_projet||t.chargeProjet))}</div>
+      <div class="detail-label">Date de sortie prévue</div><div class="detail-value">${esc(val(sortieDate(t)))}</div>
+      <div class="detail-label">Destination</div><div class="detail-value">${esc(val(s.destination||s.adresse_destination))}</div>
+      <div class="detail-label">Transporteur</div><div class="detail-value">${esc(val(s.transporteur))}</div>
+      <div class="detail-label">Statut</div><div class="detail-value">${esc(isSortieFinalisee(t)?'Sortie validée':'À sortir')}</div>
+    </div>`;
+    html+=`<div class="section"><div class="section-title">Éléments à sortir</div>`;
+    if(elems.length){html+=`<table class="items-table"><thead><tr><th>N° ESI</th><th>Type</th><th>Référence</th><th>Description</th></tr></thead><tbody>`;elems.forEach(i=>{html+=`<tr><td>${esc(val(i.esi_id||i.esi))}</td><td>${esc(val(i.categorie_metier||i.type||i.type_objet))}</td><td>${esc(val(i.reference))}</td><td>${esc(val(i.description||i.designation))}</td></tr>`});html+='</tbody></table>';}else html+='<div>Aucun élément renseigné.</div>';html+='</div>';
+    document.getElementById('ticketModalBody').innerHTML=html;
+    document.getElementById('ticketEditBtn').style.display='none';
+    document.getElementById('ticketReceptionBtn').style.display='none';
+    document.getElementById('ticketDeliveryBtn').style.display='none';
+    document.getElementById('ticketSaveBtn').style.display='none';
+    document.getElementById('ticketEditCancelBtn').style.display='none';
+    document.getElementById('ticketModalCloseBottom').style.display='inline-block';
+    document.getElementById('ticketCancelBtn').style.display='none';
+    return;
+  }
+
   if(isAvisArrivee(t)){
     const a=avisData(t);
     its=Array.isArray(a.items)?a.items:[];
@@ -271,10 +305,12 @@ function planningDisplayDate(t){
   const original=planningDate(t);
   if(!original) return '';
   const today=isoDate(new Date());
-  if(original<today && !isReceptionFinalisee(t)) return today;
+  const finalisee=isSortie(t)?isSortieFinalisee(t):isReceptionFinalisee(t);
+  if(original<today && !finalisee) return today;
   return original;
 }
 function planningEventText(t){
+  if(isSortie(t)){const s=sortieData(t);return `SORTIE - ${val(s.dossier||t.dossier)} - ${val(s.client||t.preteur||'')} - ${val(s.destination||s.adresse_destination||'')}`;}
   if(isAvisArrivee(t)){
     const a=avisData(t);
     return `${val(a.dossier_ref||t.dossier)} - ${val(a.client)} - ${val(a.projet||t.expo||t.objet)}`;
@@ -1176,13 +1212,13 @@ function openDayModal(dateKey, dayTickets){
   list.forEach(t=>{
     const b=document.createElement('button');
     const classes=['day-list-ticket'];
-    if(isAvisArrivee(t))classes.push('arrival-event');
-    if(hasValidatedReception(t))classes.push('reception-validated');
+    if(isSortie(t)){classes.push(isSortieFinalisee(t)?'sortie-validated':'sortie-event');}
+    else { if(isAvisArrivee(t))classes.push('arrival-event'); if(hasValidatedReception(t))classes.push('reception-validated'); }
     b.className=classes.join(' ');b.type='button';
     const title=document.createElement('div');title.className='day-list-ticket-title';title.textContent=planningEventText(t);
     const meta=document.createElement('div');meta.className='day-list-ticket-meta';
     const original=planningDate(t);
-    const type=isAvisArrivee(t)?"Avis d'arrivée":"Demande d'enlèvement";
+    const type=isSortie(t)?'Bon de sortie':(isAvisArrivee(t)?"Avis d'arrivée":"Demande d'enlèvement");
     meta.textContent=(original&&original!==dateKey)?`${type} · reporté depuis le ${original.split('-').reverse().join('/')}`:type;
     b.appendChild(title);b.appendChild(meta);
     b.addEventListener('click',()=>{closeDayModal();openTicket(t);});
@@ -1204,7 +1240,7 @@ function renderPending(){
 }
 function grouped(){
   const g={};
-  tickets.filter(t=>(isEnlevement(t)||isAvisArrivee(t))&&!isCancelled(t)&&planningDate(t)&&matches(t))
+  tickets.filter(t=>(isEnlevement(t)||isAvisArrivee(t)||isSortie(t))&&!isCancelled(t)&&planningDate(t)&&matches(t))
     .forEach(t=>{const d=planningDisplayDate(t);if(d)(g[d]??=[]).push(t);});
   return g;
 }
@@ -1226,8 +1262,8 @@ function renderCalendar(){
       dayTickets.forEach(t=>{
         const e=document.createElement('button');
         const classes=['event'];
-        if(isAvisArrivee(t))classes.push('arrival-event');
-        if(hasValidatedReception(t))classes.push('reception-validated');
+        if(isSortie(t)){classes.push(isSortieFinalisee(t)?'sortie-validated':'sortie-event');}
+        else { if(isAvisArrivee(t))classes.push('arrival-event'); if(hasValidatedReception(t))classes.push('reception-validated'); }
         e.className=classes.join(' ');
         e.type='button';
         e.textContent=planningEventText(t);
