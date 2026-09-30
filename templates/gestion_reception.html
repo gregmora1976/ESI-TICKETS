@@ -82,7 +82,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 <body>
 <div class="topbar">
   <div>
-    <div class="title">Planning Dépôt</div>
+    <div class="title">PLANNING DÉPÔT</div>
     <div class="sub">Réceptions et bons de sortie classés par date</div>
   </div>
   <div class="actions">
@@ -145,6 +145,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
       <div class="edit-actions">
         <button class="btn primary" id="ticketReceptionBtn" type="button" style="display:none">RECEPTION</button>
         <button class="btn delivery" id="ticketDeliveryBtn" type="button">Bon de réception</button>
+        <button class="btn delivery" id="ticketSortieBtn" type="button" style="display:none">VALIDER LA SORTIE</button>
         <button class="btn" id="ticketEditBtn" type="button">Modifier</button>
         <button class="btn success" id="ticketSaveBtn" type="button" style="display:none">Enregistrer</button>
         <button class="btn" id="ticketEditCancelBtn" type="button" style="display:none">Annuler les modifications</button>
@@ -243,50 +244,22 @@ function matches(t){
 }
 function isEnlevement(t){return t.module==="Demande d'enlèvement"||t.module==='Demande d’enlèvement'||String(t.id||'').startsWith('ENL-');}
 function isAvisArrivee(t){return t.module==="Avis d'arrivée"||t.module==='Avis d’arrivée'||String(t.id||'').startsWith('ARR-');}
-function isSortie(t){return t.module==='Bon de sortie'||t.module==='Sortie de stock'||t.module==='SORTIE'||String(t.id||'').startsWith('SOR-');}
-function sortieData(t){return t.sortie||t.bonSortie||t.bon_sortie||{};}
-function sortieDate(t){const s=sortieData(t);const v=String(s.date_sortie_prevue||s.date_sortie||t.dateSortie||t.dateEmballage||'').trim();return /^\d{4}-\d{2}-\d{2}$/.test(v)?v:'';}
-function isSortieFinalisee(t){const s=sortieData(t);const st=String(t.status||'').trim().toLowerCase();return s.validee===true||s.sortie_validee===true||!!s.sortie_validee_le||!!s.date_validation||st.includes('termine')||st.includes('valid');}
+function isSortie(t){return t.module==='Sortie de stock'||String(t.id||'').startsWith('SOR-');}
+function sortieData(t){return t.sortieStock||t.sortie||t.bonSortie||t.bon_sortie||{};}
+function sortieDate(t){const s=sortieData(t);const v=String(s.date_sortie_prevue||s.date_sortie||t.dateRdv||t.dateSortie||'').trim();return /^\d{4}-\d{2}-\d{2}$/.test(v)?v:'';}
+function isSortieFinalisee(t){const s=sortieData(t);const st=String(t.status||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');return s.validee===true||s.sortie_validee===true||!!s.sortie_validee_le||st.includes('termine')||st.includes('valid');}
 function avisData(t){return t.avisArrivee||t.avis_arrivee||{};}
 function avisDate(t){
   const a=avisData(t);
   const v=String(a.date_reception_prevue||t.date_reception_prevue||t.dateEmballage||'').trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(v)?v:'';
 }
-function planningDate(t){if(isSortie(t)) return sortieDate(t); return isAvisArrivee(t)?avisDate(t):enlDate(t);}
+function planningDate(t){return isSortie(t)?sortieDate(t):(isAvisArrivee(t)?avisDate(t):enlDate(t));}
 
 // Une réception passée mais pas totalement finalisée reste visible aujourd'hui.
 // Dès qu'elle est entièrement réceptionnée, elle retrouve sa date prévue d'origine.
 function isReceptionFinalisee(t){
   let its=[];
-  if(isSortie(t)){
-    const s=sortieData(t);
-    document.getElementById('ticketModalTitle').textContent='Bon de sortie';
-    document.getElementById('ticketModalSub').textContent=`${val(s.dossier||t.dossier)} — ${val(s.client||t.preteur||'')}`;
-    const elems=Array.isArray(s.elements)?s.elements:(Array.isArray(s.items)?s.items:[]);
-    let html=`<div class="detail-grid">
-      <div class="detail-label">N° dossier</div><div class="detail-value">${esc(val(s.dossier||t.dossier))}</div>
-      <div class="detail-label">Client</div><div class="detail-value">${esc(val(s.client||t.preteur))}</div>
-      <div class="detail-label">Projet / expo</div><div class="detail-value">${esc(val(s.projet||t.expo||t.objet))}</div>
-      <div class="detail-label">Chargé de projet</div><div class="detail-value">${esc(val(s.charge_projet||t.chargeProjet))}</div>
-      <div class="detail-label">Date de sortie prévue</div><div class="detail-value">${esc(val(sortieDate(t)))}</div>
-      <div class="detail-label">Destination</div><div class="detail-value">${esc(val(s.destination||s.adresse_destination))}</div>
-      <div class="detail-label">Transporteur</div><div class="detail-value">${esc(val(s.transporteur))}</div>
-      <div class="detail-label">Statut</div><div class="detail-value">${esc(isSortieFinalisee(t)?'Sortie validée':'À sortir')}</div>
-    </div>`;
-    html+=`<div class="section"><div class="section-title">Éléments à sortir</div>`;
-    if(elems.length){html+=`<table class="items-table"><thead><tr><th>N° ESI</th><th>Type</th><th>Référence</th><th>Description</th></tr></thead><tbody>`;elems.forEach(i=>{html+=`<tr><td>${esc(val(i.esi_id||i.esi))}</td><td>${esc(val(i.categorie_metier||i.type||i.type_objet))}</td><td>${esc(val(i.reference))}</td><td>${esc(val(i.description||i.designation))}</td></tr>`});html+='</tbody></table>';}else html+='<div>Aucun élément renseigné.</div>';html+='</div>';
-    document.getElementById('ticketModalBody').innerHTML=html;
-    document.getElementById('ticketEditBtn').style.display='none';
-    document.getElementById('ticketReceptionBtn').style.display='none';
-    document.getElementById('ticketDeliveryBtn').style.display='none';
-    document.getElementById('ticketSaveBtn').style.display='none';
-    document.getElementById('ticketEditCancelBtn').style.display='none';
-    document.getElementById('ticketModalCloseBottom').style.display='inline-block';
-    document.getElementById('ticketCancelBtn').style.display='none';
-    return;
-  }
-
   if(isAvisArrivee(t)){
     const a=avisData(t);
     its=Array.isArray(a.items)?a.items:[];
@@ -310,7 +283,7 @@ function planningDisplayDate(t){
   return original;
 }
 function planningEventText(t){
-  if(isSortie(t)){const s=sortieData(t);return `SORTIE - ${val(s.dossier||t.dossier)} - ${val(s.client||t.preteur||'')} - ${val(s.destination||s.adresse_destination||'')}`;}
+  if(isSortie(t)){const s=sortieData(t);return `SORTIE - ${val(s.dossier||t.dossier)} - ${val(s.client||t.preteur||'')} - ${val(s.destination||'')}`;}
   if(isAvisArrivee(t)){
     const a=avisData(t);
     return `${val(a.dossier_ref||t.dossier)} - ${val(a.client)} - ${val(a.projet||t.expo||t.objet)}`;
@@ -369,6 +342,42 @@ function editControl(key,value,multiline=false){
 function renderTicketModal(editing=false){
   if(!openedTicket) return;
   const t=openedTicket, its=items(t);
+
+  if(isSortie(t)){
+    const s=sortieData(t);
+    const selected=Array.isArray(s.esi_ids)?s.esi_ids:[];
+    document.getElementById('ticketModalTitle').textContent='Bon de sortie';
+    document.getElementById('ticketModalSub').textContent=`${val(s.dossier||t.dossier)} — ${val(s.client||t.preteur||'')}`;
+    let html=`<div class="detail-grid">
+      <div class="detail-label">N° bon</div><div class="detail-value">${esc(val(t.id))}</div>
+      <div class="detail-label">N° dossier</div><div class="detail-value">${esc(val(s.dossier||t.dossier))}</div>
+      <div class="detail-label">Client</div><div class="detail-value">${esc(val(s.client||t.preteur))}</div>
+      <div class="detail-label">Projet / expo</div><div class="detail-value">${esc(val(s.projet||t.expo||t.objet))}</div>
+      <div class="detail-label">Chargé de projet</div><div class="detail-value">${esc(val(s.charge_projet||t.chargeProjet))}</div>
+      <div class="detail-label">Date de sortie prévue</div><div class="detail-value">${esc(val(sortieDate(t)))}</div>
+      <div class="detail-label">Heure</div><div class="detail-value">${esc(val(s.heure_sortie||t.heureRdv))}</div>
+      <div class="detail-label">Type de sortie</div><div class="detail-value">${esc(val(s.type_sortie))}</div>
+      <div class="detail-label">Destination</div><div class="detail-value">${esc(val(s.destination||t.lieuRdv))}</div>
+      <div class="detail-label">Transporteur</div><div class="detail-value">${esc(val(s.transporteur))}</div>
+      <div class="detail-label">Validée par</div><div class="detail-value">${esc(val(s.validee_par))}</div>
+      <div class="detail-label">Sortie réelle</div><div class="detail-value">${esc(val(s.date_sortie_reelle||s.sortie_validee_le))}</div>
+      <div class="detail-label">Statut</div><div class="detail-value">${esc(isSortieFinalisee(t)?'SORTIE VALIDÉE':'À SORTIR')}</div>
+    </div>`;
+    html+=`<div class="section"><div class="section-title">Éléments prévus à la sortie</div>`;
+    if(selected.length){html+=`<div style="display:flex;gap:7px;flex-wrap:wrap">${selected.map(x=>`<span style="background:#ede9fe;color:#5b21b6;border-radius:999px;padding:7px 10px;font-size:12px;font-weight:900">${esc(x)}</span>`).join('')}</div>`;}else html+='<div>Aucun élément renseigné.</div>';
+    html+=`</div>`;
+    if(isSortieFinalisee(t)) html+=`<div class="section" style="background:#f3f4f6;border-color:#d1d5db"><div class="section-title">Sortie terminée</div><div style="font-weight:900;color:#374151">La sortie physique a été validée et les éléments sont passés au statut SORTI dans la Base Articles.</div></div>`;
+    document.getElementById('ticketModalBody').innerHTML=html;
+    document.getElementById('ticketEditBtn').style.display='none';
+    document.getElementById('ticketReceptionBtn').style.display='none';
+    document.getElementById('ticketDeliveryBtn').style.display='none';
+    document.getElementById('ticketSortieBtn').style.display=isSortieFinalisee(t)?'none':'inline-block';
+    document.getElementById('ticketSaveBtn').style.display='none';
+    document.getElementById('ticketEditCancelBtn').style.display='none';
+    document.getElementById('ticketModalCloseBottom').style.display='inline-block';
+    document.getElementById('ticketCancelBtn').style.display='none';
+    return;
+  }
 
   if(isAvisArrivee(t)){
     const a=avisData(t), exp=a.expediteur||{}, tr=a.transporteur||{}, aitems=Array.isArray(a.items)?a.items:[];
@@ -470,6 +479,7 @@ function renderTicketModal(editing=false){
     document.getElementById('ticketEditBtn').style.display='none';
     document.getElementById('ticketReceptionBtn').style.display=arrivalAllReceived?'none':'inline-block';
     document.getElementById('ticketDeliveryBtn').style.display='none';
+    document.getElementById('ticketSortieBtn').style.display='none';
     document.getElementById('ticketSaveBtn').style.display='none';
     document.getElementById('ticketEditCancelBtn').style.display='none';
     document.getElementById('ticketModalCloseBottom').style.display='inline-block';
@@ -580,6 +590,7 @@ function renderTicketModal(editing=false){
   document.getElementById('ticketReceptionBtn').style.display='none';
   document.getElementById('ticketEditBtn').style.display=editing?'none':'inline-block';
   document.getElementById('ticketDeliveryBtn').style.display=(editing||allItemsReceived)?'none':'inline-block';
+  document.getElementById('ticketSortieBtn').style.display='none';
   document.getElementById('ticketSaveBtn').style.display=editing?'inline-block':'none';
   document.getElementById('ticketEditCancelBtn').style.display=editing?'inline-block':'none';
   document.getElementById('ticketModalCloseBottom').style.display=editing?'none':'inline-block';
@@ -1212,8 +1223,8 @@ function openDayModal(dateKey, dayTickets){
   list.forEach(t=>{
     const b=document.createElement('button');
     const classes=['day-list-ticket'];
-    if(isSortie(t)){classes.push(isSortieFinalisee(t)?'sortie-validated':'sortie-event');}
-    else { if(isAvisArrivee(t))classes.push('arrival-event'); if(hasValidatedReception(t))classes.push('reception-validated'); }
+    if(isSortie(t)) classes.push(isSortieFinalisee(t)?'sortie-validated':'sortie-event');
+    else { if(isAvisArrivee(t))classes.push('arrival-event'); if(isReceptionFinalisee(t))classes.push('reception-validated'); }
     b.className=classes.join(' ');b.type='button';
     const title=document.createElement('div');title.className='day-list-ticket-title';title.textContent=planningEventText(t);
     const meta=document.createElement('div');meta.className='day-list-ticket-meta';
@@ -1262,8 +1273,8 @@ function renderCalendar(){
       dayTickets.forEach(t=>{
         const e=document.createElement('button');
         const classes=['event'];
-        if(isSortie(t)){classes.push(isSortieFinalisee(t)?'sortie-validated':'sortie-event');}
-        else { if(isAvisArrivee(t))classes.push('arrival-event'); if(hasValidatedReception(t))classes.push('reception-validated'); }
+        if(isSortie(t)) classes.push(isSortieFinalisee(t)?'sortie-validated':'sortie-event');
+        else { if(isAvisArrivee(t))classes.push('arrival-event'); if(isReceptionFinalisee(t))classes.push('reception-validated'); }
         e.className=classes.join(' ');
         e.type='button';
         e.textContent=planningEventText(t);
@@ -1316,7 +1327,33 @@ document.getElementById('ticketCancelBtn').addEventListener('click',async()=>{
     btn.textContent='Annuler le ticket';
   }
 });
+
+async function validateSortiePhysique(){
+  if(!openedTicket||!isSortie(openedTicket))return;
+  if(isSortieFinalisee(openedTicket)){alert('Cette sortie est déjà validée.');return;}
+  const operateur=window.prompt('Nom et prénom de la personne qui valide la sortie physique :','');
+  if(operateur===null)return;
+  if(!String(operateur||'').trim()){alert('Le nom de la personne qui valide la sortie est obligatoire.');return;}
+  const s=sortieData(openedTicket);
+  const count=Array.isArray(s.esi_ids)?s.esi_ids.length:0;
+  if(!window.confirm(`Confirmer la sortie physique de ${count} élément${count>1?'s':''} sélectionné${count>1?'s':''} ?\n\nLes Articles / Pré-Packings / Packings concernés passeront au statut SORTI.`))return;
+  const btn=document.getElementById('ticketSortieBtn');
+  btn.disabled=true;btn.textContent='Validation...';
+  try{
+    const ticketId=openedTicket.id;
+    const res=await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/valider-sortie`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({validee_par:String(operateur).trim()})});
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok||!data.ok)throw new Error(data.error||'Impossible de valider la sortie');
+    await loadTickets();
+    const refreshed=tickets.find(t=>t.id===ticketId);
+    if(refreshed){openedTicket=refreshed;renderTicketModal(false);}
+    alert(`Sortie validée.\n${data.elements_sortis||0} élément(s) mis à jour dans la Base Articles.`);
+  }catch(e){alert(e.message||'Impossible de valider la sortie');}
+  finally{btn.disabled=false;btn.textContent='VALIDER LA SORTIE';}
+}
+
 document.getElementById('ticketReceptionBtn').addEventListener('click',openReceptionModal);
+document.getElementById('ticketSortieBtn').addEventListener('click',validateSortiePhysique);
 document.getElementById('receptionModalClose').addEventListener('click',closeReceptionModal);
 document.getElementById('receptionCancelBtn').addEventListener('click',closeReceptionModal);
 document.getElementById('receptionValidateBtn').addEventListener('click',validateArrivalReception);
