@@ -9286,6 +9286,11 @@ def reception():
     return render_template('reception.html')
 
 
+@app.route('/bon-sortie')
+def bon_sortie():
+    return render_template('bon_sortie.html')
+
+
 @app.route('/gestion-reception')
 def gestion_reception():
     return render_template('gestion_reception.html')
@@ -9594,6 +9599,7 @@ def api_create_ticket():
         'Demande d\'enlevement': 'ENL',
         "Avis d'arrivée": 'ARR',
         'Mise en caisse': 'MEC',
+        'Sortie de stock': 'SOR',
     }
     prefix = prefixes.get(module, 'AV')
 
@@ -9601,8 +9607,10 @@ def api_create_ticket():
     is_enlevement = module in ("Demande d'enlèvement", "Demande d'enlevement")
     is_avis_arrivee = module == "Avis d'arrivée"
     is_mise_en_caisse = module == 'Mise en caisse'
+    is_sortie_stock = module == 'Sortie de stock'
     avis_arrivee = None
     mise_en_caisse = None
+    sortie_stock = None
     enlevement_analyse = None
     article_selections = []
     enlevement_dossier = _as_text(form.get('numeroDossier') or form.get('dossier')).strip() if is_enlevement else ''
@@ -9639,6 +9647,27 @@ def api_create_ticket():
         except Exception as e:
             print(f"[MISE EN CAISSE] Validation impossible: {e}")
             return jsonify({'ok': False, 'error': str(e)}), 500
+
+    if is_sortie_stock:
+        raw_sortie = form.get('sortieStock', '')
+        try:
+            sortie_stock = json.loads(raw_sortie) if raw_sortie else {}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'Données du bon de sortie invalides.'}), 400
+        if not isinstance(sortie_stock, dict):
+            return jsonify({'ok': False, 'error': 'Données du bon de sortie invalides.'}), 400
+        required_sortie = {
+            'dossier': 'N° dossier',
+            'date_sortie_prevue': 'Date de sortie prévue',
+            'type_sortie': 'Type de sortie',
+        }
+        missing_sortie = [label for key, label in required_sortie.items() if not _as_text(sortie_stock.get(key)).strip()]
+        if missing_sortie:
+            return jsonify({'ok': False, 'error': 'Champ(s) obligatoire(s) manquant(s) : ' + ', '.join(missing_sortie)}), 400
+        selected_ids = list(dict.fromkeys(_as_text(x).strip() for x in (sortie_stock.get('esi_ids') or []) if _as_text(x).strip()))
+        if not selected_ids:
+            return jsonify({'ok': False, 'error': 'Sélectionne au moins un élément à sortir.'}), 400
+        sortie_stock['esi_ids'] = selected_ids
 
     if is_avis_arrivee:
         raw_avis = form.get('avisArrivee', '')
@@ -9705,6 +9734,20 @@ def api_create_ticket():
         'files': [],
         'managerSheets': []
     }
+
+    if is_sortie_stock and sortie_stock:
+        ticket['sortieStock'] = sortie_stock
+        ticket['dossier'] = _as_text(sortie_stock.get('dossier')).strip() or ticket['dossier']
+        ticket['preteur'] = _as_text(sortie_stock.get('client')).strip() or ticket['preteur']
+        ticket['expo'] = _as_text(sortie_stock.get('projet')).strip() or ticket['expo']
+        ticket['objet'] = _as_text(sortie_stock.get('projet')).strip() or ticket['objet']
+        ticket['chargeProjet'] = _as_text(sortie_stock.get('charge_projet')).strip() or ticket['chargeProjet']
+        ticket['dateRdv'] = _as_text(sortie_stock.get('date_sortie_prevue')).strip() or ticket['dateRdv']
+        ticket['heureRdv'] = _as_text(sortie_stock.get('heure_sortie')).strip() or ticket['heureRdv']
+        ticket['lieuRdv'] = _as_text(sortie_stock.get('destination')).strip() or ticket['lieuRdv']
+        ticket['contactRdv'] = _as_text(sortie_stock.get('contact_destinataire')).strip() or ticket['contactRdv']
+        ticket['commentaire'] = _as_text(sortie_stock.get('notes')).strip() or ticket['commentaire']
+        ticket['ref'] = _as_text(sortie_stock.get('reference_transport')).strip() or ticket['ref']
 
     if is_enlevement and enlevement_dossier:
         # Pour les nouveaux bons d'enlèvement, dossier contient bien le N° dossier.
