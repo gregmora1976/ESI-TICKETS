@@ -894,6 +894,13 @@ def _article_row_to_public(row):
         else:
             category = "ARTICLE"
     row["categorie_metier"] = category
+
+    # Un element physiquement sorti n'est plus considere comme stocke dans l'entrepot.
+    # Cette normalisation rend aussi coherents les anciens enregistrements de sortie
+    # qui conservaient encore la destination dans lieu_stockage.
+    if _as_text(row.get("statut_logistique")).strip().casefold() == "sorti":
+        row["lieu_stockage"] = "SORTI"
+
     return row
 
 
@@ -4676,6 +4683,91 @@ def api_article_detail(esi_id):
             detail["receptions"] = _article_reception_history_from_ticket(ticket, article)
 
     raw = article_raw
+
+    # Historique unifie des mouvements de l'element. On conserve les sources historiques
+    # existantes dans raw_json et on les expose sous une forme commune pour la carte d'identite.
+    mouvements = []
+
+    def _movement_date(value):
+        return _as_text(value).strip()
+
+    # Receptions connues (detail["receptions"] sera complete juste apres avec raw_json).
+    # Elles sont ajoutees au tableau unifie apres la consolidation des receptions.
+
+    for entry in raw.get('modifications_colis') or []:
+        if not isinstance(entry, dict):
+            continue
+        colis = _as_text(entry.get('colis')).strip()
+        mouvements.append({
+            'type': 'PRE-PACKING' if colis else 'RETRAIT PRE-PACKING',
+            'date': _movement_date(entry.get('date')),
+            'reference': colis,
+            'description': (f'Affectation au Pré-Packing {colis}' if colis else 'Retrait du Pré-Packing'),
+            'lieu_stockage': '',
+            'operateur': '',
+            'ticket_id': '',
+        })
+
+    for entry in raw.get('mise_en_caisse_history') or []:
+        if not isinstance(entry, dict):
+            continue
+        packing_ref = _as_text(entry.get('packing_reference')).strip()
+        mouvements.append({
+            'type': 'PACKING',
+            'date': _movement_date(entry.get('date')),
+            'reference': packing_ref,
+            'description': (f'Mise en Packing {packing_ref}' if packing_ref else 'Mise en Packing'),
+            'lieu_stockage': '',
+            'operateur': '',
+            'ticket_id': _as_text(entry.get('ticket_id')).strip(),
+        })
+
+    for entry in raw.get('dissociation_history') or []:
+        if not isinstance(entry, dict):
+            continue
+        action = _as_text(entry.get('action')).strip()
+        if action == 'dissociation_prepacking':
+            label = 'RETRAIT PRE-PACKING'
+            ref = _as_text(entry.get('prepacking')).strip()
+            desc = f'Retrait du Pré-Packing {ref}' if ref else 'Retrait du Pré-Packing'
+        elif action == 'dissociation_packing':
+            label = 'RETRAIT PACKING'
+            ref = _as_text(entry.get('packing')).strip()
+            desc = f'Retrait du Packing {ref}' if ref else 'Retrait du Packing'
+        elif action == 'dissociation_prepacking_packing':
+            label = 'RETRAIT PACKING'
+            ref = _as_text(entry.get('packing')).strip()
+            pre = _as_text(entry.get('prepacking')).strip()
+            desc = f'Pré-Packing {pre} retiré du Packing {ref}'.strip()
+        else:
+            label = 'MOUVEMENT'
+            ref = ''
+            desc = action.replace('_', ' ').strip().capitalize() or 'Modification logistique'
+        mouvements.append({
+            'type': label,
+            'date': _movement_date(entry.get('date')),
+            'reference': ref,
+            'description': desc,
+            'lieu_stockage': '',
+            'operateur': '',
+            'ticket_id': '',
+        })
+
+    for entry in raw.get('sorties') or []:
+        if not isinstance(entry, dict):
+            continue
+        destination = _as_text(entry.get('destination')).strip()
+        type_sortie = _as_text(entry.get('type_sortie')).strip()
+        mouvements.append({
+            'type': 'SORTIE',
+            'date': _movement_date(entry.get('date')),
+            'reference': _as_text(entry.get('ticket_id')).strip(),
+            'description': 'Sortie physique' + (f' — {type_sortie}' if type_sortie else ''),
+            'lieu_stockage': destination,
+            'operateur': _as_text(entry.get('validee_par')).strip(),
+            'ticket_id': _as_text(entry.get('ticket_id')).strip(),
+        })
+
     raw_receptions = raw.get("receptions") or []
     if raw_receptions:
         known_refs = {str(x.get("reference") or "") for x in detail["receptions"]}
@@ -4699,6 +4791,50 @@ def api_article_detail(esi_id):
                 "quantite": "1",
                 "files": [],
             })
+
+    # Ajoute toutes les receptions consolidees dans l'historique unifie.
+    for rec in detail.get('receptions') or []:
+        if not isinstance(rec, dict):
+            continue
+        mouvements.append({
+            'type': 'RÉCEPTION',
+            'date': _movement_date(rec.get('date') or rec.get('date_affichee')),
+            'reference': _as_text(rec.get('reference')).strip(),
+            'description': 'Réception physique',
+            'lieu_stockage': _as_text(rec.get('lieu_stockage')).strip(),
+            'operateur': _as_text(rec.get('receptionne_par')).strip(),
+            'ticket_id': '',
+            'prepacking': ', '.join(_as_text(x).strip() for x in (rec.get('colis') or []) if _as_text(x).strip()),
+            'type_prepacking': _display_prepacking_type(rec.get('type_colis')),
+        })
+
+    # Supprime les doublons exacts tout en conservant tous les mouvements distincts.
+    unique_movements = []
+    seen_movements = set()
+    for movement in mouvements:
+        key = (
+            _as_text(movement.get('type')).strip(),
+            _as_text(movement.get('date')).strip(),
+            _as_text(movement.get('reference')).strip(),
+            _as_text(movement.get('description')).strip(),
+            _as_text(movement.get('lieu_stockage')).strip(),
+        )
+        if key in seen_movements:
+            continue
+        seen_movements.add(key)
+        unique_movements.append(movement)
+
+    def _movement_sort_key(item):
+        value = _as_text(item.get('date')).strip()
+        if not value:
+            return ''
+        try:
+            return datetime.fromisoformat(value.replace('Z', '+00:00')).isoformat()
+        except Exception:
+            return value
+
+    unique_movements.sort(key=_movement_sort_key, reverse=True)
+    detail['mouvements'] = unique_movements
 
     return jsonify(detail)
 
@@ -13960,8 +14096,8 @@ def _apply_sortie_to_articles(ticket, validee_par=''):
         raw['article_fields'] = extra
 
         patch = {
-            'statut_logistique': 'Sorti',
-            'lieu_stockage': destination,
+            'statut_logistique': 'SORTI',
+            'lieu_stockage': 'SORTI',
             'updated_at': now,
             'raw_json': raw,
         }
