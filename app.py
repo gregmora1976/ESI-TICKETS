@@ -7354,29 +7354,49 @@ def _extract_reception_pdf(pdf_bytes):
             bl_date = m.group(2)
 
     # Extrait toutes les références de Packing sur toutes les pages.
-    # Exemples OCR observés : V/Cde, VICde, ViICde, V1ICde.
+    # Les bordereaux fournisseurs sont souvent des scans : Tesseract peut ajouter
+    # une parenthèse après V/Cde, lire "Cde" comme "Cdé", ou dégrader un chiffre.
+    # On combine donc :
+    #   1) la ligne V/Cde, plus tolérante aux parasites OCR ;
+    #   2) un secours sur les références dossier/numéro imprimées seules sous chaque ligne.
     refs = []
     seen = set()
+
+    def _add_reception_ref(dossier, numero, numero_pdf=None):
+        dossier = _as_text(dossier).strip()
+        numero_raw = _as_text(numero).strip()
+        if not dossier or not numero_raw:
+            return
+        numero_norm = _normalise_numero_caisse(numero_raw)
+        key = (dossier, numero_norm)
+        if key in seen:
+            return
+        seen.add(key)
+        refs.append({
+            "dossier": dossier,
+            "numero": numero_norm,
+            "numero_pdf": _as_text(numero_pdf if numero_pdf is not None else numero_raw).strip()
+        })
+
     packing_pattern = re.compile(
-        r"V\s*[/|Il1i\-]{0,4}\s*Cde\s*[:;]?\s*([A-Za-z0-9_-]+)\s*/\s*([0-9]+)",
+        r"V\s*[/|Il1i\-]{0,4}\s*Cd[eé]\s*[:;]?\s*[\(\[\{]?\s*[/\\]?\s*"
+        r"([0-9]{5,})\s*/\s*([0-9]{1,3})(?![0-9A-Za-zÀ-ÿ])",
         flags=re.IGNORECASE
     )
 
     for dossier, numero in packing_pattern.findall(text):
-        dossier = dossier.strip()
-        numero_norm = _normalise_numero_caisse(numero)
-        key = (dossier, numero_norm)
-        if key not in seen:
-            seen.add(key)
-            refs.append({
-                "dossier": dossier,
-                "numero": numero_norm,
-                "numero_pdf": numero.strip()
-            })
+        _add_reception_ref(dossier, numero, numero)
+
+    # Secours OCR : sur les bordereaux SECO la référence est réimprimée seule sous
+    # chaque article (ex. 101283/08). Cela récupère notamment les cas où la ligne
+    # "V/Cde" contient une parenthèse, un accent OCR ou un chiffre illisible.
+    standalone_pattern = re.compile(r"^[ \t]*([0-9]{5,})\s*/\s*([0-9]{1,3})[ \t]*$", flags=re.MULTILINE)
+    for dossier, numero in standalone_pattern.findall(text):
+        _add_reception_ref(dossier, numero, numero)
 
     if not refs:
         raise ValueError(
-            "Aucune référence de Packing de type 'V/Cde : dossier/numéro' n'a été détectée, même après OCR."
+            "Aucune référence de Packing de type 'dossier/numéro' n'a été détectée, même après OCR."
         )
 
     print(
