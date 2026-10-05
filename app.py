@@ -2955,12 +2955,26 @@ def _mise_en_caisse_dossier_data(dossier):
             packing_ref = _as_text(public.get('packing_reference') or public.get('reference')).strip()
             if not packing_ref:
                 continue
+            packing_article_ids = raw.get('packing_article_esi_ids') or []
+            if not isinstance(packing_article_ids, list):
+                packing_article_ids = []
+            packing_prepacking_ids = raw.get('packing_prepacking_esi_ids') or []
+            if not isinstance(packing_prepacking_ids, list):
+                packing_prepacking_ids = []
             item.update({
                 'reference': packing_ref,
                 'packing_reference': packing_ref,
                 'packing_ticket_id': _as_text(public.get('packing_ticket_id')).strip(),
                 'packing_type': _as_text(public.get('packing_type')).strip(),
+                'member_article_esi_ids': list(dict.fromkeys(
+                    _as_text(x).strip() for x in packing_article_ids if _as_text(x).strip()
+                )),
+                'member_prepacking_esi_ids': list(dict.fromkeys(
+                    _as_text(x).strip() for x in packing_prepacking_ids if _as_text(x).strip()
+                )),
             })
+            item['member_article_count'] = len(item['member_article_esi_ids'])
+            item['member_prepacking_count'] = len(item['member_prepacking_esi_ids'])
             packings_by_ref[packing_ref] = item
 
     # Secours : une ancienne fiche Packing peut exister dans les tickets sans avoir encore
@@ -2979,6 +2993,16 @@ def _mise_en_caisse_dossier_data(dossier):
                 continue
             raw = row.get('raw_json') if isinstance(row.get('raw_json'), dict) else {}
             fiche = raw.get('fiche') if isinstance(raw.get('fiche'), dict) else {}
+            historical_article_ids = []
+            for linked in raw.get('articles_lies') or []:
+                val = _as_text(linked.get('esi_id') if isinstance(linked, dict) else linked).strip()
+                if val and val not in historical_article_ids:
+                    historical_article_ids.append(val)
+            historical_prepacking_ids = []
+            for linked in raw.get('prepackings_lies') or []:
+                val = _as_text(linked.get('esi_id') if isinstance(linked, dict) else linked).strip()
+                if val and val not in historical_prepacking_ids:
+                    historical_prepacking_ids.append(val)
             packings_by_ref[ref] = {
                 'esi_id': '',
                 'reference': ref,
@@ -2992,6 +3016,10 @@ def _mise_en_caisse_dossier_data(dossier):
                 'lieu_stockage': _as_text(fiche.get('localisation')).strip(),
                 'statut_logistique': _as_text(row.get('status')).strip(),
                 'categorie_metier': 'PACKING',
+                'member_article_esi_ids': historical_article_ids,
+                'member_prepacking_esi_ids': historical_prepacking_ids,
+                'member_article_count': len(historical_article_ids),
+                'member_prepacking_count': len(historical_prepacking_ids),
             }
     except Exception as e:
         print(f"[MISE EN CAISSE] Lecture des Packings historiques impossible pour {dossier}: {e}")
@@ -3034,6 +3062,125 @@ def _mise_en_caisse_dossier_data(dossier):
         'prepackings': prepackings,
         'packings': packings,
     }
+
+
+def _reception_dossier_hierarchy(dossier):
+    """Construit l'arborescence de sélection Réception : Packing -> Pré-Packing -> Article.
+
+    Les relations déjà enregistrées dans la Base Articles sont conservées. Les éléments
+    non rattachés restent visibles à la racine afin qu'ils puissent être sélectionnés
+    individuellement dans un ticket de réception.
+    """
+    data = _mise_en_caisse_dossier_data(dossier)
+    articles = data.get('articles') or []
+    prepackings = data.get('prepackings') or []
+    packings = data.get('packings') or []
+
+    articles_by_id = {
+        _as_text(x.get('esi_id')).strip(): dict(x)
+        for x in articles if _as_text(x.get('esi_id')).strip()
+    }
+    prepackings_by_id = {
+        _as_text(x.get('esi_id')).strip(): dict(x)
+        for x in prepackings if _as_text(x.get('esi_id')).strip()
+    }
+
+    # Complète chaque Pré-Packing avec ses objets Article.
+    for pre in prepackings_by_id.values():
+        member_ids = list(dict.fromkeys(
+            _as_text(x).strip() for x in (pre.get('member_esi_ids') or []) if _as_text(x).strip()
+        ))
+        pre['member_esi_ids'] = member_ids
+        pre['articles'] = [articles_by_id[x] for x in member_ids if x in articles_by_id]
+        pre['member_count'] = len(pre['articles'])
+
+    packing_nodes = []
+    articles_in_packings = set()
+    prepackings_in_packings = set()
+
+    for source in packings:
+        packing = dict(source)
+        pre_ids = list(dict.fromkeys(
+            _as_text(x).strip() for x in (packing.get('member_prepacking_esi_ids') or []) if _as_text(x).strip()
+        ))
+        article_ids = list(dict.fromkeys(
+            _as_text(x).strip() for x in (packing.get('member_article_esi_ids') or []) if _as_text(x).strip()
+        ))
+
+        # Compatibilité : les relations physiques actuelles restent une source de secours.
+        packing_ref = _as_text(packing.get('reference')).strip()
+        if packing_ref:
+            for pre_id, pre in prepackings_by_id.items():
+                if _as_text(pre.get('packing_actuel')).strip() == packing_ref and pre_id not in pre_ids:
+                    pre_ids.append(pre_id)
+            for article_id, article in articles_by_id.items():
+                if _as_text(article.get('packing_actuel')).strip() == packing_ref and article_id not in article_ids:
+                    article_ids.append(article_id)
+
+        child_prepackings = [prepackings_by_id[x] for x in pre_ids if x in prepackings_by_id]
+        # Les Articles contenus dans un Pré-Packing sont déjà affichés sous celui-ci.
+        nested_article_ids = {
+            aid for pre in child_prepackings for aid in (pre.get('member_esi_ids') or [])
+        }
+        direct_article_ids = [x for x in article_ids if x not in nested_article_ids]
+        direct_articles = [articles_by_id[x] for x in direct_article_ids if x in articles_by_id]
+
+        prepackings_in_packings.update(pre_ids)
+        articles_in_packings.update(article_ids)
+        articles_in_packings.update(nested_article_ids)
+        packing['prepackings'] = child_prepackings
+        packing['articles_directs'] = direct_articles
+        packing['member_prepacking_esi_ids'] = pre_ids
+        packing['member_article_esi_ids'] = article_ids
+        packing['select_article_esi_ids'] = list(dict.fromkeys(
+            direct_article_ids + [aid for pre in child_prepackings for aid in (pre.get('member_esi_ids') or [])]
+        ))
+        packing_nodes.append(packing)
+
+    orphan_prepackings = [
+        pre for pre_id, pre in prepackings_by_id.items()
+        if pre_id not in prepackings_in_packings
+    ]
+    article_ids_in_prepackings = {
+        aid for pre in prepackings_by_id.values() for aid in (pre.get('member_esi_ids') or [])
+    }
+    orphan_articles = [
+        article for article_id, article in articles_by_id.items()
+        if article_id not in articles_in_packings and article_id not in article_ids_in_prepackings
+    ]
+
+    return {
+        **data,
+        'hierarchy': {
+            'packings': packing_nodes,
+            'prepackings_sans_packing': orphan_prepackings,
+            'articles_sans_contenant': orphan_articles,
+        },
+    }
+
+
+@app.route('/api/reception/dossier-elements')
+def api_reception_dossier_elements():
+    """Données de sélection d'un ticket Réception, avec héritage des cases cochées."""
+    dossier = _as_text(request.args.get('dossier')).strip()
+    if not dossier:
+        return jsonify({'ok': False, 'error': 'Le N° de dossier est obligatoire'}), 400
+    try:
+        data = _reception_dossier_hierarchy(dossier)
+        return jsonify({
+            'ok': True,
+            **data,
+            'counts': {
+                'articles': len(data.get('articles') or []),
+                'prepackings': len(data.get('prepackings') or []),
+                'packings': len(data.get('packings') or []),
+            },
+        })
+    except ValueError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+    except Exception as e:
+        print(f"[RECEPTION] Chargement hiérarchie dossier {dossier} impossible: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 @app.route('/api/mise-en-caisse/dossier')
