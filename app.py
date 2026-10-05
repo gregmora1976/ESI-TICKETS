@@ -1066,6 +1066,76 @@ def api_article_resolve_relation():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+def _existing_prepacking_assignment(esi_ids, dossier=''):
+    """
+    Retourne la repartition Article -> Pre-Packing deja existante lorsque TOUS les
+    Articles recus appartiennent deja a un Pre-Packing du dossier.
+
+    Si un Article n'est pas deja rattache a un Pre-Packing valide, retourne None :
+    le flux historique de creation de nouveaux Pre-Packings reste alors inchangé.
+    """
+    clean_ids = list(dict.fromkeys(
+        _as_text(x).strip() for x in (esi_ids or []) if _as_text(x).strip()
+    ))
+    dossier = _as_text(dossier).strip()
+    if not clean_ids:
+        return None
+
+    rows_by_id = {}
+    for offset in range(0, len(clean_ids), 100):
+        part = clean_ids[offset:offset + 100]
+        encoded = urllib.parse.quote(','.join(part), safe=',-_')
+        rows = supabase_rest_request(
+            'GET', 'articles', 'select=*&esi_id=in.(' + encoded + ')&limit=100'
+        ) or []
+        for row in rows:
+            esi_id = _as_text(row.get('esi_id')).strip()
+            if esi_id:
+                rows_by_id[esi_id] = dict(row)
+
+    if any(esi_id not in rows_by_id for esi_id in clean_ids):
+        return None
+
+    colis_by_esi = {}
+    colis_types = {}
+    colis_esi_by_ref = {}
+    refs = []
+
+    for esi_id in clean_ids:
+        public = _article_row_to_public(rows_by_id[esi_id])
+        if _as_text(public.get('categorie_metier')).strip().upper() != 'ARTICLE':
+            return None
+        if dossier and _as_text(public.get('dossier')).strip() != dossier:
+            return None
+
+        pre_ref = _as_text(public.get('dernier_colis')).strip()
+        if not pre_ref:
+            return None
+
+        pre_row = _find_colis_record(pre_ref, dossier)
+        if not pre_row:
+            return None
+        pre_public = _article_row_to_public(pre_row)
+        if _as_text(pre_public.get('categorie_metier')).strip().upper() != 'PRE-PACKING':
+            return None
+
+        colis_by_esi[esi_id] = pre_ref
+        if pre_ref not in refs:
+            refs.append(pre_ref)
+        if pre_ref not in colis_types:
+            colis_types[pre_ref] = _normalise_colis_type(pre_public.get('type_colis'))
+        pre_esi = _as_text(pre_public.get('esi_id')).strip()
+        if pre_esi:
+            colis_esi_by_ref[pre_ref] = pre_esi
+
+    return {
+        'colis_refs': refs,
+        'colis_by_esi': colis_by_esi,
+        'colis_types': colis_types,
+        'colis_esi_by_ref': colis_esi_by_ref,
+    }
+
+
 def _ensure_colis_article_records(ticket_id, numero_dossier, colis_refs, colis_types, colis_by_esi,
                                   selected_items, client='', projet='', charge_projet='',
                                   lieu_stockage='', reception_ref=''):
@@ -1090,9 +1160,34 @@ def _ensure_colis_article_records(ticket_id, numero_dossier, colis_refs, colis_t
         colis_type = _normalise_colis_type((colis_types or {}).get(colis_ref))
         members = members_by_colis.get(colis_ref, [])
         member_ids = [_as_text(x.get('esi_id')).strip() for x in members if _as_text(x.get('esi_id')).strip()]
-        description = f"{_display_prepacking_type(colis_type) or 'Pre-Packing'} - {len(member_ids)} Article{'s' if len(member_ids) != 1 else ''}"
 
         existing = _find_colis_record(colis_ref, numero_dossier)
+        if existing:
+            # Un Pre-Packing deja connu est mis a jour, jamais recree.
+            # Sa composition existante est conservee, meme en reception partielle.
+            existing_public = _article_row_to_public(existing)
+            if not colis_type:
+                colis_type = _normalise_colis_type(existing_public.get('type_colis'))
+            existing_raw_for_members = existing.get('raw_json') if isinstance(existing.get('raw_json'), dict) else {}
+            existing_member_ids = existing_raw_for_members.get('article_esi_ids') or []
+            if not isinstance(existing_member_ids, list):
+                existing_member_ids = []
+            member_ids = list(dict.fromkeys(
+                [_as_text(x).strip() for x in existing_member_ids if _as_text(x).strip()] + member_ids
+            ))
+            existing_linked = existing_raw_for_members.get('articles_lies') or []
+            if not isinstance(existing_linked, list):
+                existing_linked = []
+            linked_by_esi = {}
+            for item in existing_linked + members:
+                if isinstance(item, dict):
+                    item_esi = _as_text(item.get('esi_id')).strip()
+                    if item_esi:
+                        linked_by_esi[item_esi] = item
+            members = [linked_by_esi[x] for x in member_ids if x in linked_by_esi]
+
+        description = f"{_display_prepacking_type(colis_type) or 'Pre-Packing'} - {len(member_ids)} Article{'s' if len(member_ids) != 1 else ''}"
+
         if existing:
             raw = existing.get('raw_json') if isinstance(existing.get('raw_json'), dict) else {}
             raw = dict(raw or {})
@@ -10775,17 +10870,36 @@ def api_reception_avis_arrivee(ticket_id):
             print(f"[RAR] Lecture historique impossible: {e}")
 
         reception_ref = f"RAR-{(max(existing_refs) if existing_refs else 0) + 1:04d}"
-        colis_refs = _allocate_colis_numbers(numero_dossier, nombre_colis)
-        colis_types = _resolve_colis_types(data.get('colis_types'), colis_refs)
-        if any(not colis_types.get(ref) for ref in colis_refs):
-            return jsonify({'ok': False, 'error': 'Le type de chaque Pre-Packing est obligatoire : Softpack, Carton ou Packing bois.'}), 400
+
+        # Prepare d'abord les ESI physiques recus. Si tous sont deja rattaches a
+        # un Pre-Packing existant, la reception reutilise ce ou ces Pre-Packings.
         try:
-            _validate_colis_repartition_shape(selected, colis_repartition, len(colis_refs), article_parts)
             reception_esi_ids, parent_part_ids = _expand_selected_items_with_parts(selected, article_parts)
         except ValueError as e:
             return jsonify({'ok': False, 'error': str(e)}), 400
         except Exception as e:
             return jsonify({'ok': False, 'error': f"Impossible de créer les parties de l'article : {e}"}), 500
+
+        existing_prepack = _existing_prepacking_assignment(reception_esi_ids, numero_dossier)
+        reuse_existing_prepackings = bool(existing_prepack)
+
+        if reuse_existing_prepackings:
+            colis_refs = list(existing_prepack.get('colis_refs') or [])
+            colis_by_esi = dict(existing_prepack.get('colis_by_esi') or {})
+            colis_types = dict(existing_prepack.get('colis_types') or {})
+            nombre_colis = len(colis_refs)
+        else:
+            # Aucun changement pour les Articles sans Pre-Packing existant.
+            colis_refs = _allocate_colis_numbers(numero_dossier, nombre_colis)
+            colis_types = _resolve_colis_types(data.get('colis_types'), colis_refs)
+            if any(not colis_types.get(ref) for ref in colis_refs):
+                return jsonify({'ok': False, 'error': 'Le type de chaque Pre-Packing est obligatoire : Softpack, Carton ou Packing bois.'}), 400
+            try:
+                _validate_colis_repartition_shape(selected, colis_repartition, len(colis_refs), article_parts)
+                colis_by_esi = _resolve_colis_repartition(selected, colis_repartition, colis_refs)
+            except ValueError as e:
+                return jsonify({'ok': False, 'error': str(e)}), 400
+
         charge_projet = _as_text(avis.get('coordinateur') or ticket.get('chargeProjet') or '').strip()
         article_labels = _build_article_labels_from_selected(
             selected,
@@ -10794,10 +10908,6 @@ def api_reception_avis_arrivee(ticket_id):
             lieu_stockage,
             charge_projet,
         )
-        try:
-            colis_by_esi = _resolve_colis_repartition(selected, colis_repartition, colis_refs)
-        except ValueError as e:
-            return jsonify({'ok': False, 'error': str(e)}), 400
         colis_type_by_esi = {esi: colis_types.get(ref, '') for esi, ref in colis_by_esi.items()}
         _apply_colis_to_selected_items(selected, colis_by_esi, reception_ref, lieu_stockage, colis_type_by_esi)
 
@@ -10886,6 +10996,7 @@ def api_reception_avis_arrivee(ticket_id):
             'nombre_colis': nombre_colis,
             'colis': colis_refs,
             'colis_types': colis_types,
+            'prepackings_reutilises': reuse_existing_prepackings,
             'commentaire': commentaire,
             'items': selected,
             'bon_reception_filename': reception_pdf_filename,
