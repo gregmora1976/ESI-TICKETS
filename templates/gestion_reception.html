@@ -191,6 +191,7 @@ body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:
 
 <script>
 let currentDate=new Date(), tickets=[], searchTerm='', openedTicket=null;
+let arrivalExistingPrepackByEsi={}, arrivalExistingPrepackTypes={}, arrivalExistingPrepackRefs=[];
 
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function val(v){const s=String(v??'').trim();return s||'-';}
@@ -704,7 +705,7 @@ function readArticleParts(prefix, checkClass, qtyClass){
 }
 function buildColisRepartition(prefix, checkClass, qtyClass, packageInputId){
   const box=document.getElementById(prefix+'ColisRepartition'); if(!box) return;
-  const count=Math.max(1,Number(document.getElementById(packageInputId)?.value||1));
+  const packageInput=document.getElementById(packageInputId);
   const previousTypes=readColisTypes(prefix), units=[];
   document.querySelectorAll('.'+checkClass+':checked:not(:disabled)').forEach(cb=>{
     const index=Number(cb.dataset.index), qty=Math.max(0,Math.floor(Number(document.querySelector('.'+qtyClass+'[data-index="'+index+'"]')?.value||0)));
@@ -719,24 +720,100 @@ function buildColisRepartition(prefix, checkClass, qtyClass, packageInputId){
     }
   });
   if(!units.length){box.innerHTML='<div class="muted">Sélectionne les articles à réceptionner.</div>';return;}
-  const opts=Array.from({length:count},(_,i)=>`<option value="${i}">Pre-Packing ${i+1}</option>`).join('');
-  const typeCards=Array.from({length:count},(_,i)=>`<div class="colis-type-card"><label for="${prefix}ColisType${i}">Pre-Packing ${i+1} - Type de Pre-Packing</label><select id="${prefix}ColisType${i}" class="${prefix}-colis-type" data-colis-index="${i}" required>${colisTypeOptions(previousTypes[i]||'')}</select></div>`).join('');
-  box.innerHTML=`<div class="colis-repartition-title">Constitution des Pre-Packings</div><div class="colis-type-title">Type de chaque Pre-Packing</div><div class="colis-type-grid">${typeCards}</div><div class="colis-type-title">Répartition des Articles / parties dans les Pre-Packings</div>`+units.map(u=>`<div class="colis-unit"><div><strong>${esc(u.reference)} - ${esc(u.designation)} - ${esc(u.esi)}${u.part_label?' - '+esc(u.part_label):''}</strong></div><select class="${prefix}-colis-select" data-index="${u.index}" data-unit-offset="${u.unit_offset}" data-part-index="${u.part_index}">${opts}</select></div>`).join('');
-  box.querySelectorAll('.'+prefix+'-colis-select').forEach((sel,i)=>sel.value=String(i%count));
+
+  const existingGroups={};
+  const newUnits=[];
+  units.forEach(u=>{
+    const existingRef=prefix==='arrival'?String(arrivalExistingPrepackByEsi[u.esi]||'').trim():'';
+    if(existingRef && !u.part_label){
+      if(!existingGroups[existingRef]) existingGroups[existingRef]={ref:existingRef,type:String(arrivalExistingPrepackTypes[existingRef]||'').trim(),units:[]};
+      existingGroups[existingRef].units.push(u);
+    }else newUnits.push(u);
+  });
+
+  const existingRefs=Object.keys(existingGroups);
+  let count=Math.max(prefix==='arrival'?0:1,Math.floor(Number(packageInput?.value||(prefix==='arrival'?0:1))));
+  const countLabel=document.querySelector(`label[for="${packageInputId}"]`);
+
+  if(prefix==='arrival'){
+    if(newUnits.length===0){
+      count=0;
+      if(packageInput){packageInput.value='0';packageInput.min='0';packageInput.disabled=true;}
+    }else{
+      if(count<1) count=1;
+      if(packageInput){packageInput.value=String(count);packageInput.min='1';packageInput.disabled=false;}
+    }
+    if(countLabel){
+      countLabel.textContent=existingRefs.length
+        ? (newUnits.length?'Nombre de nouveaux Pre-Packings à créer':'Aucun nouveau Pre-Packing à créer')
+        : 'Nombre total de Pre-Packings pour cette réception';
+    }
+  }
+
+  let html='<div class="colis-repartition-title">Constitution des Pre-Packings</div>';
+  if(existingRefs.length){
+    html+='<div class="colis-type-title">Pre-Packings existants conservés</div><div class="colis-type-grid">';
+    existingRefs.forEach(ref=>{
+      const g=existingGroups[ref], typeLabel=g.type?(g.type==='Caisse bois'?'PACKING BOIS':g.type.toUpperCase()):'TYPE NON RENSEIGNÉ';
+      const members=g.units.map(u=>u.esi).join(', ');
+      html+=`<div class="colis-type-card" style="background:#ecfdf5;border-color:#86efac"><label style="color:#166534">${esc(ref)} — EXISTANT</label><div style="font-size:12px;font-weight:900;color:#166534">${esc(typeLabel)}</div><div style="font-size:11px;color:#64748b;margin-top:5px">${esc(members)}</div></div>`;
+    });
+    html+='</div>';
+  }
+
+  if(newUnits.length){
+    const typeCards=Array.from({length:count},(_,i)=>`<div class="colis-type-card"><label for="${prefix}ColisType${i}">Nouveau Pre-Packing ${i+1} - Type de Pre-Packing</label><select id="${prefix}ColisType${i}" class="${prefix}-colis-type" data-colis-index="${i}" required>${colisTypeOptions(previousTypes[i]||'')}</select></div>`).join('');
+    html+=`<div class="colis-type-title">${existingRefs.length?'Nouveaux Pre-Packings à créer':'Type de chaque Pre-Packing'}</div><div class="colis-type-grid">${typeCards}</div>`;
+  }
+
+  html+='<div class="colis-type-title">Répartition des Articles / parties dans les Pre-Packings</div>';
+  units.forEach(u=>{
+    const existingRef=(prefix==='arrival'&&!u.part_label)?String(arrivalExistingPrepackByEsi[u.esi]||'').trim():'';
+    const left=`<div><strong>${esc(u.reference)} - ${esc(u.designation)} - ${esc(u.esi)}${u.part_label?' - '+esc(u.part_label):''}</strong></div>`;
+    if(existingRef){
+      html+=`<div class="colis-unit">${left}<div style="border:1px solid #86efac;background:#ecfdf5;color:#166534;border-radius:8px;padding:8px;font-weight:900">${esc(existingRef)} (existant)</div></div>`;
+    }else{
+      const opts=Array.from({length:count},(_,i)=>`<option value="${i}">Nouveau Pre-Packing ${i+1}</option>`).join('');
+      html+=`<div class="colis-unit">${left}<select class="${prefix}-colis-select" data-index="${u.index}" data-unit-offset="${u.unit_offset}" data-part-index="${u.part_index}">${opts}</select></div>`;
+    }
+  });
+  box.innerHTML=html;
+  if(count>0) box.querySelectorAll('.'+prefix+'-colis-select').forEach((sel,i)=>sel.value=String(i%count));
 }
 function readColisRepartition(prefix){return [...document.querySelectorAll('.'+prefix+'-colis-select')].map(x=>({index:Number(x.dataset.index),unit_offset:Number(x.dataset.unitOffset),part_index:Number(x.dataset.partIndex||0),colis_index:Number(x.value)}));}
 function setupPartsControls(prefix, checkClass, qtyClass, packageInputId){
   document.querySelectorAll('.'+prefix+'-parts-check').forEach(cb=>cb.addEventListener('change',()=>{const c=document.querySelector('.'+prefix+'-parts-count[data-index="'+cb.dataset.index+'"]');if(c)c.disabled=!cb.checked;buildColisRepartition(prefix,checkClass,qtyClass,packageInputId);}));
   document.querySelectorAll('.'+prefix+'-parts-count').forEach(inp=>{inp.addEventListener('input',()=>buildColisRepartition(prefix,checkClass,qtyClass,packageInputId));inp.addEventListener('change',()=>buildColisRepartition(prefix,checkClass,qtyClass,packageInputId));});
 }
+async function loadArrivalExistingPrepackings(dossier){
+  arrivalExistingPrepackByEsi={}; arrivalExistingPrepackTypes={}; arrivalExistingPrepackRefs=[];
+  dossier=String(dossier||'').trim();
+  if(!dossier) return;
+  try{
+    const res=await fetch('/api/reception/dossier-elements?dossier='+encodeURIComponent(dossier),{cache:'no-store'});
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok||!data.ok) return;
+    (data.prepackings||[]).forEach(pre=>{
+      const ref=String(pre.reference||'').trim();
+      if(!ref) return;
+      const type=String(pre.type_prepacking||pre.type_colis||'').trim();
+      if(!arrivalExistingPrepackRefs.includes(ref)) arrivalExistingPrepackRefs.push(ref);
+      arrivalExistingPrepackTypes[ref]=type;
+      (pre.member_esi_ids||[]).forEach(esi=>{esi=String(esi||'').trim();if(esi)arrivalExistingPrepackByEsi[esi]=ref;});
+    });
+  }catch(e){console.warn('Lecture des Pre-Packings existants impossible',e);}
+}
+
 function closeReceptionModal(){
   const b=document.getElementById('receptionModalBackdrop');
   b.classList.remove('open');b.setAttribute('aria-hidden','true');
   document.getElementById('receptionValidateBtn').style.display='inline-block';
 }
-function openReceptionModal(){
+async function openReceptionModal(){
   if(!openedTicket || !isAvisArrivee(openedTicket)) return;
   const a=avisData(openedTicket), aitems=Array.isArray(a.items)?a.items:[];
+  const dossierForPrepack=String(a.dossier_ref||openedTicket.dossier||'').trim();
+  await loadArrivalExistingPrepackings(dossierForPrepack);
   const allFullyReceived=aitems.length>0&&aitems.every(i=>receivedQty(i)>=plannedQty(i));
   document.getElementById('receptionModalSub').textContent=
     `${val(a.dossier_ref||openedTicket.dossier)} - ${val(a.client)} - ${val(a.projet||openedTicket.expo||openedTicket.objet)}`;
@@ -788,7 +865,7 @@ function openReceptionModal(){
     </div>
     <div class="form-row">
       <label for="arrivalReceptionPackageCount">Nombre total de Pre-Packings pour cette réception</label>
-      <input id="arrivalReceptionPackageCount" type="number" min="1" step="1" value="1">
+      <input id="arrivalReceptionPackageCount" type="number" min="0" step="1" value="1">
     </div><div id="arrivalColisRepartition" class="colis-repartition"></div>
     <div class="form-row">
       <label for="arrivalReceptionComment">Commentaire de réception</label>
@@ -884,7 +961,7 @@ async function validateArrivalReception(){
   if(!receiver){alert("Renseigne le nom et prénom de la personne qui réceptionne.");return;}
   if(!location){alert("Renseigne le lieu de stockage.");return;}
   if(!dossierNumber){alert("Renseigne le N° dossier utilisé pour numéroter les Pre-Packings.");return;}
-  if(!Number.isInteger(packageCount)||packageCount<1){alert("Renseigne un nombre total de Pre-Packings supérieur ou égal à 1.");return;}
+  if(!Number.isInteger(packageCount)||packageCount<0){alert("Le nombre de nouveaux Pre-Packings ne peut pas être négatif.");return;}
   if(!selected.length){alert("Sélectionne au moins une marchandise réceptionnée.");return;}
   if(selected.some(x=>!Number.isInteger(x.quantite_recue)||x.quantite_recue<1)){
     alert("Chaque article sélectionné doit avoir une quantité réceptionnée valide.");
@@ -893,23 +970,27 @@ async function validateArrivalReception(){
 
   const repartition=readColisRepartition('arrival');
   const articleParts=readArticleParts('arrival','arrival-reception-check','arrival-reception-qty');
-  const totalUnits=repartition.length;
-  if(!totalUnits){
-    alert("Chaque article ou partie physique doit être associé à un Pre-Packing.");
+  const newUnits=repartition.length;
+  if(newUnits>0 && packageCount<1){
+    alert("Au moins un nouveau Pre-Packing est nécessaire pour les Articles qui n'en ont pas encore.");
+    return;
+  }
+  if(packageCount>newUnits && newUnits>0){
+    alert("Le nombre de nouveaux Pre-Packings ne peut pas dépasser le nombre d'Articles ou parties encore libres.");
+    return;
+  }
+  if(newUnits===0 && packageCount!==0){
+    alert("Tous les Articles sélectionnés ont déjà un Pre-Packing : aucun nouveau Pre-Packing ne doit être créé.");
     buildColisRepartition('arrival','arrival-reception-check','arrival-reception-qty','arrivalReceptionPackageCount');
     return;
   }
-  if(packageCount>totalUnits){
-    alert("Le nombre de Pre-Packings ne peut pas dépasser le nombre d'Articles ou parties physiques réceptionnés.");
-    return;
-  }
-  if(new Set(repartition.map(x=>x.colis_index)).size!==packageCount){
-    alert("Chaque Pre-Packing créé doit contenir au moins un Article.");
+  if(packageCount>0 && new Set(repartition.map(x=>x.colis_index)).size!==packageCount){
+    alert("Chaque nouveau Pre-Packing doit contenir au moins un Article.");
     return;
   }
   const colisTypes=readColisTypes('arrival');
   if(colisTypes.length!==packageCount || colisTypes.some(type=>!type)){
-    alert("Choisis le type de chaque Pre-Packing : Softpack, Carton ou Packing bois.");
+    alert("Choisis le type de chaque nouveau Pre-Packing : Softpack, Carton ou Packing bois.");
     return;
   }
 
