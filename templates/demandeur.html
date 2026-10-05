@@ -98,7 +98,7 @@
     .avis-article-picker{width:min(1100px,96vw)}
     .avis-article-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .avis-article-toolbar .search{flex:1;min-width:260px;max-width:none}
-    .avis-article-list{display:grid;gap:8px;max-height:52vh;overflow:auto;padding-right:4px}
+    .avis-article-list{display:block;max-height:52vh;overflow:auto;padding-right:4px}.avis-article-list>*+*{margin-top:8px}
     .avis-tree-group{border:1px solid #cbd5e1;border-radius:16px;background:#fff;overflow:hidden}
     .avis-tree-group.prepacking{border-color:#bae6fd;background:#f8fcff}
     .avis-tree-head{display:grid;grid-template-columns:34px 120px minmax(0,1fr) auto;gap:10px;align-items:center;padding:11px 12px;font-size:13px;font-weight:800}
@@ -1179,6 +1179,7 @@ async function openAvisArticlePicker(){
   list.innerHTML = '<div class="avis-picker-empty">Recherche des Articles, Pré-Packings et Packings…</div>';
   modal.classList.add('show');
   modal.setAttribute('aria-hidden','false');
+  list.scrollTop = 0;
   updateAvisArticleSelectedCount();
 
   try{
@@ -1197,6 +1198,7 @@ async function openAvisArticlePicker(){
     if(!projetInput.value.trim() && (identity.projet || first.projet)) projetInput.value = identity.projet || first.projet;
     if(!coordinateurInput.value.trim() && identity.charge_projet) coordinateurInput.value = identity.charge_projet;
     renderAvisArticlePicker();
+    list.scrollTop = 0;
   }catch(e){
     state.avisDossierArticles = [];
     state.avisDossierHierarchy = null;
