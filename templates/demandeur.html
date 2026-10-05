@@ -99,6 +99,21 @@
     .avis-article-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .avis-article-toolbar .search{flex:1;min-width:260px;max-width:none}
     .avis-article-list{display:grid;gap:8px;max-height:52vh;overflow:auto;padding-right:4px}
+    .avis-tree-group{border:1px solid #cbd5e1;border-radius:16px;background:#fff;overflow:hidden}
+    .avis-tree-group.prepacking{border-color:#bae6fd;background:#f8fcff}
+    .avis-tree-head{display:grid;grid-template-columns:34px 120px minmax(0,1fr) auto;gap:10px;align-items:center;padding:11px 12px;font-size:13px;font-weight:800}
+    .avis-tree-head.packing{background:#e0f2fe;color:#075985}
+    .avis-tree-head.prepacking{background:#f0f9ff;color:#0369a1}
+    .avis-tree-head input[type=checkbox],.avis-tree-child input[type=checkbox]{width:18px;height:18px;cursor:pointer}
+    .avis-tree-type{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:900;letter-spacing:.04em;white-space:nowrap}
+    .avis-tree-type.packing{background:#0f3153;color:#fff}
+    .avis-tree-type.prepacking{background:#bae6fd;color:#075985}
+    .avis-tree-count{font-size:11px;color:#64748b;font-weight:700;white-space:nowrap}
+    .avis-tree-children{display:grid;gap:6px;padding:8px 10px 10px 28px;border-top:1px solid #e2e8f0}
+    .avis-tree-nested{margin-left:10px;border-left:3px solid #bae6fd;padding-left:10px}
+    .avis-tree-child{display:grid;grid-template-columns:34px 110px 140px minmax(0,1fr) 150px 90px;gap:10px;align-items:center;border:1px solid var(--line);border-radius:12px;padding:9px 10px;background:#fff}
+    .avis-tree-child:hover{background:#f0f9ff;border-color:#bae6fd}
+    .avis-tree-orphan-title{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin:8px 2px 2px}
     .avis-article-row{display:grid;grid-template-columns:34px 110px 140px 1fr 160px 90px;gap:10px;align-items:center;border:1px solid var(--line);border-radius:14px;padding:11px 12px;background:#fff}
     .avis-article-row:hover{background:#f0f9ff;border-color:#bae6fd}
     .avis-article-row input[type=checkbox]{width:18px;height:18px;cursor:pointer}
@@ -108,7 +123,7 @@
     .avis-article-meta{font-size:12px;color:#64748b;text-align:right}
     .avis-picker-empty{padding:24px;text-align:center;border:1px dashed var(--line);border-radius:14px;color:var(--muted);background:#f8fafc}
     .avis-picker-footer{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
-    @media(max-width:850px){.avis-article-row{grid-template-columns:30px 95px 1fr}.avis-article-ref{grid-column:3}.avis-article-desc{grid-column:2 / -1}.avis-article-meta{grid-column:2 / -1;text-align:left}}
+    @media(max-width:850px){.avis-article-row,.avis-tree-child{grid-template-columns:30px 95px 1fr}.avis-article-ref{grid-column:3}.avis-article-desc{grid-column:2 / -1}.avis-article-meta{grid-column:2 / -1;text-align:left}.avis-tree-head{grid-template-columns:30px 105px 1fr}.avis-tree-count{grid-column:2 / -1}.avis-tree-children{padding-left:14px}.avis-tree-nested{margin-left:4px}}
     @media (max-width:1100px){.layout{grid-template-columns:1fr}}
     @media (max-width:720px){h1{font-size:28px}.grid,.grid.three{grid-template-columns:1fr}.hero-top,.content,.card{padding:18px}}
   </style>
@@ -401,7 +416,7 @@
       <div class="modal-head">
         <div>
           <div class="section-title" style="margin-bottom:6px">Base articles ESI</div>
-          <div class="modal-title" id="avisArticleModalTitle">Articles du dossier</div>
+          <div class="modal-title" id="avisArticleModalTitle">Éléments du dossier</div>
           <div class="small" id="avisArticleModalSub"></div>
         </div>
         <button class="modal-close" id="closeAvisArticleModal" type="button">Fermer ×</button>
@@ -414,7 +429,7 @@
         </div>
         <div class="avis-article-list" id="avisArticleList"></div>
         <div class="avis-picker-footer">
-          <div class="small"><strong id="avisArticleSelectedCount">0</strong> article(s) sélectionné(s)</div>
+          <div class="small"><strong id="avisArticleSelectedCount">0</strong> article(s) sélectionné(s) — la sélection d’un Packing ou Pré-Packing coche ses Articles</div>
           <button class="btn primary" id="addSelectedAvisArticles" type="button">Ajouter les articles sélectionnés</button>
         </div>
       </div>
@@ -450,6 +465,7 @@ const state = {
   enlevementSelections:[],
   filesAvisArrivee:[],
   avisDossierArticles:[],
+  avisDossierHierarchy:null,
   avisSelectedArticleIds:new Set(),
   doneSearch:'',
   directTicketId: urlParams.get('ticket') || '',
@@ -1009,6 +1025,7 @@ function resetAvisArriveeForm(){
   addAvisItemRow();
   state.filesAvisArrivee.length = 0;
   state.avisDossierArticles = [];
+  state.avisDossierHierarchy = null;
   state.avisSelectedArticleIds = new Set();
   renderAllFiles();
 }
@@ -1028,77 +1045,162 @@ function articlePickerSearchText(article){
     .filter(Boolean).join(' ').toLowerCase();
 }
 
+function avisArticleMatches(article, search){
+  return !search || articlePickerSearchText(article).includes(search);
+}
+
+function avisGroupSelectionState(ids){
+  const clean = [...new Set((ids || []).map(x=>String(x||'').trim()).filter(Boolean))];
+  const selected = clean.filter(id=>state.avisSelectedArticleIds.has(id)).length;
+  return {ids:clean, selected, checked:clean.length>0 && selected===clean.length, partial:selected>0 && selected<clean.length};
+}
+
+function avisArticleRowHtml(article){
+  const esi = String(article.esi_id || '').trim();
+  const dims = [article.longueur_cm, article.largeur_cm, article.hauteur_cm].filter(v => String(v || '').trim()).join(' × ');
+  const checked = state.avisSelectedArticleIds.has(esi) ? 'checked' : '';
+  return `<label class="avis-tree-child">
+    <input type="checkbox" class="avis-article-check" data-esi="${escapeHtml(esi)}" ${checked}>
+    <div class="avis-article-esi">${escapeHtml(esi || '-')}</div>
+    <div class="avis-article-ref">${escapeHtml(article.reference || '-')}</div>
+    <div class="avis-article-desc">${escapeHtml(article.description || '-')}</div>
+    <div class="avis-article-meta">${escapeHtml(dims ? dims + ' cm' : '-')}</div>
+    <div class="avis-article-meta">${escapeHtml(article.poids_kg ? article.poids_kg + ' kg' : '-')}</div>
+  </label>`;
+}
+
+function avisPrepackingHtml(pre, search, nested=false){
+  const articles = (pre.articles || []).filter(a=>avisArticleMatches(a, search));
+  const preText = [pre.reference, pre.esi_id, pre.type_prepacking, pre.description].filter(Boolean).join(' ').toLowerCase();
+  if(search && !preText.includes(search) && !articles.length) return '';
+  const allIds = (pre.member_esi_ids || []).map(String);
+  const sel = avisGroupSelectionState(allIds);
+  const visibleArticles = search && preText.includes(search) ? (pre.articles || []) : articles;
+  return `<div class="avis-tree-group prepacking ${nested ? 'avis-tree-nested' : ''}">
+    <label class="avis-tree-head prepacking">
+      <input type="checkbox" class="avis-group-check" data-children="${escapeHtml(sel.ids.join(','))}" ${sel.checked ? 'checked' : ''}>
+      <span class="avis-tree-type prepacking">PRE-PACKING</span>
+      <span>${escapeHtml(pre.reference || pre.esi_id || 'Pré-Packing')}</span>
+      <span class="avis-tree-count">${sel.ids.length} article(s)</span>
+    </label>
+    ${visibleArticles.length ? `<div class="avis-tree-children">${visibleArticles.map(avisArticleRowHtml).join('')}</div>` : ''}
+  </div>`;
+}
+
+function avisPackingHtml(pack, search){
+  const preHtml = (pack.prepackings || []).map(pre=>avisPrepackingHtml(pre, search, true)).filter(Boolean);
+  const direct = (pack.articles_directs || []).filter(a=>avisArticleMatches(a, search));
+  const packText = [pack.reference, pack.esi_id, pack.packing_type, pack.description].filter(Boolean).join(' ').toLowerCase();
+  const packMatches = !search || packText.includes(search);
+  if(search && !packMatches && !preHtml.length && !direct.length) return '';
+  const allIds = (pack.select_article_esi_ids || []).map(String);
+  const sel = avisGroupSelectionState(allIds);
+  const directToShow = packMatches ? (pack.articles_directs || []) : direct;
+  const preToShow = packMatches
+    ? (pack.prepackings || []).map(pre=>avisPrepackingHtml(pre, '', true)).filter(Boolean)
+    : preHtml;
+  return `<div class="avis-tree-group">
+    <label class="avis-tree-head packing">
+      <input type="checkbox" class="avis-group-check" data-children="${escapeHtml(sel.ids.join(','))}" ${sel.checked ? 'checked' : ''}>
+      <span class="avis-tree-type packing">PACKING</span>
+      <span>${escapeHtml(pack.reference || pack.esi_id || 'Packing')}</span>
+      <span class="avis-tree-count">${sel.ids.length} article(s)</span>
+    </label>
+    ${(preToShow.length || directToShow.length) ? `<div class="avis-tree-children">${preToShow.join('')}${directToShow.map(avisArticleRowHtml).join('')}</div>` : ''}
+  </div>`;
+}
+
+function bindAvisTreeCheckboxes(){
+  const list = document.getElementById('avisArticleList');
+  list.querySelectorAll('.avis-article-check').forEach(cb => cb.addEventListener('change', () => {
+    const esi = String(cb.dataset.esi || '').trim();
+    if(!esi) return;
+    if(cb.checked) state.avisSelectedArticleIds.add(esi);
+    else state.avisSelectedArticleIds.delete(esi);
+    renderAvisArticlePicker();
+  }));
+  list.querySelectorAll('.avis-group-check').forEach(cb => {
+    const ids = String(cb.dataset.children || '').split(',').map(x=>x.trim()).filter(Boolean);
+    const sel = avisGroupSelectionState(ids);
+    cb.indeterminate = sel.partial;
+    cb.addEventListener('change', () => {
+      ids.forEach(id => cb.checked ? state.avisSelectedArticleIds.add(id) : state.avisSelectedArticleIds.delete(id));
+      renderAvisArticlePicker();
+    });
+  });
+}
+
 function renderAvisArticlePicker(){
   const list = document.getElementById('avisArticleList');
   const search = String(document.getElementById('avisArticleSearch').value || '').trim().toLowerCase();
-  const articles = (state.avisDossierArticles || []).filter(a => !search || articlePickerSearchText(a).includes(search));
+  const hierarchy = state.avisDossierHierarchy || {};
+  const parts = [];
 
-  if(!articles.length){
-    list.innerHTML = '<div class="avis-picker-empty">Aucun article correspondant dans ce dossier.</div>';
+  (hierarchy.packings || []).forEach(pack=>{
+    const html = avisPackingHtml(pack, search);
+    if(html) parts.push(html);
+  });
+
+  const orphanPres = (hierarchy.prepackings_sans_packing || []).map(pre=>avisPrepackingHtml(pre, search, false)).filter(Boolean);
+  if(orphanPres.length){
+    parts.push(`<div class="avis-tree-orphan-title">Pré-Packings sans Packing</div>${orphanPres.join('')}`);
+  }
+
+  const orphanArticles = (hierarchy.articles_sans_contenant || []).filter(a=>avisArticleMatches(a, search));
+  if(orphanArticles.length){
+    parts.push(`<div class="avis-tree-orphan-title">Articles sans contenant</div>${orphanArticles.map(avisArticleRowHtml).join('')}`);
+  }
+
+  if(!parts.length){
+    list.innerHTML = '<div class="avis-picker-empty">Aucun élément correspondant dans ce dossier.</div>';
     updateAvisArticleSelectedCount();
     return;
   }
 
-  list.innerHTML = articles.map(article => {
-    const esi = String(article.esi_id || '');
-    const dims = [article.longueur_cm, article.largeur_cm, article.hauteur_cm].filter(v => String(v || '').trim()).join(' × ');
-    const checked = state.avisSelectedArticleIds.has(esi) ? 'checked' : '';
-    return `<label class="avis-article-row">
-      <input type="checkbox" class="avis-article-check" data-esi="${escapeHtml(esi)}" ${checked}>
-      <div class="avis-article-esi">${escapeHtml(esi || '-')}</div>
-      <div class="avis-article-ref">${escapeHtml(article.reference || '-')}</div>
-      <div class="avis-article-desc">${escapeHtml(article.description || '-')}</div>
-      <div class="avis-article-meta">${escapeHtml(dims ? dims + ' cm' : '-')}</div>
-      <div class="avis-article-meta">${escapeHtml(article.poids_kg ? article.poids_kg + ' kg' : '-')}</div>
-    </label>`;
-  }).join('');
-
-  list.querySelectorAll('.avis-article-check').forEach(cb => cb.addEventListener('change', () => {
-    const esi = cb.dataset.esi || '';
-    if(!esi) return;
-    if(cb.checked) state.avisSelectedArticleIds.add(esi);
-    else state.avisSelectedArticleIds.delete(esi);
-    updateAvisArticleSelectedCount();
-  }));
+  list.innerHTML = parts.join('');
+  bindAvisTreeCheckboxes();
   updateAvisArticleSelectedCount();
 }
 
 async function openAvisArticlePicker(){
   const dossier = document.getElementById('avis-dossier').value.trim();
   if(!dossier){
-    showNotice('Renseigne d’abord la Réf. dossier pour afficher les articles associés.');
+    showNotice('Renseigne d’abord la Réf. dossier pour afficher les éléments associés.');
     document.getElementById('avis-dossier').focus();
     return;
   }
 
   const modal = document.getElementById('avisArticleModal');
   const list = document.getElementById('avisArticleList');
-  document.getElementById('avisArticleModalTitle').textContent = `Articles du dossier ${dossier}`;
-  document.getElementById('avisArticleModalSub').textContent = 'Sélectionne un ou plusieurs articles déjà présents dans la base Articles.';
+  document.getElementById('avisArticleModalTitle').textContent = `Éléments du dossier ${dossier}`;
+  document.getElementById('avisArticleModalSub').textContent = 'Sélectionne un Packing, un Pré-Packing ou des Articles. Cocher un contenant sélectionne automatiquement tous les Articles qu’il contient.';
   document.getElementById('avisArticleSearch').value = '';
   state.avisSelectedArticleIds = new Set();
-  list.innerHTML = '<div class="avis-picker-empty">Recherche des articles…</div>';
+  list.innerHTML = '<div class="avis-picker-empty">Recherche des Articles, Pré-Packings et Packings…</div>';
   modal.classList.add('show');
   modal.setAttribute('aria-hidden','false');
   updateAvisArticleSelectedCount();
 
   try{
-    const res = await fetch('/api/articles/by-dossier?dossier=' + encodeURIComponent(dossier), {cache:'no-store'});
+    const res = await fetch('/api/reception/dossier-elements?dossier=' + encodeURIComponent(dossier), {cache:'no-store'});
     const data = await res.json();
-    if(!res.ok) throw new Error(data.error || 'Impossible de charger les articles du dossier');
+    if(!res.ok) throw new Error(data.error || 'Impossible de charger les éléments du dossier');
     state.avisDossierArticles = data.articles || [];
+    state.avisDossierHierarchy = data.hierarchy || {packings:[],prepackings_sans_packing:[],articles_sans_contenant:[]};
 
-    if(state.avisDossierArticles.length){
-      const first = state.avisDossierArticles[0] || {};
-      const clientInput = document.getElementById('avis-client');
-      const projetInput = document.getElementById('avis-projet');
-      if(!clientInput.value.trim() && first.client) clientInput.value = first.client;
-      if(!projetInput.value.trim() && first.projet) projetInput.value = first.projet;
-    }
+    const identity = data.identity || {};
+    const first = state.avisDossierArticles[0] || {};
+    const clientInput = document.getElementById('avis-client');
+    const projetInput = document.getElementById('avis-projet');
+    const coordinateurInput = document.getElementById('avis-coordinateur');
+    if(!clientInput.value.trim() && (identity.client || first.client)) clientInput.value = identity.client || first.client;
+    if(!projetInput.value.trim() && (identity.projet || first.projet)) projetInput.value = identity.projet || first.projet;
+    if(!coordinateurInput.value.trim() && identity.charge_projet) coordinateurInput.value = identity.charge_projet;
     renderAvisArticlePicker();
   }catch(e){
     state.avisDossierArticles = [];
-    list.innerHTML = `<div class="avis-picker-empty">${escapeHtml(e.message || 'Impossible de charger les articles.')}</div>`;
+    state.avisDossierHierarchy = null;
+    list.innerHTML = `<div class="avis-picker-empty">${escapeHtml(e.message || 'Impossible de charger les éléments.')}</div>`;
   }
 }
 
@@ -2115,6 +2217,7 @@ document.getElementById('refreshDone').addEventListener('click', renderDoneTicke
 document.getElementById('doneSearch').addEventListener('input', e=>{state.doneSearch=e.target.value;renderDoneTickets();});
 document.getElementById('avis-dossier').addEventListener('input', ()=>{
   state.avisDossierArticles = [];
+  state.avisDossierHierarchy = null;
   state.avisSelectedArticleIds = new Set();
   scheduleAvisDossierLookup();
 });
