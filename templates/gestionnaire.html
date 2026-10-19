@@ -47,6 +47,20 @@
 
 
 /* ESI CHAT */
+/* Fenetre d'echanges independante du detail du ticket */
+.esi-chat-trigger{display:inline-flex;align-items:center;gap:8px;border:1px solid #bae6fd;background:#e0f2fe;color:#075985;border-radius:12px;padding:11px 15px;font-size:14px;font-weight:800;cursor:pointer}
+.esi-chat-trigger:hover{background:#bae6fd}
+.esi-chat-modal{position:fixed;inset:0;background:rgba(15,23,42,.60);z-index:3000;display:none;align-items:center;justify-content:center;padding:16px}
+.esi-chat-modal.open{display:flex}
+.esi-chat-dialog{width:min(760px,100%);max-height:94vh;overflow:hidden;display:flex;flex-direction:column;background:white;border-radius:22px;box-shadow:0 22px 65px rgba(15,23,42,.3);padding:18px}
+.esi-chat-dialog-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.esi-chat-dialog-bar strong{font-size:17px;color:#075985}
+.esi-chat-dialog-close{border:1px solid #cbd5e1;border-radius:10px;background:#f8fafc;padding:9px 13px;font-weight:700;cursor:pointer}
+.esi-chat-dialog-content{overflow:auto;min-height:0}
+.esi-chat-dialog-content .esi-chat{margin-top:0}
+.esi-chat-dialog-content .esi-chat-feed{height:min(42vh,380px)}
+@media(max-width:600px){.esi-chat-dialog{padding:12px}.esi-chat-dialog-content .esi-chat-feed{height:38vh}}
+
 .esi-chat{border:1px solid #cbd5e1;border-radius:16px;background:#fff;padding:14px;margin-top:14px}
 .esi-chat-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;color:#0284c7;font-weight:800}
 .esi-chat-feed{height:290px;overflow-y:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:9px}
@@ -260,6 +274,13 @@
 </div>
 
 <div class="notice" id="notice"></div>
+
+<div class="esi-chat-modal" id="esiChatModal" aria-hidden="true">
+  <div class="esi-chat-dialog" role="dialog" aria-modal="true" aria-label="Echanges du ticket">
+    <div class="esi-chat-dialog-bar"><strong id="esiChatModalTitle">💬 ÉCHANGES</strong><button type="button" class="esi-chat-dialog-close" id="esiChatClose">Fermer ×</button></div>
+    <div class="esi-chat-dialog-content" id="esiChatModalContent"></div>
+  </div>
+</div>
 <script>
 // Chat partage par ticket, visible par tous les utilisateurs des portails.
 const esiChatState = {ticket:null, timer:null, busy:false, activity:{}};
@@ -304,6 +325,27 @@ function esiChatOpen(id,host){
  esiChatLoad(id);esiChatState.timer=setInterval(()=>esiChatLoad(id),10000);
 }
 async function esiChatActivity(){try{const r=await fetch('/api/ticket-messages/activity',{cache:'no-store'});if(r.ok)esiChatState.activity=await r.json();}catch(e){}}
+
+function esiChatLaunchModal(id){
+  if(!id)return;
+  const modal=document.getElementById('esiChatModal');
+  document.getElementById('esiChatModalTitle').textContent='💬 ÉCHANGES — '+id;
+  modal.classList.add('open');modal.setAttribute('aria-hidden','false');
+  esiChatOpen(id,document.getElementById('esiChatModalContent'));
+}
+function esiChatCloseModal(){
+  const modal=document.getElementById('esiChatModal');
+  modal.classList.remove('open');modal.setAttribute('aria-hidden','true');
+  clearInterval(esiChatState.timer);esiChatState.timer=null;esiChatState.ticket=null;
+  document.getElementById('esiChatModalContent').innerHTML='';
+  esiChatActivity().then(()=>{
+    if(typeof renderTable==='function')renderTable();
+  });
+}
+document.getElementById('esiChatClose').addEventListener('click',esiChatCloseModal);
+document.getElementById('esiChatModal').addEventListener('click',e=>{if(e.target.id==='esiChatModal')esiChatCloseModal();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.getElementById('esiChatModal').classList.contains('open'))esiChatCloseModal();});
+
 </script>
 <script>
 function showNotice(message){
@@ -563,7 +605,7 @@ function renderTable(){
 async function renderDetail(){
   const ticket=state.tickets.find(t=>t.id===state.selectedTicketId);
   if(!ticket){
-    document.getElementById('esiChatManagerHost').innerHTML=''; esiChatState.ticket=null; clearInterval(esiChatState.timer);
+    document.getElementById('esiChatManagerHost').innerHTML='';
     els.detailTitle.textContent='Sélectionne un ticket';
     els.detailStatus.textContent='Aucun';
     els.detailStatus.className='badge status-created';
@@ -577,7 +619,8 @@ async function renderDetail(){
     if(deleteBtn) deleteBtn.style.display = 'none';
     return;
   }
-  if(esiChatState.ticket!==ticket.id)esiChatOpen(ticket.id,document.getElementById('esiChatManagerHost'));
+  document.getElementById('esiChatManagerHost').innerHTML=`<button type="button" class="esi-chat-trigger" id="esiChatManagerTrigger">💬 ÉCHANGES ${esiChatBadge(ticket.id)}</button>`;
+  document.getElementById('esiChatManagerTrigger').addEventListener('click',()=>esiChatLaunchModal(ticket.id));
   if(ticket.module === 'Fiche de caisse'){
     els.detailTitle.textContent = packingReference(ticket.dossier,ticket.ref);
   }else if(ticket.module === 'Demande de devis'){
