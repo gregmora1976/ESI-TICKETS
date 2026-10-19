@@ -9753,6 +9753,76 @@ def api_status():
     root = ensure_shared_root()
     return jsonify({'shared_path': str(root), 'mode': 'automatic_app_folder'})
 
+
+# === ESI CHAT - discussions partagees par ticket ===
+@app.route('/api/tickets/<ticket_id>/messages', methods=['GET', 'POST'])
+def api_ticket_chat_messages(ticket_id):
+    if not load_ticket(ticket_id):
+        return jsonify({'error': 'Ticket introuvable'}), 404
+    encoded = urllib.parse.quote(ticket_id, safe='')
+    try:
+        if request.method == 'GET':
+            rows = supabase_rest_request('GET', 'ticket_messages',
+                f'select=id,ticket_id,auteur,message,created_at,storage_path,file_name&ticket_id=eq.{encoded}&order=created_at.asc&limit=500') or []
+            return jsonify(rows)
+        auteur = _as_text(request.form.get('auteur')).strip()[:100]
+        message = _as_text(request.form.get('message')).strip()[:5000]
+        fichier = request.files.get('file')
+        if not auteur or not (message or (fichier and fichier.filename)):
+            return jsonify({'error': 'Nom et message ou fichier requis'}), 400
+        storage_path = None
+        file_name = None
+        if fichier and fichier.filename:
+            file_name = Path(fichier.filename).name[:180]
+            content = fichier.read(10 * 1024 * 1024 + 1)
+            if len(content) > 10 * 1024 * 1024:
+                return jsonify({'error': 'Fichier limite a 10 Mo'}), 400
+            extension = Path(file_name).suffix.lower()
+            if extension not in ('.pdf','.jpg','.jpeg','.png','.webp','.doc','.docx','.xls','.xlsx','.txt'):
+                return jsonify({'error': 'Format de fichier non autorise'}), 400
+            storage_path = f'ticket-chat/{hashlib.sha256(ticket_id.encode()).hexdigest()[:24]}/{uuid.uuid4().hex}_{safe_filename(file_name)}'
+            supabase_upload_bytes(storage_path, content, 'application/octet-stream')
+        payload = {'ticket_id': ticket_id, 'auteur': auteur, 'message': message,
+                   'storage_path': storage_path, 'file_name': file_name}
+        try:
+            rows = supabase_rest_request('POST','ticket_messages','',payload,prefer='return=representation') or []
+        except Exception:
+            if storage_path:
+                try: supabase_delete_object(storage_path)
+                except Exception: pass
+            raise
+        return jsonify(rows[0] if rows else payload), 201
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+@app.route('/api/tickets/<ticket_id>/messages/<message_id>/file')
+def api_ticket_chat_download(ticket_id, message_id):
+    if not load_ticket(ticket_id):
+        abort(404)
+    safe_id = urllib.parse.quote(message_id, safe='')
+    safe_ticket = urllib.parse.quote(ticket_id, safe='')
+    rows = supabase_rest_request('GET', 'ticket_messages',
+        f'select=storage_path,file_name&ticket_id=eq.{safe_ticket}&id=eq.{safe_id}&limit=1') or []
+    if not rows or not rows[0].get('storage_path'):
+        abort(404)
+    return redirect(supabase_signed_download_url(rows[0]['storage_path'], 180))
+
+@app.route('/api/ticket-messages/activity')
+def api_ticket_chat_activity():
+    """Dernier message et nombre de messages par ticket, une requete groupee."""
+    try:
+        rows = supabase_rest_request('GET','ticket_messages',
+            'select=ticket_id,id,auteur,created_at&order=created_at.desc&limit=5000') or []
+        result = {}
+        for row in rows:
+            tid = row.get('ticket_id')
+            if not tid: continue
+            item = result.setdefault(tid, {'count': 0, 'last_id': row.get('id'), 'last_author': row.get('auteur')})
+            item['count'] += 1
+        return jsonify(result)
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
 @app.route('/api/tickets')
 def api_tickets():
     status = request.args.get('status')
