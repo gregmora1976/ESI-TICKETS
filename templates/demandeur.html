@@ -126,7 +126,21 @@
     @media(max-width:850px){.avis-article-row,.avis-tree-child{grid-template-columns:30px 95px 1fr}.avis-article-ref{grid-column:3}.avis-article-desc{grid-column:2 / -1}.avis-article-meta{grid-column:2 / -1;text-align:left}.avis-tree-head{grid-template-columns:30px 105px 1fr}.avis-tree-count{grid-column:2 / -1}.avis-tree-children{padding-left:14px}.avis-tree-nested{margin-left:4px}}
     @media (max-width:1100px){.layout{grid-template-columns:1fr}}
     @media (max-width:720px){h1{font-size:28px}.grid,.grid.three{grid-template-columns:1fr}.hero-top,.content,.card{padding:18px}}
-  </style>
+  
+/* ESI CHAT */
+.esi-chat{border:1px solid #cbd5e1;border-radius:16px;background:#fff;padding:14px;margin-top:14px}
+.esi-chat-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;color:#0284c7;font-weight:800}
+.esi-chat-feed{height:290px;overflow-y:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:9px}
+.esi-chat-msg{background:white;border:1px solid #e2e8f0;border-radius:12px;padding:9px;max-width:92%;overflow-wrap:anywhere}
+.esi-chat-msg.mine{align-self:flex-end;background:#e0f2fe;border-color:#bae6fd}
+.esi-chat-meta{font-size:11px;color:#64748b;margin-bottom:5px}.esi-chat-text{white-space:pre-wrap;font-size:13px}
+.esi-chat-input{width:100%;padding:9px;border-radius:10px;border:1px solid #cbd5e1;font-family:inherit;resize:vertical;min-height:64px}
+.esi-chat-name{border:1px solid #cbd5e1;border-radius:9px;padding:8px;max-width:185px;width:100%}
+.esi-chat-bottom{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.esi-chat-file{max-width:200px;font-size:12px}.esi-chat-send{background:#0284c7;color:white;border:0;padding:10px 15px;border-radius:10px;font-weight:700;cursor:pointer}
+.esi-chat-counter{display:inline-block;background:#dc2626;color:white;border-radius:99px;font-size:11px;padding:2px 7px;margin-left:4px}
+
+</style>
 </head>
 <body>
   <div class="wrap">
@@ -1804,18 +1818,22 @@ function openDoneTicketDetails(ticket){
     `;
   }
 
+  html += '<div id="esiChatDemandeurHost"></div>';
   body.innerHTML = html;
+  esiChatOpen(ticket.id,document.getElementById('esiChatDemandeurHost'));
   modal.classList.add('show');
   modal.setAttribute('aria-hidden', 'false');
 }
 function closeDoneTicketDetails(){
   const modal = document.getElementById('doneModal');
+  clearInterval(esiChatState.timer);esiChatState.ticket=null;
   modal.classList.remove('show');
   modal.setAttribute('aria-hidden', 'true');
 }
 
 async function renderDoneTickets(){
   try{
+    await esiChatActivity();
     const allTickets = await readTicketsFromFolder();
 
     if(state.directTicketId && !state.directTicketOpened){
@@ -1934,6 +1952,7 @@ async function renderDoneTickets(){
                 : `<div class="done-line">Dims : <strong>${escapeHtml(dimensions)}</strong></div><div class="done-line">Prix cession : <strong>${escapeHtml(prixCession)}</strong></div>${normalizeTicketStatus(ticket.status).includes('termine') ? `<div class="done-line">Caissier : <strong>${escapeHtml(nomCaissier)}</strong></div>` : ''}`}
       `;
 
+      const chatTag=document.createElement('span');chatTag.className='done-line';chatTag.innerHTML=`💬 Échanges ${esiChatBadge(ticket.id)}`;item.appendChild(chatTag);
       item.addEventListener('click', () => openDoneTicketDetails(ticket));
 
       const actionRow = document.createElement('div');
@@ -2249,6 +2268,53 @@ refreshReferenceAutocompleteBindings();
 
 window.addEventListener('load', async ()=>{ try { await renderDoneTickets(); } catch(e){} });
 setInterval(async ()=>{ try { await renderDoneTickets(); } catch(e){} }, 10000);
+</script>
+
+
+<script>
+// Chat partage par ticket, visible par tous les utilisateurs des portails.
+const esiChatState = {ticket:null, timer:null, busy:false, activity:{}};
+function esiChatEsc(value){return String(value == null ? '' : value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function esiChatAuthor(){return (localStorage.getItem('esi_chat_author') || '').trim();}
+function esiChatSeenKey(id){return 'esi_chat_seen_'+esiChatAuthor().toLowerCase()+'_'+id;}
+function esiChatReadCount(id){return Number(localStorage.getItem(esiChatSeenKey(id)) || 0);}
+function esiChatBadge(id){const v=esiChatState.activity[id];const n=v?Math.max(0,v.count-esiChatReadCount(id)):0;return n?`<span class="esi-chat-counter">${n}</span>`:'';}
+function esiChatMarkup(){return `<section class="esi-chat" id="esiChatBox"><div class="esi-chat-head"><span>💬 ÉCHANGES <span id="esiChatUnread"></span></span><button type="button" class="btn secondary" id="esiChatRefresh">Actualiser</button></div><div class="esi-chat-feed" id="esiChatFeed">Chargement…</div><div class="esi-chat-bottom"><label for="esiChatName" style="font-size:12px">Votre nom</label><input id="esiChatName" class="esi-chat-name" maxlength="100" placeholder="Nom / prénom" value="${esiChatEsc(esiChatAuthor())}"></div><textarea class="esi-chat-input" id="esiChatText" maxlength="5000" placeholder="Écrire un message…"></textarea><div class="esi-chat-bottom"><input type="file" class="esi-chat-file" id="esiChatFile" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.txt"><button class="esi-chat-send" type="button" id="esiChatSend">Envoyer</button></div><div class="small" id="esiChatError" style="margin-top:5px"></div></section>`;}
+async function esiChatLoad(id){
+ if(!id || esiChatState.ticket!==id || esiChatState.busy)return;
+ const feed=document.getElementById('esiChatFeed');if(!feed)return;
+ esiChatState.busy=true;
+ try{
+  const r=await fetch(`/api/tickets/${encodeURIComponent(id)}/messages`,{cache:'no-store'});
+  const items=await r.json();if(!r.ok)throw Error(items.error||'Lecture impossible');
+  const nearBottom=feed.scrollHeight-feed.scrollTop-feed.clientHeight<70;
+  feed.innerHTML=items.length?items.map(m=>`<div class="esi-chat-msg ${m.auteur===esiChatAuthor()?'mine':''}"><div class="esi-chat-meta"><strong>${esiChatEsc(m.auteur)}</strong> · ${esiChatEsc(new Date(m.created_at).toLocaleString('fr-FR'))}</div>${m.message?`<div class="esi-chat-text">${esiChatEsc(m.message)}</div>`:''}${m.storage_path?`<a target="_blank" rel="noopener" href="/api/tickets/${encodeURIComponent(id)}/messages/${encodeURIComponent(m.id)}/file">📎 ${esiChatEsc(m.file_name||'Fichier joint')}</a>`:''}</div>`).join(''):'<div class="small">Aucun message pour ce ticket.</div>';
+  if(nearBottom)feed.scrollTop=feed.scrollHeight;
+  const act=esiChatState.activity[id];const total=Math.max(items.length,act?act.count:0);
+  localStorage.setItem(esiChatSeenKey(id),String(total));
+  document.getElementById('esiChatError').textContent='';
+ }catch(e){document.getElementById('esiChatError').textContent=e.message;}
+ finally{esiChatState.busy=false;}
+}
+async function esiChatSend(){
+ const id=esiChatState.ticket, name=document.getElementById('esiChatName').value.trim(), txt=document.getElementById('esiChatText').value.trim(), file=document.getElementById('esiChatFile').files[0], btn=document.getElementById('esiChatSend');
+ if(!name || (!txt&&!file)){document.getElementById('esiChatError').textContent='Indiquez votre nom et un message ou un fichier.';return;}
+ localStorage.setItem('esi_chat_author',name);
+ const fd=new FormData();fd.append('auteur',name);fd.append('message',txt);if(file)fd.append('file',file);
+ btn.disabled=true;
+ try{const r=await fetch(`/api/tickets/${encodeURIComponent(id)}/messages`,{method:'POST',body:fd});const data=await r.json();if(!r.ok)throw Error(data.error||'Envoi impossible');document.getElementById('esiChatText').value='';document.getElementById('esiChatFile').value='';await esiChatLoad(id);}
+ catch(e){document.getElementById('esiChatError').textContent=e.message;}
+ finally{btn.disabled=false;}
+}
+function esiChatOpen(id,host){
+ esiChatState.ticket=id;clearInterval(esiChatState.timer);
+ host.innerHTML=esiChatMarkup();
+ document.getElementById('esiChatSend').addEventListener('click',esiChatSend);
+ document.getElementById('esiChatRefresh').addEventListener('click',()=>esiChatLoad(id));
+ document.getElementById('esiChatName').addEventListener('change',e=>{localStorage.setItem('esi_chat_author',e.target.value.trim());esiChatLoad(id)});
+ esiChatLoad(id);esiChatState.timer=setInterval(()=>esiChatLoad(id),10000);
+}
+async function esiChatActivity(){try{const r=await fetch('/api/ticket-messages/activity',{cache:'no-store'});if(r.ok)esiChatState.activity=await r.json();}catch(e){}}
 </script>
 
 </body>
