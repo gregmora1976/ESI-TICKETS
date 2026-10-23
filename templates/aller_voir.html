@@ -9,7 +9,7 @@
 'use strict';
 const KEY='esi_av_tickets_connected_v1';let db=[];let selectedId=null;let artworkIndex=0;let page='home';let saveTimer;
 const empty=()=>({id:(crypto.randomUUID?crypto.randomUUID():String(Date.now()+Math.random())),number:'',client:'',project:'',site:'',access:'',difficulty:'standard',generalMethod:'',generalPhotos:[],generalSketch:'',date:new Date().toISOString().slice(0,10),owner:'',mode:'rapid',purpose:'devis',notes:'',artworks:[],status:'brouillon',updated:Date.now()});
-try{const raw=JSON.parse(localStorage.getItem(KEY));db=Array.isArray(raw)?raw:[]}catch(e){db=[]}
+try{const raw=JSON.parse(localStorage.getItem(KEY));db=Array.isArray(raw)?raw.filter(v=>v.module==='Demande Aller voir'):[]}catch(e){db=[]}
 selectedId=null;
 const SERVER_MODE=location.protocol.startsWith('http');
 let remoteSaveTimer=null;
@@ -19,9 +19,15 @@ async function loadTickets(){
   const resp=await fetch('/api/aller-voir/tickets',{cache:'no-store'});
   if(!resp.ok)throw Error('Tickets indisponibles ('+resp.status+')');
   const tickets=await resp.json();
+  if(!Array.isArray(tickets))throw Error('Réponse tickets invalide');
   const originals=new Map(db.map(v=>[v.id,v]));
-  db=tickets.map(t=>({...t,...(originals.get(t.id)||{}),id:t.id,number:t.number,client:t.client,project:t.project,owner:t.owner,
-     artworks:(originals.get(t.id)||{}).artworks||[],generalPhotos:(originals.get(t.id)||{}).generalPhotos||[]}));
+  // La liste est issue du serveur, jamais du cache local. Les donnees terrain
+  // du cache restent recuperables pour les seuls tickets toujours autorises.
+  db=tickets.filter(t=>t.module==='Demande Aller voir' && t.ticketStatus!=='Annulé').map(t=>{
+    const previous=originals.get(t.id)||{};
+    return {...previous,...t,id:t.id,number:t.number,client:t.client,project:t.project,owner:t.owner,
+       artworks:previous.artworks||[],generalPhotos:previous.generalPhotos||[]};
+  });
   const wanted=new URLSearchParams(location.search).get('ticket');
   if(wanted){
     if(!db.some(v=>v.id===wanted)){const r=await fetch('/api/aller-voir/'+encodeURIComponent(wanted));if(r.ok){const data=await r.json();db.unshift(data)}}
@@ -32,7 +38,7 @@ async function loadTickets(){
 }
 async function refreshAVRecord(id){
  const r=await fetch('/api/aller-voir/'+encodeURIComponent(id),{cache:'no-store'});
- if(!r.ok)throw Error('Chargement impossible ('+r.status+')');
+ if(!r.ok){const err=await r.json().catch(()=>({}));throw Error((err.error||'Chargement impossible')+' ('+r.status+')')}
  const remote=await r.json();const idx=db.findIndex(v=>v.id===id);
  if(idx>=0)db[idx]={...db[idx],...remote};
 }
