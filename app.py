@@ -14591,5 +14591,182 @@ def open_browser():
 ensure_shared_root()
 init_db()
 
+
+# ===== ESI ALLER VOIR - liaison terrain (isolee) =====
+def _av_storage_prefix(ticket_id):
+    return 'aller-voir/' + safe_filename(ticket_id) + '/'
+
+def _av_source_ticket(ticket_id):
+    t = load_ticket(ticket_id)
+    if not t or t.get('module') != 'Demande Aller voir':
+        abort(404)
+    return t
+
+def _av_public_ticket(t):
+    return dict(id=t.get('id'), number=t.get('dossier') or '',
+                client=(t.get('preteur') if t.get('preteur') not in ('', '-', None) else (t.get('client') or '')),
+                project=t.get('expo') or t.get('objet') or '', site=t.get('lieuRdv') or '',
+                owner=t.get('chargeProjet') or '', date=t.get('dateRdv') or '',
+                contact=t.get('contactRdv') or '', purpose=t.get('typeVisite') or '',
+                instructions=t.get('commentaire') or '', ticketStatus=t.get('status') or '')
+
+@app.route('/aller-voir')
+def aller_voir_terrain():
+    return render_template('aller_voir.html')
+
+@app.route('/api/aller-voir/tickets')
+def api_av_tickets():
+    # Limite l'exposition aux seules demandes ALLER VOIR ; tickets annules exclus.
+    tickets = list_tickets()
+    return jsonify([_av_public_ticket(t) for t in tickets
+                    if t.get('module') == 'Demande Aller voir' and t.get('status') != 'Annulé'])
+
+@app.route('/api/aller-voir/<ticket_id>', methods=['GET'])
+def api_av_get(ticket_id):
+    t = _av_source_ticket(ticket_id)
+    report = None
+    try:
+        report = json.loads(supabase_download_bytes(_av_storage_prefix(ticket_id)+'saisie.json').decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        if e.code != 404: raise
+    source = _av_public_ticket(t)
+    if report:
+        # Le ticket demeure la source des informations pre-remplies.
+        report.update({k:source[k] for k in ('id','number','client','project','owner')})
+        return jsonify(report)
+    return jsonify({**source,'status':'brouillon','access':'','difficulty':'standard',
+                    'notes':'','generalMethod':'','generalPhotos':[], 'generalSketch':'',
+                    'artworks':[]})
+
+@app.route('/api/aller-voir/<ticket_id>', methods=['PUT'])
+def api_av_save(ticket_id):
+    _av_source_ticket(ticket_id)
+    body=request.get_json(silent=True)
+    if not isinstance(body,dict): return jsonify(error='JSON invalide'),400
+    # Restreint les champs de saisie pour ne pas ecraser l'identite du ticket.
+    allowed=('date','site','access','difficulty','notes','generalMethod','generalPhotos','generalSketch','artworks','purpose')
+    payload={k:body.get(k) for k in allowed if k in body}
+    payload['status']='brouillon'
+    payload['saved_at']=datetime.now().isoformat()
+    if len(json.dumps(payload).encode('utf-8'))>16*1024*1024:
+        return jsonify(error='Trop de photos pour un seul compte rendu (16 Mo maximum).'),413
+    supabase_upload_bytes(_av_storage_prefix(ticket_id)+'saisie.json',
+        json.dumps(payload,ensure_ascii=False).encode('utf-8'),'application/json')
+    return jsonify(ok=True,saved_at=payload['saved_at'])
+
+@app.route('/api/aller-voir/<ticket_id>/etat', methods=['GET'])
+def api_av_etat(ticket_id):
+    _av_source_ticket(ticket_id)
+    try:
+        supabase_download_bytes(_av_storage_prefix(ticket_id)+'compte-rendu.pdf')
+        return jsonify(pdf=True)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return jsonify(pdf=False)
+        raise
+
+@app.route('/api/aller-voir/<ticket_id>/pdf', methods=['GET'])
+def api_av_pdf(ticket_id):
+    _av_source_ticket(ticket_id)
+    try:
+        raw=supabase_download_bytes(_av_storage_prefix(ticket_id)+'compte-rendu.pdf')
+    except urllib.error.HTTPError as e:
+        if e.code==404: return jsonify(error='PDF non encore valide'),404
+        raise
+    return send_file(BytesIO(raw),mimetype='application/pdf',download_name='CR-ALLER-VOIR-'+safe_filename(ticket_id)+'.pdf')
+
+@app.route('/api/aller-voir/<ticket_id>/finalize', methods=['POST'])
+def api_av_finalize(ticket_id):
+    t=_av_source_ticket(ticket_id)
+    body=request.get_json(silent=True)
+    if not isinstance(body,dict): return jsonify(error='Saisie invalide'),400
+    try:
+        pdf=_av_make_pdf(_av_public_ticket(t),body)
+        body['status']='termine'
+        body['saved_at']=datetime.now().isoformat()
+        supabase_upload_bytes(_av_storage_prefix(ticket_id)+'saisie.json',json.dumps(body,ensure_ascii=False).encode('utf-8'),'application/json')
+        supabase_upload_bytes(_av_storage_prefix(ticket_id)+'compte-rendu.pdf',pdf,'application/pdf')
+        return jsonify(ok=True,pdf_url='/api/aller-voir/'+urllib.parse.quote(ticket_id,safe='')+'/pdf')
+    except ImportError:
+        return jsonify(error='Installer reportlab dans requirements.txt du service Render.'),503
+
+
+def _av_make_pdf(ticket, data):
+    """1 page A4 visite + 1 page A4 par oeuvre, sans prix."""
+    from reportlab.pdfgen.canvas import Canvas
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.utils import ImageReader
+    import base64
+    import textwrap
+    output=BytesIO(); c=Canvas(output,pagesize=A4,pageCompression=1)
+    W,H=A4; M=38; left=M; usable=W-2*M
+    def text(value,x,y,size=9,bold=False,maxchars=100,lines=6,leading=12):
+        c.setFont('Helvetica-Bold' if bold else 'Helvetica',size)
+        clean=_as_text(value).replace('\r','')
+        # Helvetica standard ne contient pas tous les caracteres Unicode.
+        clean=clean.encode('latin-1','replace').decode('latin-1')
+        arr=[]
+        for line in clean.split('\n'):
+            arr.extend(textwrap.wrap(line,width=maxchars,break_long_words=True) or [''])
+        for line in arr[:lines]:
+            if y<75:break
+            c.drawString(x,y,line);y-=leading
+        return y
+    def header(title,page,total):
+        c.setFillColorRGB(.06,.23,.42);c.rect(0,H-75,W,75,fill=1,stroke=0)
+        c.setFillColorRGB(1,1,1);c.setFont('Helvetica-Bold',16);c.drawString(M,H-39,'ESI ALLER VOIR')
+        c.setFont('Helvetica',9);c.drawRightString(W-M,H-39,_as_text(ticket.get('number'))[:28])
+        c.setFillColorRGB(.08,.25,.43);c.setFont('Helvetica-Bold',14);c.drawString(M,H-100,title[:70])
+        c.setFillColorRGB(.35,.42,.51);c.setFont('Helvetica',8);c.drawString(M,35,'COMPTE RENDU TECHNIQUE - SANS PRIX')
+        c.drawRightString(W-M,35,f'{page} / {total}')
+        return H-125
+    def section(label,y):
+        y-=13;c.setFillColorRGB(.05,.38,.66);c.setFont('Helvetica-Bold',10);c.drawString(M,y,label)
+        c.setFillColorRGB(.12,.19,.28);return y-18
+    def pictures(items,sketch,y):
+        images=[]
+        for photo in (items or [])[:6]:
+            if isinstance(photo,dict):images.append(photo.get('data'))
+        if sketch:images.append(sketch)
+        if not images:return y
+        y=section('PHOTOS ET NOTES MANUSCRITES',y)
+        available=max(100,y-65)
+        rows=(len(images)+1)//2
+        imgH=min(125,max(35,(available-(rows-1)*9)/max(1,rows)))
+        colw=(usable-12)/2
+        for i,src in enumerate(images):
+            if not isinstance(src,str) or not src.startswith('data:image/'):continue
+            try:
+                raw=base64.b64decode(src.split(',',1)[1],validate=True)
+                image=ImageReader(BytesIO(raw)); iw,ih=image.getSize()
+                scale=min(colw/max(1,iw),imgH/max(1,ih)); w=iw*scale;h=ih*scale
+                x=M+(i%2)*(colw+12)+(colw-w)/2
+                yy=y-(i//2)*(imgH+9)-h
+                if yy<48:continue
+                c.drawImage(image,x,yy,w,h,mask='auto')
+            except Exception:continue
+        return y-rows*(imgH+9)
+    works=data.get('artworks') if isinstance(data.get('artworks'),list) else []
+    total=1+len(works)
+    y=header('SYNTHESE DE VISITE',1,total)
+    for label,value in [('Dossier',ticket.get('number')),('Client',ticket.get('client')),('Projet',ticket.get('project')),('Charge de projet',ticket.get('owner')),('Date RDV',data.get('date') or ticket.get('date')),('Lieu',data.get('site') or ticket.get('site'))]:
+        y=text(label+' : '+_as_text(value),M,y,9,False,100,2);y-=5
+    for name,key in [('ACCES ET CHEMINEMENT','access'),('DIFFICULTES ET VIGILANCE','notes'),('COMPTE RENDU TECHNIQUE GENERAL','generalMethod')]:
+        y=section(name,y);y=text(data.get(key,''),M,y,8,False,105,7,10)
+    pictures(data.get('generalPhotos'),data.get('generalSketch'),y);c.showPage()
+    for idx,a in enumerate(works,1):
+        if not isinstance(a,dict):continue
+        y=header('FICHE OEUVRE '+str(idx),idx+1,total)
+        y=text(a.get('title') or 'Oeuvre sans titre',M,y,12,True);y-=10
+        for label,key in [('Typologie','category'),('Longueur (cm)','length'),('Largeur (cm)','width'),('Hauteur (cm)','height'),('Poids (kg)','weight'),('Materiaux','material')]:
+            y=text(label+' : '+_as_text(a.get(key,'')),M,y,9,False,100,2);y-=5
+        for label,key in [('MODE OPERATOIRE','method'),('MOYENS HUMAINS ET MATERIELS','resources')]:
+            y=section(label,y);y=text(a.get(key,''),M,y,8,False,105,9,10)
+        pictures(a.get('photos'),a.get('sketch'),y);c.showPage()
+    c.save();return output.getvalue()
+# ===== fin ESI ALLER VOIR =====
+
+
 if __name__ == '__main__':
       app.run(host='127.0.0.1', port=5050, debug=False)
+
