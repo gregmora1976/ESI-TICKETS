@@ -14596,6 +14596,32 @@ init_db()
 def _av_storage_prefix(ticket_id):
     return 'aller-voir/' + safe_filename(ticket_id) + '/'
 
+
+def _av_missing_storage_object(exc):
+    """Supabase Storage renvoie 400 ou 404 quand un objet n'existe pas.
+
+    Un HTTP 400 n'est ignore que si son corps indique explicitement
+    un objet absent ; erreurs de bucket, permissions et auth restent visibles.
+    """
+    if not isinstance(exc, urllib.error.HTTPError):
+        return False
+    if exc.code == 404:
+        return True
+    if exc.code != 400:
+        return False
+    body = exc.read().decode('utf-8', errors='replace')
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        data = {}
+    if isinstance(data, dict):
+        error = str(data.get('error') or '')
+        message = str(data.get('message') or '')
+        status = str(data.get('statusCode') or '')
+        combined = ' '.join([error, message, status]).casefold()
+        return 'not found' in combined or 'not_found' in combined or 'object not found' in combined
+    return False
+
 def _av_source_ticket(ticket_id):
     t = load_ticket(ticket_id)
     if not t or t.get('module') != 'Demande Aller voir':
@@ -14603,7 +14629,7 @@ def _av_source_ticket(ticket_id):
     return t
 
 def _av_public_ticket(t):
-    return dict(id=t.get('id'), number=t.get('dossier') or '',
+    return dict(id=t.get('id'), module='Demande Aller voir', number=t.get('dossier') or '',
                 client=(t.get('preteur') if t.get('preteur') not in ('', '-', None) else (t.get('client') or '')),
                 project=t.get('expo') or t.get('objet') or '', site=t.get('lieuRdv') or '',
                 owner=t.get('chargeProjet') or '', date=t.get('dateRdv') or '',
@@ -14628,7 +14654,9 @@ def api_av_get(ticket_id):
     try:
         report = json.loads(supabase_download_bytes(_av_storage_prefix(ticket_id)+'saisie.json').decode('utf-8'))
     except urllib.error.HTTPError as e:
-        if e.code != 404: raise
+        if not _av_missing_storage_object(e):
+            app.logger.exception('Lecture compte rendu ALLER VOIR impossible : %s', ticket_id)
+            return jsonify(error='Stockage Supabase indisponible : vérifier les logs Render.'), 502
     source = _av_public_ticket(t)
     if report:
         # Le ticket demeure la source des informations pre-remplies.
@@ -14661,9 +14689,9 @@ def api_av_etat(ticket_id):
         supabase_download_bytes(_av_storage_prefix(ticket_id)+'compte-rendu.pdf')
         return jsonify(pdf=True)
     except urllib.error.HTTPError as e:
-        if e.code == 404:
+        if _av_missing_storage_object(e):
             return jsonify(pdf=False)
-        raise
+        return jsonify(error='Stockage Supabase indisponible'), 502
 
 @app.route('/api/aller-voir/<ticket_id>/pdf', methods=['GET'])
 def api_av_pdf(ticket_id):
@@ -14671,7 +14699,7 @@ def api_av_pdf(ticket_id):
     try:
         raw=supabase_download_bytes(_av_storage_prefix(ticket_id)+'compte-rendu.pdf')
     except urllib.error.HTTPError as e:
-        if e.code==404: return jsonify(error='PDF non encore valide'),404
+        if _av_missing_storage_object(e): return jsonify(error='PDF non encore valide'),404
         raise
     return send_file(BytesIO(raw),mimetype='application/pdf',download_name='CR-ALLER-VOIR-'+safe_filename(ticket_id)+'.pdf')
 
