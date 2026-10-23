@@ -189,6 +189,7 @@
             <div class="actions" style="justify-content:flex-start;margin-bottom:12px">
               <button class="btn secondary" id="openFicheBtn" type="button">Ouvrir fiche</button>
               <button class="btn secondary" id="validateAllerVoirBtn" type="button">Valider + calendrier</button>
+              <button class="btn secondary" id="openAVTerrainBtn" type="button" style="display:none">Compte Rendu Visite</button><a id="openAVPdfLink" class="btn secondary" target="_blank" style="display:none">Compte rendu PDF</a>
               <button class="btn secondary" id="exportPdfBtn" type="button">Exporter PDF</button>
               <button class="btn primary" id="notifyBtn" type="button" style="display:none">Envoyer Notif</button>
               <button class="btn secondary" id="editTicketBtn" type="button">Modifier</button>
@@ -613,6 +614,8 @@ async function renderDetail(){
     els.detailGrid.innerHTML='<div class="info"><div class="k">Info</div><div class="v">Clique sur une ligne du tableau pour voir le détail.</div></div>';
     els.requestFiles.innerHTML='<div class="small">Aucun fichier.</div>';
     els.managerSheetBox.innerHTML='<div class="small">Aucune feuille de Packing déposée.</div>';
+    document.getElementById('openAVTerrainBtn').style.display='none';
+    document.getElementById('openAVPdfLink').style.display='none';
     const notifyBtn = document.getElementById('notifyBtn');
     if(notifyBtn) notifyBtn.style.display = 'none';
     const deleteBtn = document.getElementById('deleteTicketBtn');
@@ -630,7 +633,13 @@ async function renderDetail(){
   }else{
     els.detailTitle.textContent = `${ticket.dossier || '-'} - ${ticket.expo || ticket.objet || ticket.module || '-'}`;
   }
-  els.detailStatus.textContent=ticket.status||'Demande créée';
+     const avBtn=document.getElementById('openAVTerrainBtn');const avPdf=document.getElementById('openAVPdfLink');
+   avBtn.style.display=ticket.module==='Demande Aller voir'?'inline-block':'none';
+   avPdf.style.display='none';
+   if(ticket.module==='Demande Aller voir'){const currentId=ticket.id;fetch('/api/aller-voir/'+encodeURIComponent(currentId)+'/etat').then(r=>r.ok?r.json():null).then(data=>{if(data&&data.pdf&&state.selectedTicketId===currentId)avPdf.style.display='inline-block';}).catch(()=>{});}
+   avBtn.onclick=()=>window.open('/aller-voir?ticket='+encodeURIComponent(ticket.id),'_blank');
+   avPdf.href='/api/aller-voir/'+encodeURIComponent(ticket.id)+'/pdf';
+   els.detailStatus.textContent=ticket.status||'Demande créée';
   els.detailStatus.className=`badge ${badgeClass(ticket.status||'Demande créée')}`;updateStatusButtons(ticket.status||'Demande créée');
 
   const level = getPriorityLevel(ticket.dateEmballage);
