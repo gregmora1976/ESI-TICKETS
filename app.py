@@ -14705,6 +14705,23 @@ def api_av_pdf(ticket_id):
         raise
     return send_file(BytesIO(raw),mimetype='application/pdf',download_name='CR-ALLER-VOIR-'+safe_filename(ticket_id)+'.pdf')
 
+@app.route('/api/aller-voir/<ticket_id>/preview-pdf', methods=['POST'])
+def api_av_preview_pdf(ticket_id):
+    """PDF de previsualisation: exactement le meme generateur que le PDF du ticket."""
+    t = _av_source_ticket(ticket_id)
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify(error='Saisie invalide'), 400
+    try:
+        raw = _av_make_pdf(_av_public_ticket(t), body)
+        response = send_file(BytesIO(raw), mimetype='application/pdf',
+                             download_name='CR-ALLER-VOIR-'+safe_filename(ticket_id)+'.pdf')
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+    except Exception:
+        app.logger.exception('Generation aperçu PDF ALLER VOIR impossible pour %s', ticket_id)
+        return jsonify(error='Impossible de generer le PDF : consulter les logs Render.'), 500
+
 @app.route('/api/aller-voir/<ticket_id>/finalize', methods=['POST'])
 def api_av_finalize(ticket_id):
     t=_av_source_ticket(ticket_id)
@@ -14722,167 +14739,234 @@ def api_av_finalize(ticket_id):
 
 
 def _av_make_pdf(ticket, data):
-    """Compte rendu A4 : 1 page pour la visite + 1 page par oeuvre, sans prix.
+    """Document PDF de reference, utilise a l'identique en previsualisation et dans le ticket.
 
-    Photos agrandies en l'absence de notes manuscrites ; grille plus compacte
-    lorsqu'une note existe. L'espace est calcule a partir du texte restant.
+    Style aligne sur le compte rendu terrain valide : bandeau bleu, fiche infos,
+    photos agrandies sans croquis, une page pour la visite + une page par oeuvre.
     """
     from reportlab.pdfgen.canvas import Canvas
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.utils import ImageReader
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
     import base64
+    from xml.sax.saxutils import escape as xml_escape
+
+    fonts = {'regular':'Helvetica', 'bold':'Helvetica-Bold'}
+    # DejaVu est present sur certains hebergeurs : conserve les caracteres francais.
+    try:
+        fontdir = Path('/usr/share/fonts/truetype/dejavu')
+        regular = fontdir / 'DejaVuSans.ttf'
+        bold = fontdir / 'DejaVuSans-Bold.ttf'
+        if regular.is_file() and bold.is_file():
+            if 'AVDejaVu' not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(TTFont('AVDejaVu', str(regular)))
+            if 'AVDejaVuBold' not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(TTFont('AVDejaVuBold', str(bold)))
+            fonts = {'regular':'AVDejaVu', 'bold':'AVDejaVuBold'}
+    except Exception:
+        pass
+
     output = BytesIO()
     c = Canvas(output, pagesize=A4, pageCompression=1)
     W, H = A4
-    M = 38
-    usable = W - M * 2
+    M = 44
+    MAXX = W - M
+    usable = W - M*2
+    DARK = (0.075, 0.235, 0.43)
+    BLUE = (0.08, 0.31, 0.56)
+    TEXT = (0.12, 0.18, 0.27)
+    GRAY = (0.40, 0.47, 0.57)
 
-    def as_text(val):
-        return _as_text(val).replace('\r', '').encode('latin-1', 'replace').decode('latin-1')
+    def val(v, default=''):
+        return str(v if v is not None else default).replace('\r', '').strip()
 
-    def text(value, x, y, size=9, bold=False, maxchars=96, lines=9, leading=12):
-        c.setFillColorRGB(.12, .19, .28)
-        c.setFont('Helvetica-Bold' if bold else 'Helvetica', size)
-        for raw in as_text(value).split('\n'):
-            words = raw.split()
-            row = ''
-            out = []
-            for word in words:
-                candidate = (row + ' ' + word).strip()
-                if c.stringWidth(candidate, 'Helvetica-Bold' if bold else 'Helvetica', size) > usable and row:
-                    out.append(row)
-                    row = word
+    def draw(v, x, y, sz=9, bold=False, color=TEXT):
+        c.setFillColorRGB(*color)
+        c.setFont(fonts['bold' if bold else 'regular'],sz)
+        c.drawString(x,y,val(v))
+
+    def wrap(text, width, size, bold=False):
+        font=fonts['bold' if bold else 'regular']
+        out=[]
+        for paragraph in val(text).split('\n'):
+            if not paragraph:
+                out.append('')
+                continue
+            line=''
+            for word in paragraph.split():
+                candidate=(line+' '+word).strip()
+                if line and pdfmetrics.stringWidth(candidate,font,size)>width:
+                    out.append(line)
+                    line=word
                 else:
-                    row = candidate
-            out.append(row)
-            for line in out:
-                if lines <= 0 or y < 68:
-                    return y
-                c.drawString(x, y, line[:maxchars])
-                y -= leading
-                lines -= 1
+                    line=candidate
+            out.append(line)
+        return out
+
+    def paragraph(v,x,y,width=usable,size=9,leading=13,bold=False,max_lines=100):
+        lines=wrap(v,width,size,bold)
+        for ln in lines[:max_lines]:
+            if y<71:break
+            draw(ln,x,y,size,bold)
+            y-=leading
         return y
 
-    def header(page, total):
-        band_y = H - 75
-        c.setFillColorRGB(.06, .23, .42)
-        c.rect(0, band_y, W, 75, fill=1, stroke=0)
-        logo = None
-        for name in ('logo.png', 'logo.jpg', 'logo.jpeg'):
-            candidate = APP_DIR / 'static' / name
-            if candidate.is_file():
-                logo = candidate
-                break
-        tx = M
-        if logo:
+    def heading(title, y):
+        y-=15
+        draw(title,M,y,11.2,True,BLUE)
+        c.setStrokeColorRGB(.78,.84,.91)
+        c.setLineWidth(.6)
+        c.line(M,y-5,MAXX,y-5)
+        return y-22
+
+    def field(label,value,y,width=usable):
+        if value in (None,''): value='Non renseigné'
+        draw(label,M,y,8.4,True,BLUE)
+        y-=14
+        y=paragraph(value,M,y,width,9.0,12.5,max_lines=9)
+        return y-7
+
+    def logo():
+        for name in ('logo.png','logo.jpg','logo.jpeg'):
+            path=APP_DIR/'static'/name
+            if path.is_file():
+                try:
+                    im=ImageReader(str(path))
+                    iw,ih=im.getSize()
+                    area_w,area_h=67,53
+                    scale=min(area_w/iw,area_h/ih)
+                    dw,dh=iw*scale,ih*scale
+                    c.setFillColorRGB(1,1,1)
+                    c.rect(M, H-67, 67, 51, fill=1,stroke=0)
+                    c.drawImage(im,M+(67-dw)/2,H-67+(51-dh)/2,dw,dh,mask='auto')
+                    return
+                except Exception as e:
+                    app.logger.warning('Logo AV illisible: %s',e)
+        draw('ESI',M+8,H-45,18,True,(1,1,1))
+
+    def header(page,total):
+        c.setFillColorRGB(*DARK)
+        c.rect(0,H-84,W,84,stroke=0,fill=1)
+        logo()
+        draw('COMPTE RENDU DE VISITE',M+88,H-47,13.3,True,(1,1,1))
+        dossier=val(ticket.get('number') or data.get('number') or '—')
+        preteur=val(ticket.get('preteur') or data.get('preteur') or '—')
+        c.setFillColorRGB(1,1,1)
+        c.setFont(fonts['bold'],8.8)
+        c.drawRightString(W-M,H-28,'N° Dossier : '+dossier[:25])
+        c.setFont(fonts['regular'],8)
+        while preteur and pdfmetrics.stringWidth('Prêteur : '+preteur,fonts['regular'],8)>170:
+            preteur=preteur[:-2]
+        c.drawRightString(W-M,H-47,'Prêteur : '+(preteur or '—'))
+        c.setStrokeColorRGB(.82,.87,.93)
+        c.line(M,36,MAXX,36)
+        draw('ESI · COMPTE RENDU TECHNIQUE · SANS CHIFFRAGE',M,23,7.0,False,GRAY)
+        c.setFillColorRGB(*GRAY)
+        c.setFont(fonts['regular'],7)
+        c.drawRightString(MAXX,23,f'{page} / {total}')
+        return H-117
+
+    def facts(items,y):
+        # Deux colonnes, deux lignes dans un fond bleu clair.
+        total_h=66
+        c.setFillColorRGB(.948,.965,.987)
+        c.roundRect(M,y-total_h,usable,total_h,7,fill=1,stroke=0)
+        inner=M+11
+        col=usable/2
+        for i,(label,value) in enumerate(items[:4]):
+            x=inner+(i%2)*col
+            top=y-15-(i//2)*32
+            draw(label.upper(),x,top,7.3,False,GRAY)
+            text_val=val(value,'—') or '—'
+            line=wrap(text_val,col-20,9.4,True)[0]
+            draw(line,x,top-15,9.4,True)
+        return y-total_h-6
+
+    def picture_set(photos,sketch,y):
+        sources=[]
+        for photo in photos or []:
+            src=photo.get('data') if isinstance(photo,dict) else None
+            if isinstance(src,str) and src.startswith('data:image/'):
+                sources.append((src,False))
+        if isinstance(sketch,str) and sketch.startswith('data:image/') and len(sketch)>300:
+            sources.append((sketch,True))
+        if not sources:return y
+        y=heading('Photographies et notes manuscrites' if any(k for _,k in sources) else 'Photographies',y)
+        # Agrandissement automatique sans note manuscrite, grille compacte avec note.
+        has_sketch=any(k for _,k in sources)
+        count=len(sources)
+        cols=1 if count==1 else 2 if count<=4 else 3
+        gap=10
+        cw=(usable-gap*(cols-1))/cols
+        rows=(count+cols-1)//cols
+        bottom=60
+        available=max(0,y-bottom)
+        if not available:return y
+        desired=245 if not has_sketch else 160
+        ch=min(desired,(available-gap*(rows-1))/max(1,rows))
+        if ch<24: return y
+        for i,(src,is_sketch) in enumerate(sources):
             try:
-                image = ImageReader(str(logo))
-                iw, ih = image.getSize()
-                boxw, boxh = 78, 49
-                ratio = min(boxw / iw, boxh / ih)
-                dw, dh = iw * ratio, ih * ratio
-                c.drawImage(image, M + (boxw-dw)/2, band_y + 13 + (boxh-dh)/2,
-                            width=dw, height=dh, mask='auto')
-                tx = M + 95
-            except Exception:
-                pass
-        c.setFillColorRGB(1, 1, 1)
-        c.setFont('Helvetica-Bold', 14)
-        c.drawString(tx, H-43, 'COMPTE RENDU DE VISITE')
-        dossier = as_text(ticket.get('number') or '-')
-        preteur = as_text(ticket.get('preteur') or '-')
-        c.setFont('Helvetica-Bold', 9.5)
-        c.drawRightString(W-M, H-29, 'N° Dossier : ' + dossier[:30])
-        c.setFont('Helvetica', 8)
-        # Le preteur peut etre long : on limite sa largeur pour ne pas chevaucher le titre.
-        while c.stringWidth(preteur, 'Helvetica', 8) > 170 and len(preteur) > 3:
-            preteur = preteur[:-2] + '…'
-        c.drawRightString(W-M, H-48, 'Prêteur : ' + preteur)
-        c.setFillColorRGB(.35, .42, .51)
-        c.setFont('Helvetica', 8)
-        c.drawString(M, 35, 'COMPTE RENDU TECHNIQUE - SANS PRIX')
-        c.drawRightString(W-M, 35, f'{page} / {total}')
-        return H - 100
+                raw=base64.b64decode(src.split(',',1)[1],validate=True)
+                image=ImageReader(BytesIO(raw))
+                iw,ih=image.getSize()
+                x=M+(i%cols)*(cw+gap)
+                cell_top=y-(i//cols)*(ch+gap)
+                ratio=min((cw-6)/iw,(ch-6)/ih)
+                dw,dh=iw*ratio,ih*ratio
+                c.drawImage(image,x+(cw-dw)/2,cell_top-(ch-dh)/2-dh,dw,dh,mask='auto')
+            except Exception as exc:
+                app.logger.warning('Photo AV ignorée pour PDF: %s',exc)
+        return y-rows*(ch+gap)
 
-    def section(label, y):
-        y -= 13
-        c.setFillColorRGB(.05, .38, .66)
-        c.setFont('Helvetica-Bold', 10)
-        c.drawString(M, y, label)
-        return y-18
-
-    def pictures(items, sketch, y):
-        photo_sources = [p.get('data') for p in (items or []) if isinstance(p, dict) and p.get('data')]
-        # La zone manuscrite n'est ajoutee que si un dessin a ete effectivement sauvegarde.
-        has_sketch = isinstance(sketch, str) and sketch.startswith('data:image/') and len(sketch) > 300
-        sources = photo_sources + ([sketch] if has_sketch else [])
-        if not sources:
-            return y
-        y = section('PHOTOS' + (' ET NOTES MANUSCRITES' if has_sketch else ''), y)
-        available = max(0, y - 63)
-        if available < 36:
-            return y
-        # Pas de note -> grands visuels ; note -> reserve une zone pour le croquis.
-        columns = 2 if len(photo_sources) <= 2 and not has_sketch else 3 if len(photo_sources) >= 3 else 2
-        if has_sketch:
-            columns = 2 if len(sources) <= 4 else 3
-        rows = (len(sources) + columns - 1) // columns
-        gap = 9
-        cell_h = max(12, min(265 if not has_sketch else 155, (available - gap*(rows-1)) / rows))
-        colw = (usable - gap*(columns-1)) / columns
-        for i, src in enumerate(sources):
-            if not isinstance(src, str) or not src.startswith('data:image/'):
-                continue
-            try:
-                raw = base64.b64decode(src.split(',', 1)[1], validate=True)
-                image = ImageReader(BytesIO(raw))
-                iw, ih = image.getSize()
-                factor = min(colw / max(1,iw), cell_h / max(1,ih))
-                dw, dh = iw*factor, ih*factor
-                col = i % columns
-                row = i // columns
-                xx = M + col*(colw+gap) + (colw-dw)/2
-                yy = y - row*(cell_h+gap) - (cell_h-dh)/2 - dh
-                if yy < 54:
-                    continue
-                c.drawImage(image, xx, yy, dw, dh, mask='auto')
-            except Exception:
-                continue
-        return y - rows*(cell_h+gap)
-
-    works = data.get('artworks') if isinstance(data.get('artworks'), list) else []
-    works = [a for a in works if isinstance(a, dict)]
-    total = 1 + len(works)
-    y = header(1,total)
-    y = section('SYNTHESE DE VISITE', y)
-    for label,value in [('Dossier',ticket.get('number')),('Client',ticket.get('client')),
-                        ('Projet',ticket.get('project')),('Charge de projet',ticket.get('owner')),
-                        ('Date RDV',data.get('date') or ticket.get('date')),
-                        ('Lieu',data.get('site') or ticket.get('site'))]:
-        y = text(label+' : '+_as_text(value), M,y,9,False,100,2); y -= 4
-    for label,key in [('ACCES ET CHEMINEMENT','access'),('DIFFICULTES ET VIGILANCE','notes'),
-                      ('COMPTE RENDU TECHNIQUE GENERAL','generalMethod')]:
-        y=section(label,y)
-        y=text(data.get(key,''),M,y,8,False,105,8,10)
-    y=section('MOYENS HUMAINS',y)
-    y=text('Nombre d\'hommes : '+(_as_text(data.get('humanCount')) or '-'),M,y,9,False,100,2);y-=4
-    y=text('Duree totale (heures) : '+(_as_text(data.get('totalHours')) or '-'),M,y,9,False,100,2);y-=4
-    y=section('MOYENS MATERIELS',y)
-    y=text(data.get('equipmentList') or '-',M,y,8,False,105,12,10)
-    pictures(data.get('generalPhotos'),data.get('generalSketch'),y)
+    works=[a for a in data.get('artworks',[]) if isinstance(a,dict)]
+    total=len(works)+1
+    y=header(1,total)
+    draw('Compte rendu de visite',M,y,18,True,DARK)
+    y-=21
+    draw(val(ticket.get('project') or data.get('project') or 'Visite technique'),M,y,9.1,False,GRAY)
+    y-=16
+    visit_date=val(data.get('date') or ticket.get('date'))
+    if len(visit_date)==10 and visit_date[4]=='-':
+        visit_date=visit_date[8:]+'/'+visit_date[5:7]+'/'+visit_date[:4]
+    y=facts([
+        ('Client',ticket.get('client') or data.get('client')),
+        ('Chargé de projet',ticket.get('owner') or data.get('owner')),
+        ('Date de visite',visit_date),
+        ('Objet','Préparation réalisation' if data.get('purpose')=='realisation' else 'Préparation devis')],y)
+    y=heading('Environnement général',y)
+    for label,value in (
+        ('Lieu / Adresse',data.get('site') or ticket.get('site')),
+        ('Accès et cheminement',data.get('access')),
+        ('Difficulté',{'standard':'Simple / accès standard','moderate':'Contraintes particulières','complex':'Complexe / moyens spécifiques'}.get(data.get('difficulty'),'')),
+        ('Contraintes et points de vigilance',data.get('notes'))):
+        y=field(label,value,y)
+    y=heading('Compte rendu technique général',y)
+    y=field('Déroulement et préconisations',data.get('generalMethod'),y)
+    y=heading('Moyens humains',y)
+    y=field('Nombre d’hommes',data.get('humanCount'),y)
+    y=field('Durée totale (heures)',data.get('totalHours'),y)
+    y=heading('Moyens matériels',y)
+    y=field('Matériel nécessaire',data.get('equipmentList'),y)
+    picture_set(data.get('generalPhotos'),data.get('generalSketch'),y)
     c.showPage()
 
-    for idx,a in enumerate(works,1):
-        y=header(idx+1,total)
-        y=section('FICHE OEUVRE '+str(idx),y)
-        y=text(a.get('title') or 'Oeuvre sans titre',M,y,12,True);y-=8
-        for label,key in [('Typologie','category'),('Longueur (cm)','length'),('Largeur (cm)','width'),
-                          ('Hauteur (cm)','height'),('Poids (kg)','weight'),('Materiaux','material')]:
-            y=text(label+' : '+_as_text(a.get(key,'')),M,y,9,False,100,2);y-=4
-        for label,key in [('MODE OPERATOIRE','method'),('MOYENS HUMAINS ET MATERIELS','resources')]:
-            y=section(label,y)
-            y=text(a.get(key,''),M,y,8,False,105,9,10)
-        pictures(a.get('photos'),a.get('sketch'),y)
+    names={'tableau':'Tableau','sculpture':'Sculpture','objet':'Objet','installation':'Installation','autre':'Autre'}
+    for index,a in enumerate(works,1):
+        y=header(index+1,total)
+        draw(f'Fiche œuvre {index} / {len(works)}',M,y,18,True,DARK)
+        y-=22
+        draw(val(a.get('title') or 'Œuvre sans titre'),M,y,10,False,GRAY)
+        y-=20
+        dims=' × '.join(val(a.get(k) or '—') for k in ('length','width','height'))
+        y=facts([('Typologie',names.get(a.get('category'),a.get('category') or '—')),
+                 ('Dimensions (cm)',dims),('Poids',val(a.get('weight') or '—')+' kg'),
+                 ('Matériaux / technique',a.get('material') or '—')],y)
+        y=heading('Mode opératoire individuel',y)
+        y=field('Préconisations de manutention / emballage',a.get('method'),y)
+        y=field('Moyens humains et matériels',a.get('resources'),y)
+        picture_set(a.get('photos'),a.get('sketch'),y)
         c.showPage()
     c.save()
     return output.getvalue()
