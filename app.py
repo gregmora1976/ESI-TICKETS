@@ -14665,6 +14665,7 @@ def api_av_get(ticket_id):
         return jsonify(report)
     return jsonify({**source,'status':'brouillon','access':'','difficulty':'standard',
                     'notes':'','generalMethod':'','generalPhotos':[], 'generalSketch':'',
+                    'humanCount':'','totalHours':'','equipmentList':'',
                     'artworks':[]})
 
 @app.route('/api/aller-voir/<ticket_id>', methods=['PUT'])
@@ -14673,7 +14674,7 @@ def api_av_save(ticket_id):
     body=request.get_json(silent=True)
     if not isinstance(body,dict): return jsonify(error='JSON invalide'),400
     # Restreint les champs de saisie pour ne pas ecraser l'identite du ticket.
-    allowed=('date','site','access','difficulty','notes','generalMethod','generalPhotos','generalSketch','artworks','purpose')
+    allowed=('date','site','access','difficulty','notes','generalMethod','generalPhotos','generalSketch','artworks','purpose','humanCount','totalHours','equipmentList')
     payload={k:body.get(k) for k in allowed if k in body}
     payload['status']='brouillon'
     payload['saved_at']=datetime.now().isoformat()
@@ -14863,6 +14864,11 @@ def _av_make_pdf(ticket, data):
                       ('COMPTE RENDU TECHNIQUE GENERAL','generalMethod')]:
         y=section(label,y)
         y=text(data.get(key,''),M,y,8,False,105,8,10)
+    y=section('MOYENS HUMAINS',y)
+    y=text('Nombre d\'hommes : '+(_as_text(data.get('humanCount')) or '-'),M,y,9,False,100,2);y-=4
+    y=text('Duree totale (heures) : '+(_as_text(data.get('totalHours')) or '-'),M,y,9,False,100,2);y-=4
+    y=section('MOYENS MATERIELS',y)
+    y=text(data.get('equipmentList') or '-',M,y,8,False,105,12,10)
     pictures(data.get('generalPhotos'),data.get('generalSketch'),y)
     c.showPage()
 
