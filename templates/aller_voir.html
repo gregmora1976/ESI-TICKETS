@@ -86,11 +86,11 @@ function reportText(value){return esc(value||'Non renseigné').replace(/\r?\n/g,
 function reportPhotos(photos,label){if(!photos||!photos.length)return '';return `<h3>${esc(label)}</h3><div class="photogrid">${photos.map((p,i)=>{let src=safeImage(p.data);return src?`<figure><img src="${src}" alt="Photo ${i+1}"><figcaption>${esc(p.name||'Photo '+(i+1))}</figcaption></figure>`:''}).join('')}</div>`}
 function reportSketch(src,label){src=safeImage(src);return src?`<h3>${esc(label)}</h3><figure class="sketch"><img src="${src}" alt="Note manuscrite"></figure>`:''}
 function reportBlock(label,val){return `<div class="fieldline"><div class="fieldlabel">${esc(label)}</div><div>${reportText(val)}</div></div>`}
-function buildReport(v){
+function buildReport(v, logoDataUrl){
  const categories={tableau:'Tableau',sculpture:'Sculpture',objet:'Objet',installation:'Installation',autre:'Autre'};
  const difficulty={standard:'Simple / accès standard',moderate:'Contraintes particulières',complex:'Complexe / moyens spécifiques'};
  const prettyDate=v.date?new Date(v.date+'T12:00:00').toLocaleDateString('fr-FR'):'—';
- const identity=`<div class="identity"><div class="identity-left"><img src="/static/logo.png" onerror="this.onerror=null;this.src='/static/logo.jpg'" alt="Logo ESI"><b>COMPTE RENDU DE VISITE</b></div><div class="identity-right"><strong>N° Dossier : ${esc(v.number||'—')}</strong><small>Prêteur : ${esc(v.preteur||'—')}</small></div></div>`;
+ const identity=`<div class="identity"><div class="identity-left">${logoDataUrl?`<img src="${logoDataUrl}" alt="Logo ESI">`:`<strong style="font-size:18pt;color:white;letter-spacing:.04em">ESI</strong>`}<b>COMPTE RENDU DE VISITE</b></div><div class="identity-right"><strong>N° Dossier : ${esc(v.number||'—')}</strong><small>Prêteur : ${esc(v.preteur||'—')}</small></div></div>`;
  const footer=(n,total)=>`<div class="sheetfooter"><span>ESI · COMPTE RENDU TECHNIQUE · SANS CHIFFRAGE</span><span>${n} / ${total}</span></div>`;
  const worksData=v.artworks||[];
  const total=worksData.length+1;
@@ -109,7 +109,38 @@ window.addEventListener('load',()=>{fitSheets();setTimeout(fitSheets,200)});wind
 <\/script></body></html>`;
 }
 
-function exportReport(){const v=current();if(!v){alert('Aucune visite ouverte.');return}persist();const html=buildReport(v);const blob=new Blob([html],{type:'text/html;charset=utf-8'});const url=URL.createObjectURL(blob);const win=window.open(url,'_blank');if(!win){URL.revokeObjectURL(url);alert('Le navigateur bloque la fenêtre du compte rendu. Autorisez les fenêtres surgissantes pour ce fichier, puis réessayez.');return}setTimeout(()=>URL.revokeObjectURL(url),120000)}
+async function loadReportLogo(){
+ // L'aperçu est ouvert via blob: une URL relative /static/ ne fonctionne pas dans ce contexte.
+ // L'image est convertie en data: URL avant la construction du document imprimable.
+ for(const path of ['/static/logo.png','/static/logo.jpg']){
+  try{
+   const response=await fetch(path,{cache:'no-store'});
+   if(!response.ok)continue;
+   const blob=await response.blob();
+   if(!blob.type.startsWith('image/'))continue;
+   const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('Lecture logo impossible'));reader.readAsDataURL(blob)});
+   if(typeof data==='string'&&data.startsWith('data:image/'))return data;
+  }catch(error){console.warn('Logo ESI indisponible :',path,error)}
+ }
+ return '';
+}
+async function exportReport(){
+ const v=current();if(!v){alert('Aucune visite ouverte.');return}
+ persist();
+ // Ouverture immédiate pendant le clic pour éviter le blocage anti-popup mobile.
+ const win=window.open('about:blank','_blank');
+ if(!win){alert('Le navigateur bloque la fenêtre du compte rendu. Autorisez les fenêtres surgissantes, puis réessayez.');return}
+ try{
+  win.document.open();win.document.write('<!doctype html><html lang="fr"><meta charset="utf-8"><title>Compte rendu ESI</title><body style="font:16px Arial;padding:25px">Préparation du compte rendu…</body></html>');win.document.close();
+  const logoDataUrl=await loadReportLogo();
+  if(!logoDataUrl)console.warn('Logo ESI non chargé : bandeau texte de remplacement utilisé.');
+  const html=buildReport(v,logoDataUrl);
+  const blob=new Blob([html],{type:'text/html;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  win.location.replace(url);
+  setTimeout(()=>URL.revokeObjectURL(url),120000);
+ }catch(error){console.error(error);win.document.body.textContent='Impossible de préparer le compte rendu : '+error.message}
+}
 async function finalize(){const v=current();if(!v||!v.number.trim()||!v.artworks.length){alert('Complétez le dossier et au moins une fiche œuvre.');return}
  if(!SERVER_MODE){alert('La validation serveur nécessite ESI TICKETS.');return}
  const btn=document.querySelector('.actions button');
