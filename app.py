@@ -194,19 +194,12 @@ def get_caisse_fournisseur_status(caisse_ref):
     }
 
 def safe_filename(name):
-    """Nom technique ASCII pour Supabase ; le nom d'origine reste affiché dans le ticket.
-
-    Ne pas appliquer rétroactivement cette normalisation aux chemins déjà stockés.
-    """
-    import unicodedata
-
-    name = str(name or "fichier").replace("œ", "oe").replace("Œ", "OE")
-    name = name.replace("æ", "ae").replace("Æ", "AE").replace("ß", "ss")
-    name = unicodedata.normalize("NFKD", name)
-    name = "".join(c for c in name if not unicodedata.combining(c))
-    name = "".join(c if c.isascii() and (c.isalnum() or c in "._-") else "_" for c in name)
-    name = name.strip("._")
-    return name[:180] or "fichier"
+    """Nettoie le nom du fichier pour Supabase tout en gardant le vrai nom affiché côté appli."""
+    name = str(name or "fichier")
+    return "".join(
+        c if c.isalnum() or c in "._-" else "_"
+        for c in name
+    )
 
 
 def supabase_upload_bytes(storage_path, content, content_type="application/octet-stream"):
@@ -10372,7 +10365,7 @@ def api_create_ticket():
             enlevement_pdf_bytes = content
 
         clean_name = safe_filename(fs.filename)
-        storage_path = f"{ticket_id}/{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{clean_name}"
+        storage_path = f"{ticket_id}/{datetime.now().strftime('%Y%m%d%H%M%S')}_{clean_name}"
 
         try:
             supabase_upload_bytes(
@@ -13058,7 +13051,7 @@ def api_manager_sheet(ticket_id):
     for fs in valid_files:
         content = fs.read()
         clean_name = safe_filename(fs.filename)
-        storage_path = f"{ticket_id}/gestionnaire/{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{clean_name}"
+        storage_path = f"{ticket_id}/gestionnaire/{datetime.now().strftime('%Y%m%d%H%M%S')}_{clean_name}"
 
         try:
             supabase_upload_bytes(
@@ -14637,6 +14630,7 @@ def _av_source_ticket(ticket_id):
 
 def _av_public_ticket(t):
     return dict(id=t.get('id'), module='Demande Aller voir', number=t.get('dossier') or '',
+                preteur=(t.get('preteur') if t.get('preteur') not in ('', '-', None) else ''),
                 client=(t.get('preteur') if t.get('preteur') not in ('', '-', None) else (t.get('client') or '')),
                 project=t.get('expo') or t.get('objet') or '', site=t.get('lieuRdv') or '',
                 owner=t.get('chargeProjet') or '', date=t.get('dateRdv') or '',
@@ -14667,7 +14661,7 @@ def api_av_get(ticket_id):
     source = _av_public_ticket(t)
     if report:
         # Le ticket demeure la source des informations pre-remplies.
-        report.update({k:source[k] for k in ('id','number','client','project','owner')})
+        report.update({k:source[k] for k in ('id','number','client','project','owner','preteur')})
         return jsonify(report)
     return jsonify({**source,'status':'brouillon','access':'','difficulty':'standard',
                     'notes':'','generalMethod':'','generalPhotos':[], 'generalSketch':'',
@@ -14727,78 +14721,166 @@ def api_av_finalize(ticket_id):
 
 
 def _av_make_pdf(ticket, data):
-    """1 page A4 visite + 1 page A4 par oeuvre, sans prix."""
+    """Compte rendu A4 : 1 page pour la visite + 1 page par oeuvre, sans prix.
+
+    Photos agrandies en l'absence de notes manuscrites ; grille plus compacte
+    lorsqu'une note existe. L'espace est calcule a partir du texte restant.
+    """
     from reportlab.pdfgen.canvas import Canvas
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.utils import ImageReader
     import base64
-    import textwrap
-    output=BytesIO(); c=Canvas(output,pagesize=A4,pageCompression=1)
-    W,H=A4; M=38; left=M; usable=W-2*M
-    def text(value,x,y,size=9,bold=False,maxchars=100,lines=6,leading=12):
-        c.setFont('Helvetica-Bold' if bold else 'Helvetica',size)
-        clean=_as_text(value).replace('\r','')
-        # Helvetica standard ne contient pas tous les caracteres Unicode.
-        clean=clean.encode('latin-1','replace').decode('latin-1')
-        arr=[]
-        for line in clean.split('\n'):
-            arr.extend(textwrap.wrap(line,width=maxchars,break_long_words=True) or [''])
-        for line in arr[:lines]:
-            if y<75:break
-            c.drawString(x,y,line);y-=leading
+    output = BytesIO()
+    c = Canvas(output, pagesize=A4, pageCompression=1)
+    W, H = A4
+    M = 38
+    usable = W - M * 2
+
+    def as_text(val):
+        return _as_text(val).replace('\r', '').encode('latin-1', 'replace').decode('latin-1')
+
+    def text(value, x, y, size=9, bold=False, maxchars=96, lines=9, leading=12):
+        c.setFillColorRGB(.12, .19, .28)
+        c.setFont('Helvetica-Bold' if bold else 'Helvetica', size)
+        for raw in as_text(value).split('\n'):
+            words = raw.split()
+            row = ''
+            out = []
+            for word in words:
+                candidate = (row + ' ' + word).strip()
+                if c.stringWidth(candidate, 'Helvetica-Bold' if bold else 'Helvetica', size) > usable and row:
+                    out.append(row)
+                    row = word
+                else:
+                    row = candidate
+            out.append(row)
+            for line in out:
+                if lines <= 0 or y < 68:
+                    return y
+                c.drawString(x, y, line[:maxchars])
+                y -= leading
+                lines -= 1
         return y
-    def header(title,page,total):
-        c.setFillColorRGB(.06,.23,.42);c.rect(0,H-75,W,75,fill=1,stroke=0)
-        c.setFillColorRGB(1,1,1);c.setFont('Helvetica-Bold',16);c.drawString(M,H-39,'ESI ALLER VOIR')
-        c.setFont('Helvetica',9);c.drawRightString(W-M,H-39,_as_text(ticket.get('number'))[:28])
-        c.setFillColorRGB(.08,.25,.43);c.setFont('Helvetica-Bold',14);c.drawString(M,H-100,title[:70])
-        c.setFillColorRGB(.35,.42,.51);c.setFont('Helvetica',8);c.drawString(M,35,'COMPTE RENDU TECHNIQUE - SANS PRIX')
-        c.drawRightString(W-M,35,f'{page} / {total}')
-        return H-125
-    def section(label,y):
-        y-=13;c.setFillColorRGB(.05,.38,.66);c.setFont('Helvetica-Bold',10);c.drawString(M,y,label)
-        c.setFillColorRGB(.12,.19,.28);return y-18
-    def pictures(items,sketch,y):
-        images=[]
-        for photo in (items or [])[:6]:
-            if isinstance(photo,dict):images.append(photo.get('data'))
-        if sketch:images.append(sketch)
-        if not images:return y
-        y=section('PHOTOS ET NOTES MANUSCRITES',y)
-        available=max(100,y-65)
-        rows=(len(images)+1)//2
-        imgH=min(125,max(35,(available-(rows-1)*9)/max(1,rows)))
-        colw=(usable-12)/2
-        for i,src in enumerate(images):
-            if not isinstance(src,str) or not src.startswith('data:image/'):continue
+
+    def header(page, total):
+        band_y = H - 75
+        c.setFillColorRGB(.06, .23, .42)
+        c.rect(0, band_y, W, 75, fill=1, stroke=0)
+        logo = None
+        for name in ('logo.png', 'logo.jpg', 'logo.jpeg'):
+            candidate = APP_DIR / 'static' / name
+            if candidate.is_file():
+                logo = candidate
+                break
+        tx = M
+        if logo:
             try:
-                raw=base64.b64decode(src.split(',',1)[1],validate=True)
-                image=ImageReader(BytesIO(raw)); iw,ih=image.getSize()
-                scale=min(colw/max(1,iw),imgH/max(1,ih)); w=iw*scale;h=ih*scale
-                x=M+(i%2)*(colw+12)+(colw-w)/2
-                yy=y-(i//2)*(imgH+9)-h
-                if yy<48:continue
-                c.drawImage(image,x,yy,w,h,mask='auto')
-            except Exception:continue
-        return y-rows*(imgH+9)
-    works=data.get('artworks') if isinstance(data.get('artworks'),list) else []
-    total=1+len(works)
-    y=header('SYNTHESE DE VISITE',1,total)
-    for label,value in [('Dossier',ticket.get('number')),('Client',ticket.get('client')),('Projet',ticket.get('project')),('Charge de projet',ticket.get('owner')),('Date RDV',data.get('date') or ticket.get('date')),('Lieu',data.get('site') or ticket.get('site'))]:
-        y=text(label+' : '+_as_text(value),M,y,9,False,100,2);y-=5
-    for name,key in [('ACCES ET CHEMINEMENT','access'),('DIFFICULTES ET VIGILANCE','notes'),('COMPTE RENDU TECHNIQUE GENERAL','generalMethod')]:
-        y=section(name,y);y=text(data.get(key,''),M,y,8,False,105,7,10)
-    pictures(data.get('generalPhotos'),data.get('generalSketch'),y);c.showPage()
+                image = ImageReader(str(logo))
+                iw, ih = image.getSize()
+                boxw, boxh = 78, 49
+                ratio = min(boxw / iw, boxh / ih)
+                dw, dh = iw * ratio, ih * ratio
+                c.drawImage(image, M + (boxw-dw)/2, band_y + 13 + (boxh-dh)/2,
+                            width=dw, height=dh, mask='auto')
+                tx = M + 95
+            except Exception:
+                pass
+        c.setFillColorRGB(1, 1, 1)
+        c.setFont('Helvetica-Bold', 14)
+        c.drawString(tx, H-43, 'COMPTE RENDU DE VISITE')
+        dossier = as_text(ticket.get('number') or '-')
+        preteur = as_text(ticket.get('preteur') or '-')
+        c.setFont('Helvetica-Bold', 9.5)
+        c.drawRightString(W-M, H-29, 'N° Dossier : ' + dossier[:30])
+        c.setFont('Helvetica', 8)
+        # Le preteur peut etre long : on limite sa largeur pour ne pas chevaucher le titre.
+        while c.stringWidth(preteur, 'Helvetica', 8) > 170 and len(preteur) > 3:
+            preteur = preteur[:-2] + '…'
+        c.drawRightString(W-M, H-48, 'Prêteur : ' + preteur)
+        c.setFillColorRGB(.35, .42, .51)
+        c.setFont('Helvetica', 8)
+        c.drawString(M, 35, 'COMPTE RENDU TECHNIQUE - SANS PRIX')
+        c.drawRightString(W-M, 35, f'{page} / {total}')
+        return H - 100
+
+    def section(label, y):
+        y -= 13
+        c.setFillColorRGB(.05, .38, .66)
+        c.setFont('Helvetica-Bold', 10)
+        c.drawString(M, y, label)
+        return y-18
+
+    def pictures(items, sketch, y):
+        photo_sources = [p.get('data') for p in (items or []) if isinstance(p, dict) and p.get('data')]
+        # La zone manuscrite n'est ajoutee que si un dessin a ete effectivement sauvegarde.
+        has_sketch = isinstance(sketch, str) and sketch.startswith('data:image/') and len(sketch) > 300
+        sources = photo_sources + ([sketch] if has_sketch else [])
+        if not sources:
+            return y
+        y = section('PHOTOS' + (' ET NOTES MANUSCRITES' if has_sketch else ''), y)
+        available = max(0, y - 63)
+        if available < 36:
+            return y
+        # Pas de note -> grands visuels ; note -> reserve une zone pour le croquis.
+        columns = 2 if len(photo_sources) <= 2 and not has_sketch else 3 if len(photo_sources) >= 3 else 2
+        if has_sketch:
+            columns = 2 if len(sources) <= 4 else 3
+        rows = (len(sources) + columns - 1) // columns
+        gap = 9
+        cell_h = max(12, min(265 if not has_sketch else 155, (available - gap*(rows-1)) / rows))
+        colw = (usable - gap*(columns-1)) / columns
+        for i, src in enumerate(sources):
+            if not isinstance(src, str) or not src.startswith('data:image/'):
+                continue
+            try:
+                raw = base64.b64decode(src.split(',', 1)[1], validate=True)
+                image = ImageReader(BytesIO(raw))
+                iw, ih = image.getSize()
+                factor = min(colw / max(1,iw), cell_h / max(1,ih))
+                dw, dh = iw*factor, ih*factor
+                col = i % columns
+                row = i // columns
+                xx = M + col*(colw+gap) + (colw-dw)/2
+                yy = y - row*(cell_h+gap) - (cell_h-dh)/2 - dh
+                if yy < 54:
+                    continue
+                c.drawImage(image, xx, yy, dw, dh, mask='auto')
+            except Exception:
+                continue
+        return y - rows*(cell_h+gap)
+
+    works = data.get('artworks') if isinstance(data.get('artworks'), list) else []
+    works = [a for a in works if isinstance(a, dict)]
+    total = 1 + len(works)
+    y = header(1,total)
+    y = section('SYNTHESE DE VISITE', y)
+    for label,value in [('Dossier',ticket.get('number')),('Client',ticket.get('client')),
+                        ('Projet',ticket.get('project')),('Charge de projet',ticket.get('owner')),
+                        ('Date RDV',data.get('date') or ticket.get('date')),
+                        ('Lieu',data.get('site') or ticket.get('site'))]:
+        y = text(label+' : '+_as_text(value), M,y,9,False,100,2); y -= 4
+    for label,key in [('ACCES ET CHEMINEMENT','access'),('DIFFICULTES ET VIGILANCE','notes'),
+                      ('COMPTE RENDU TECHNIQUE GENERAL','generalMethod')]:
+        y=section(label,y)
+        y=text(data.get(key,''),M,y,8,False,105,8,10)
+    pictures(data.get('generalPhotos'),data.get('generalSketch'),y)
+    c.showPage()
+
     for idx,a in enumerate(works,1):
-        if not isinstance(a,dict):continue
-        y=header('FICHE OEUVRE '+str(idx),idx+1,total)
-        y=text(a.get('title') or 'Oeuvre sans titre',M,y,12,True);y-=10
-        for label,key in [('Typologie','category'),('Longueur (cm)','length'),('Largeur (cm)','width'),('Hauteur (cm)','height'),('Poids (kg)','weight'),('Materiaux','material')]:
-            y=text(label+' : '+_as_text(a.get(key,'')),M,y,9,False,100,2);y-=5
+        y=header(idx+1,total)
+        y=section('FICHE OEUVRE '+str(idx),y)
+        y=text(a.get('title') or 'Oeuvre sans titre',M,y,12,True);y-=8
+        for label,key in [('Typologie','category'),('Longueur (cm)','length'),('Largeur (cm)','width'),
+                          ('Hauteur (cm)','height'),('Poids (kg)','weight'),('Materiaux','material')]:
+            y=text(label+' : '+_as_text(a.get(key,'')),M,y,9,False,100,2);y-=4
         for label,key in [('MODE OPERATOIRE','method'),('MOYENS HUMAINS ET MATERIELS','resources')]:
-            y=section(label,y);y=text(a.get(key,''),M,y,8,False,105,9,10)
-        pictures(a.get('photos'),a.get('sketch'),y);c.showPage()
-    c.save();return output.getvalue()
+            y=section(label,y)
+            y=text(a.get(key,''),M,y,8,False,105,9,10)
+        pictures(a.get('photos'),a.get('sketch'),y)
+        c.showPage()
+    c.save()
+    return output.getvalue()
+
 # ===== fin ESI ALLER VOIR =====
 
 
