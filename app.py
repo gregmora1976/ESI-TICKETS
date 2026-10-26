@@ -194,12 +194,19 @@ def get_caisse_fournisseur_status(caisse_ref):
     }
 
 def safe_filename(name):
-    """Nettoie le nom du fichier pour Supabase tout en gardant le vrai nom affiché côté appli."""
-    name = str(name or "fichier")
-    return "".join(
-        c if c.isalnum() or c in "._-" else "_"
-        for c in name
-    )
+    """Nom technique ASCII pour Supabase ; le nom d'origine reste affiché dans le ticket.
+
+    Ne pas appliquer rétroactivement cette normalisation aux chemins déjà stockés.
+    """
+    import unicodedata
+
+    name = str(name or "fichier").replace("œ", "oe").replace("Œ", "OE")
+    name = name.replace("æ", "ae").replace("Æ", "AE").replace("ß", "ss")
+    name = unicodedata.normalize("NFKD", name)
+    name = "".join(c for c in name if not unicodedata.combining(c))
+    name = "".join(c if c.isascii() and (c.isalnum() or c in "._-") else "_" for c in name)
+    name = name.strip("._")
+    return name[:180] or "fichier"
 
 
 def supabase_upload_bytes(storage_path, content, content_type="application/octet-stream"):
@@ -10365,7 +10372,7 @@ def api_create_ticket():
             enlevement_pdf_bytes = content
 
         clean_name = safe_filename(fs.filename)
-        storage_path = f"{ticket_id}/{datetime.now().strftime('%Y%m%d%H%M%S')}_{clean_name}"
+        storage_path = f"{ticket_id}/{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{clean_name}"
 
         try:
             supabase_upload_bytes(
@@ -13051,7 +13058,7 @@ def api_manager_sheet(ticket_id):
     for fs in valid_files:
         content = fs.read()
         clean_name = safe_filename(fs.filename)
-        storage_path = f"{ticket_id}/gestionnaire/{datetime.now().strftime('%Y%m%d%H%M%S')}_{clean_name}"
+        storage_path = f"{ticket_id}/gestionnaire/{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{clean_name}"
 
         try:
             supabase_upload_bytes(
