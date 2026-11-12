@@ -8125,7 +8125,7 @@ _CATALOGUE_SEED = {
     'id': 'esi-tableau-bandes-mousse',
     'titre': 'Caisse tableau - Bandes de mousse',
     'famille': 'Tableaux', 'calage': 'Bandes de mousse',
-    'climatique': 'Non renseigne', 'ordre': 0,
+    'climatique': 'Standard', 'ordre': 0,
     'pdf_path': '', 'vignette_path': '', 'source': 'exemple',
     'pdf_url': '/static/catalogue/caisse_tableau_bandes_mousse.pdf',
     'vignette_url': '/static/catalogue/caisse_tableau_bandes_mousse.png',
