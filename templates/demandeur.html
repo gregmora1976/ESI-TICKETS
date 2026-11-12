@@ -172,6 +172,7 @@
             </div>
           </div>
           <div class="actions" style="justify-content:flex-end">
+            <button class="btn primary" id="openCatalogueCaisses" type="button">CATALOGUE CAISSES</button>
             <button class="btn secondary" id="openManager" type="button">Ouvrir le portail gestionnaire</button>
   <button class="btn secondary" id="planningCaisserie" type="button">Gestion réception</button>
           </div>
@@ -2230,6 +2231,7 @@ document.getElementById('avisArticleSelectAll').addEventListener('click', ()=>{
 });
 document.getElementById('avisArticleClearAll').addEventListener('click', ()=>{ state.avisSelectedArticleIds = new Set(); renderAvisArticlePicker(); });
 document.getElementById('addSelectedAvisArticles').addEventListener('click', addSelectedArticlesToAvis);
+document.getElementById('openCatalogueCaisses').addEventListener('click', () => window.open('/catalogue-caisses', '_blank'));
 document.getElementById('openManager').addEventListener('click', ()=>window.open('/login','_blank'));
 document.getElementById('planningCaisserie').addEventListener('click', () => {
   window.open('/gestion-reception', '_blank');
