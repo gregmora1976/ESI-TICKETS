@@ -14804,10 +14804,12 @@ def _av_make_pdf(ticket, data):
             out.append(line)
         return out
 
+    page_logical_bottom = 71
+
     def paragraph(v,x,y,width=usable,size=9,leading=13,bold=False,max_lines=100):
         lines=wrap(v,width,size,bold)
         for ln in lines[:max_lines]:
-            if y<71:break
+            if y < page_logical_bottom:break
             draw(ln,x,y,size,bold)
             y-=leading
         return y
@@ -14883,7 +14885,7 @@ def _av_make_pdf(ticket, data):
             draw(line,x,top-15,9.4,True)
         return y-total_h-6
 
-    def picture_set(photos,sketch,y):
+    def collect_picture_sources(photos, sketch):
         sources=[]
         for photo in photos or []:
             src=photo.get('data') if isinstance(photo,dict) else None
@@ -14891,21 +14893,33 @@ def _av_make_pdf(ticket, data):
                 sources.append((src,False))
         if isinstance(sketch,str) and sketch.startswith('data:image/') and len(sketch)>300:
             sources.append((sketch,True))
+        return sources
+
+    def split_picture_sources(sources, max_items=4):
+        if not sources:
+            return []
+        return [sources[i:i+max_items] for i in range(0, len(sources), max_items)]
+
+    def picture_set_sources(sources, y, *, page_scale=1.0, title_override=None):
         if not sources:return y
-        y=heading('Photographies et notes manuscrites' if any(k for _,k in sources) else 'Photographies',y)
-        # Agrandissement automatique sans note manuscrite, grille compacte avec note.
         has_sketch=any(k for _,k in sources)
+        title = title_override or ('Photographies et notes manuscrites' if has_sketch else 'Photographies')
+        y=heading(title,y)
         count=len(sources)
-        cols=1 if count==1 else 2 if count<=4 else 3
+        cols=1 if count==1 else 2
         gap=10
         cw=(usable-gap*(cols-1))/cols
         rows=(count+cols-1)//cols
-        bottom=60
+        # Reserve l'espace reel jusqu'au pied de page meme si le corps est reduit.
+        top = H - 117
+        bottom = top - (top - 60) / max(0.1, page_scale)
         available=max(0,y-bottom)
         if not available:return y
-        desired=245 if not has_sketch else 160
+        desired=(225 if count == 1 else 165) if not has_sketch else (150 if count <= 2 else 125)
         ch=min(desired,(available-gap*(rows-1))/max(1,rows))
-        if ch<24: return y
+        if ch<24:
+            app.logger.warning("AV PDF : espace photos insuffisant (%.1f pt, %d images)", available, count)
+            return y
         for i,(src,is_sketch) in enumerate(sources):
             try:
                 raw=base64.b64decode(src.split(',',1)[1],validate=True)
@@ -14920,9 +14934,62 @@ def _av_make_pdf(ticket, data):
                 app.logger.warning('Photo AV ignorée pour PDF: %s',exc)
         return y-rows*(ch+gap)
 
+    def picture_set(photos,sketch,y, *, page_scale=1.0, title_override=None):
+        return picture_set_sources(collect_picture_sources(photos, sketch), y, page_scale=page_scale, title_override=title_override)
+
+    def _estimate_field_y(value, y):
+        # Mêmes espacements que field() et paragraph(), sans tracer sur le PDF.
+        value = value if value not in (None, '') else 'Non renseigné'
+        return y - 14 - min(len(wrap(value, usable, 9.0)), 9) * 12.5 - 7
+
+    # Le compte rendu doit tenir sur une page, photos comprises.
+    # Calcul du volume textuel AVANT le dessin, puis réduction homogène uniquement
+    # lorsque la présence de photos le nécessite (sans toucher au bandeau ni au pied).
+    env_fields = (
+        ('Lieu / Adresse', data.get('site') or ticket.get('site')),
+        ('Accès et cheminement', data.get('access')),
+        ('Difficulté', {'standard':'Simple / accès standard','moderate':'Contraintes particulières','complex':'Complexe / moyens spécifiques'}.get(data.get('difficulty'),'')),
+        ('Contraintes et points de vigilance', data.get('notes')),
+    )
+    visit_sources = collect_picture_sources(data.get('generalPhotos'), data.get('generalSketch'))
+    visit_photo_pages = split_picture_sources(visit_sources, 4)
+    first_visit_sources = visit_photo_pages[0] if visit_photo_pages else []
+    photo_count = len(first_visit_sources)
+    visit_scale = 1.0
+    if photo_count:
+        measure_y = H - 117 - 21 - 16 - 72 - 37
+        for _, value in env_fields:
+            measure_y = _estimate_field_y(value, measure_y)
+        measure_y -= 37
+        measure_y = _estimate_field_y(data.get('generalMethod'), measure_y)
+        measure_y -= 37
+        measure_y = _estimate_field_y(data.get('humanCount'), measure_y)
+        measure_y = _estimate_field_y(data.get('totalHours'), measure_y)
+        measure_y -= 37
+        measure_y = _estimate_field_y(data.get('equipmentList'), measure_y)
+        has_visit_sketch = any(k for _,k in first_visit_sources)
+        cols = 1 if photo_count == 1 else 2
+        rows = (photo_count + cols - 1) // cols
+        target_h = (225 if photo_count == 1 else 165) if not has_visit_sketch else (150 if photo_count <= 2 else 125)
+        requested_h = 37 + rows * (target_h + 10)
+        top_y = H - 117
+        content_h = top_y - measure_y + requested_h
+        visit_scale = min(1.0, (top_y - 60) / max(1.0, content_h))
+        # Une réduction plus importante laisse le texte, même long, dans la feuille.
+        visit_scale = max(0.20, visit_scale)
+
     works=[a for a in data.get('artworks',[]) if isinstance(a,dict)]
-    total=len(works)+1
-    y=header(1,total)
+    work_page_chunks = [split_picture_sources(collect_picture_sources(a.get('photos'), a.get('sketch')), 4) for a in works]
+    total = 1 + max(0, len(visit_photo_pages) - 1) + sum(1 + max(0, len(chunks) - 1) for chunks in work_page_chunks)
+    current_page = 1
+    y=header(current_page,total)
+    if visit_scale < 1:
+        c.saveState()
+        top_y = H - 117
+        c.translate(M, top_y)
+        c.scale(visit_scale, visit_scale)
+        c.translate(-M, -top_y)
+        page_logical_bottom = top_y - (top_y - 71) / visit_scale
     draw('Compte rendu de visite',M,y,18,True,DARK)
     y-=21
     draw(val(ticket.get('project') or data.get('project') or 'Visite technique'),M,y,9.1,False,GRAY)
@@ -14936,11 +15003,7 @@ def _av_make_pdf(ticket, data):
         ('Date de visite',visit_date),
         ('Objet','Préparation réalisation' if data.get('purpose')=='realisation' else 'Préparation devis')],y)
     y=heading('Environnement général',y)
-    for label,value in (
-        ('Lieu / Adresse',data.get('site') or ticket.get('site')),
-        ('Accès et cheminement',data.get('access')),
-        ('Difficulté',{'standard':'Simple / accès standard','moderate':'Contraintes particulières','complex':'Complexe / moyens spécifiques'}.get(data.get('difficulty'),'')),
-        ('Contraintes et points de vigilance',data.get('notes'))):
+    for label,value in env_fields:
         y=field(label,value,y)
     y=heading('Compte rendu technique général',y)
     y=field('Déroulement et préconisations',data.get('generalMethod'),y)
@@ -14949,12 +15012,29 @@ def _av_make_pdf(ticket, data):
     y=field('Durée totale (heures)',data.get('totalHours'),y)
     y=heading('Moyens matériels',y)
     y=field('Matériel nécessaire',data.get('equipmentList'),y)
-    picture_set(data.get('generalPhotos'),data.get('generalSketch'),y)
+    picture_set_sources(first_visit_sources, y, page_scale=visit_scale)
+    if visit_scale < 1:
+        c.restoreState()
+        page_logical_bottom = 71
     c.showPage()
+    current_page += 1
+
+    # Photos complémentaires de la visite : 4 visuels maximum par page pour garder un rendu lisible.
+    for extra_idx, chunk in enumerate(visit_photo_pages[1:], start=2):
+        y = header(current_page, total)
+        draw('Compte rendu de visite', M, y, 18, True, DARK)
+        y -= 21
+        draw('Photographies complémentaires', M, y, 9.1, False, GRAY)
+        y -= 10
+        picture_set_sources(chunk, y, title_override='Photographies complémentaires')
+        c.showPage()
+        current_page += 1
 
     names={'tableau':'Tableau','sculpture':'Sculpture','objet':'Objet','installation':'Installation','autre':'Autre'}
     for index,a in enumerate(works,1):
-        y=header(index+1,total)
+        chunks = work_page_chunks[index-1] if index-1 < len(work_page_chunks) else []
+        first_chunk = chunks[0] if chunks else []
+        y=header(current_page,total)
         draw(f'Fiche œuvre {index} / {len(works)}',M,y,18,True,DARK)
         y-=22
         draw(val(a.get('title') or 'Œuvre sans titre'),M,y,10,False,GRAY)
@@ -14966,8 +15046,19 @@ def _av_make_pdf(ticket, data):
         y=heading('Mode opératoire individuel',y)
         y=field('Préconisations de manutention / emballage',a.get('method'),y)
         y=field('Moyens humains et matériels',a.get('resources'),y)
-        picture_set(a.get('photos'),a.get('sketch'),y)
+        picture_set_sources(first_chunk, y)
         c.showPage()
+        current_page += 1
+
+        for extra_chunk in chunks[1:]:
+            y = header(current_page, total)
+            draw(f'Fiche œuvre {index} / {len(works)}', M, y, 18, True, DARK)
+            y -= 22
+            draw(val(a.get('title') or 'Œuvre sans titre'), M, y, 10, False, GRAY)
+            y -= 18
+            picture_set_sources(extra_chunk, y, title_override='Photographies complémentaires')
+            c.showPage()
+            current_page += 1
     c.save()
     return output.getvalue()
 
