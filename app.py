@@ -14895,10 +14895,15 @@ def _av_make_pdf(ticket, data):
             sources.append((sketch,True))
         return sources
 
-    def split_picture_sources(sources, max_items=4):
+    def split_picture_sources(sources, first_page_limit=2, extra_page_limit=6):
+        # Les fiches comprenant du texte affichent 2 visuels max ; les pages
+        # de photographies complementaires utilisent une grille de 2 x 3.
         if not sources:
             return []
-        return [sources[i:i+max_items] for i in range(0, len(sources), max_items)]
+        first = sources[:first_page_limit]
+        remaining = sources[first_page_limit:]
+        return [first] + [remaining[i:i+extra_page_limit]
+                          for i in range(0, len(remaining), extra_page_limit)]
 
     def picture_set_sources(sources, y, *, page_scale=1.0, title_override=None):
         if not sources:return y
@@ -14952,7 +14957,7 @@ def _av_make_pdf(ticket, data):
         ('Contraintes et points de vigilance', data.get('notes')),
     )
     visit_sources = collect_picture_sources(data.get('generalPhotos'), data.get('generalSketch'))
-    visit_photo_pages = split_picture_sources(visit_sources, 4)
+    visit_photo_pages = split_picture_sources(visit_sources)
     first_visit_sources = visit_photo_pages[0] if visit_photo_pages else []
     photo_count = len(first_visit_sources)
     visit_scale = 1.0
@@ -14979,7 +14984,7 @@ def _av_make_pdf(ticket, data):
         visit_scale = max(0.20, visit_scale)
 
     works=[a for a in data.get('artworks',[]) if isinstance(a,dict)]
-    work_page_chunks = [split_picture_sources(collect_picture_sources(a.get('photos'), a.get('sketch')), 4) for a in works]
+    work_page_chunks = [split_picture_sources(collect_picture_sources(a.get('photos'), a.get('sketch'))) for a in works]
     total = 1 + max(0, len(visit_photo_pages) - 1) + sum(1 + max(0, len(chunks) - 1) for chunks in work_page_chunks)
     current_page = 1
     y=header(current_page,total)
@@ -15019,7 +15024,7 @@ def _av_make_pdf(ticket, data):
     c.showPage()
     current_page += 1
 
-    # Photos complémentaires de la visite : 4 visuels maximum par page pour garder un rendu lisible.
+    # Photos complementaires : six visuels maximum par page en grille 2 x 3.
     for extra_idx, chunk in enumerate(visit_photo_pages[1:], start=2):
         y = header(current_page, total)
         draw('Compte rendu de visite', M, y, 18, True, DARK)
