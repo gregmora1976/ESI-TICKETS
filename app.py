@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, request, send_file, abort, redirect, url_for
+from flask import Flask, render_template, jsonify, request, send_file, abort, redirect, url_for, make_response
 from pathlib import Path
 import json, webbrowser, os, urllib.request, urllib.parse
 import csv, re, time
@@ -8132,10 +8132,92 @@ _CATALOGUE_SEED = {
 }
 
 
-def _catalogue_admin_required():
+# Authentification limitee au catalogue (cookie signe, HttpOnly, duree 30 minutes).
+# Le mot de passe n'est jamais stocke dans la page ou envoye aux API CRUD.
+_CATALOGUE_AUTH_COOKIE = 'esi_catalogue_admin'
+_CATALOGUE_AUTH_TTL = 1800
+_CATALOGUE_LOGIN_LOCK = threading.Lock()
+_CATALOGUE_LOGIN_FAILURES = {}
+
+
+def _catalogue_signer():
+    from itsdangerous import URLSafeTimedSerializer
     secret = os.getenv('CATALOGUE_ADMIN_PASSWORD', '')
-    provided = request.headers.get('X-Catalogue-Admin', '')
-    return bool(secret) and hmac.compare_digest(secret, provided)
+    if not secret:
+        return None
+    signing_key = hashlib.sha256((secret + ':' + SUPABASE_KEY).encode('utf-8')).hexdigest()
+    return URLSafeTimedSerializer(signing_key, salt='esi-catalogue-caisses-admin-v2')
+
+
+def _catalogue_auth_data():
+    signer = _catalogue_signer()
+    token = request.cookies.get(_CATALOGUE_AUTH_COOKIE, '')
+    if not signer or not token:
+        return None
+    try:
+        payload = signer.loads(token, max_age=_CATALOGUE_AUTH_TTL)
+        return payload if isinstance(payload, dict) and payload.get('auth') is True else None
+    except Exception:
+        return None
+
+
+def _catalogue_admin_required():
+    payload = _catalogue_auth_data()
+    return bool(payload and hmac.compare_digest(
+        str(payload.get('csrf', '')), request.headers.get('X-Catalogue-CSRF', '')))
+
+
+def _catalogue_login_key():
+    # Remote address only: do not trust arbitrary X-Forwarded-For sent by clients.
+    return request.remote_addr or 'unknown'
+
+
+@app.route('/api/catalogue-caisses/admin/session', methods=['GET'])
+def catalogue_admin_session():
+    auth = _catalogue_auth_data()
+    response = jsonify({'ok': True, 'authenticated': bool(auth),
+                        'csrf': auth.get('csrf') if auth else None})
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
+@app.route('/api/catalogue-caisses/admin/login', methods=['POST'])
+def catalogue_admin_login():
+    secret = os.getenv('CATALOGUE_ADMIN_PASSWORD', '')
+    supplied = str((request.get_json(silent=True) or {}).get('password') or '')
+    if not secret:
+        return jsonify({'error': 'Mot de passe administrateur non configure sur Render.'}), 503
+    key = _catalogue_login_key()
+    now = time.time()
+    with _CATALOGUE_LOGIN_LOCK:
+        entries = [t for t in _CATALOGUE_LOGIN_FAILURES.get(key, []) if now-t < 900]
+        _CATALOGUE_LOGIN_FAILURES[key] = entries
+        if len(entries) >= 8:
+            return jsonify({'error': 'Trop de tentatives. Reessayez dans 15 minutes.'}), 429
+    if not hmac.compare_digest(secret, supplied):
+        with _CATALOGUE_LOGIN_LOCK:
+            _CATALOGUE_LOGIN_FAILURES.setdefault(key, []).append(now)
+        return jsonify({'error': 'Mot de passe incorrect.'}), 401
+    with _CATALOGUE_LOGIN_LOCK:
+        _CATALOGUE_LOGIN_FAILURES.pop(key, None)
+    csrf = uuid.uuid4().hex
+    token = _catalogue_signer().dumps({'auth': True, 'csrf': csrf})
+    response = jsonify({'ok': True, 'csrf': csrf})
+    response.set_cookie(_CATALOGUE_AUTH_COOKIE, token, max_age=_CATALOGUE_AUTH_TTL,
+                        secure=request.is_secure, httponly=True, samesite='Lax', path='/')
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
+@app.route('/api/catalogue-caisses/admin/logout', methods=['POST'])
+def catalogue_admin_logout():
+    if not _catalogue_admin_required():
+        return jsonify({'error': 'Session non valide.'}), 403
+    response = jsonify({'ok': True})
+    response.delete_cookie(_CATALOGUE_AUTH_COOKIE, path='/')
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
 
 
 def _catalogue_items():
@@ -8195,7 +8277,7 @@ def catalogue_fichier(item_id, kind):
 @app.route('/api/catalogue-caisses/import', methods=['POST'])
 def catalogue_caisses_import():
     if not _catalogue_admin_required():
-        return jsonify({'error': 'Acces administration refuse ou non configure.'}), 403
+        return jsonify({'error': 'Session administrateur invalide ou expiree.'}), 403
     uploaded = request.files.get('file')
     titre = (request.form.get('titre') or '').strip()
     famille = request.form.get('famille', '')
@@ -8235,10 +8317,77 @@ def catalogue_caisses_import():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/catalogue-caisses/<item_id>', methods=['PATCH'])
+def catalogue_caisses_update(item_id):
+    if not _catalogue_admin_required():
+        return jsonify({'error': 'Session administrateur invalide ou expiree.'}), 403
+    if item_id == _CATALOGUE_SEED['id']:
+        return jsonify({'error': 'Fiche exemple : importer d abord une copie pour pouvoir la modifier.'}), 400
+    try:
+        item = _catalogue_record(item_id)
+        if not item:
+            return jsonify({'error': 'Fiche introuvable.'}), 404
+        titre = (request.form.get('titre') or '').strip()
+        famille = (request.form.get('famille') or '').strip()
+        calage = (request.form.get('calage') or '').strip()
+        climatique = (request.form.get('climatique') or '').strip()
+        try:
+            ordre = int(request.form.get('ordre', '100'))
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Ordre invalide.'}), 400
+        if not titre or famille not in ('Objets', 'Tableaux') or not calage or not climatique:
+            return jsonify({'error': 'Titre, famille, calage et type climatique obligatoires.'}), 400
+        patch = {'titre': titre[:180], 'famille': famille, 'calage': calage[:120],
+                 'climatique': climatique[:80], 'ordre': ordre}
+        file = request.files.get('file')
+        old_pdf = item.get('pdf_path')
+        old_png = item.get('vignette_path')
+        new_paths = []
+        if file and file.filename:
+            data = file.read(20 * 1024 * 1024 + 1)
+            if len(data) > 20 * 1024 * 1024 or not data.startswith(b'%PDF-'):
+                return jsonify({'error': 'PDF invalide ou superieur a 20 Mo.'}), 400
+            import fitz
+            with fitz.open(stream=data, filetype='pdf') as doc:
+                if not doc.page_count:
+                    return jsonify({'error': 'PDF vide.'}), 400
+                vignette = doc[0].get_pixmap(matrix=fitz.Matrix(1.3, 1.3), alpha=False).tobytes('png')
+            suffix = uuid.uuid4().hex
+            new_pdf = f'catalogue-caisses/{item_id}/fiche-{suffix}.pdf'
+            new_png = f'catalogue-caisses/{item_id}/vignette-{suffix}.png'
+            try:
+                supabase_upload_bytes(new_pdf, data, 'application/pdf')
+                new_paths.append(new_pdf)
+                supabase_upload_bytes(new_png, vignette, 'image/png')
+                new_paths.append(new_png)
+            except Exception:
+                for key in new_paths:
+                    try: supabase_delete_object(key)
+                    except Exception: pass
+                raise
+            patch.update({'pdf_path': new_pdf, 'vignette_path': new_png})
+        try:
+            supabase_rest_request('PATCH', 'catalogue_caisses',
+                'id=eq.' + urllib.parse.quote(item_id, safe=''), patch, prefer='return=minimal')
+        except Exception:
+            for key in new_paths:
+                try: supabase_delete_object(key)
+                except Exception: pass
+            raise
+        if new_paths:
+            for key in (old_pdf, old_png):
+                if key and key not in new_paths:
+                    try: supabase_delete_object(key)
+                    except Exception as exc: print('[CATALOGUE] Ancien fichier non supprime:', exc)
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/catalogue-caisses/<item_id>', methods=['DELETE'])
 def catalogue_caisses_delete(item_id):
     if not _catalogue_admin_required():
-        return jsonify({'error': 'Acces administration refuse.'}), 403
+        return jsonify({'error': 'Session administrateur invalide ou expiree.'}), 403
     if item_id == _CATALOGUE_SEED['id']:
         return jsonify({'error': 'La fiche de demonstration est integree au projet.'}), 400
     try:
