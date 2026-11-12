@@ -8274,6 +8274,61 @@ def catalogue_fichier(item_id, kind):
         abort(503)
 
 
+@app.route('/api/catalogue-caisses/ordre', methods=['POST'])
+def catalogue_caisses_reorder():
+    """Enregistre l'ordre des fiches Supabase depuis la liste de gestion.
+
+    La fiche de demonstration est hors base et demeure en premiere position.
+    """
+    if not _catalogue_admin_required():
+        return jsonify({'error': 'Session administrateur invalide ou expiree.'}), 403
+    payload = request.get_json(silent=True) or {}
+    ids = payload.get('ids')
+    if not isinstance(ids, list) or len(ids) > 1000 or any(not isinstance(x, str) for x in ids):
+        return jsonify({'error': 'Liste de fiches invalide.'}), 400
+    if len(ids) != len(set(ids)) or _CATALOGUE_SEED['id'] in ids:
+        return jsonify({'error': 'Liste contenant des doublons ou une fiche de demonstration.'}), 400
+    try:
+        rows = supabase_rest_request('GET', 'catalogue_caisses',
+                                     'select=id,ordre&order=ordre.asc,titre.asc&limit=1000') or []
+        current_ids = {str(row['id']) for row in rows}
+        if set(ids) != current_ids or len(ids) != len(rows):
+            return jsonify({'error': 'Le catalogue a ete modifie. Actualisez la page et recommencez.'}), 409
+        previous = {str(row['id']): int(row.get('ordre') or 0) for row in rows}
+        changed = []
+        try:
+            for position, item_id in enumerate(ids, start=1):
+                new_order = position * 10
+                if previous[item_id] == new_order:
+                    continue
+                supabase_rest_request('PATCH', 'catalogue_caisses',
+                                      'id=eq.' + urllib.parse.quote(item_id, safe=''),
+                                      {'ordre': new_order}, prefer='return=minimal')
+                changed.append(item_id)
+        except Exception:
+            # Best effort rollback in case a partial batch update fails.
+            for item_id in reversed(changed):
+                try:
+                    supabase_rest_request('PATCH', 'catalogue_caisses',
+                                          'id=eq.' + urllib.parse.quote(item_id, safe=''),
+                                          {'ordre': previous[item_id]}, prefer='return=minimal')
+                except Exception as rollback_error:
+                    print('[CATALOGUE ORDRE] Restauration impossible :', rollback_error)
+            raise
+        return jsonify({'ok': True})
+    except Exception as exc:
+        print('[CATALOGUE ORDRE] Erreur :', exc)
+        return jsonify({'error': 'Impossible de sauvegarder le nouvel ordre.'}), 500
+
+
+def _catalogue_next_order():
+    """Place une nouvelle fiche a la fin sans demander un numero a l'utilisateur."""
+    rows = supabase_rest_request('GET', 'catalogue_caisses',
+                                 'select=ordre&order=ordre.desc&limit=1') or []
+    maximum = int(rows[0].get('ordre') or 0) if rows else 0
+    return max(0, maximum) + 10
+
+
 @app.route('/api/catalogue-caisses/import', methods=['POST'])
 def catalogue_caisses_import():
     if not _catalogue_admin_required():
@@ -8305,7 +8360,7 @@ def catalogue_caisses_import():
         record = {'id': ident, 'titre': titre[:180], 'famille': famille,
                   'calage': calage[:120], 'climatique': climatique[:80],
                   'pdf_path': pdf_path, 'vignette_path': png_path,
-                  'ordre': int(request.form.get('ordre') or 100), 'source': 'supabase'}
+                  'ordre': _catalogue_next_order(), 'source': 'supabase'}
         try:
             supabase_rest_request('POST', 'catalogue_caisses', '', record)
         except Exception:
@@ -8331,14 +8386,10 @@ def catalogue_caisses_update(item_id):
         famille = (request.form.get('famille') or '').strip()
         calage = (request.form.get('calage') or '').strip()
         climatique = (request.form.get('climatique') or '').strip()
-        try:
-            ordre = int(request.form.get('ordre', '100'))
-        except (ValueError, TypeError):
-            return jsonify({'error': 'Ordre invalide.'}), 400
         if not titre or famille not in ('Objets', 'Tableaux') or not calage or not climatique:
             return jsonify({'error': 'Titre, famille, calage et type climatique obligatoires.'}), 400
         patch = {'titre': titre[:180], 'famille': famille, 'calage': calage[:120],
-                 'climatique': climatique[:80], 'ordre': ordre}
+                 'climatique': climatique[:80]}
         file = request.files.get('file')
         old_pdf = item.get('pdf_path')
         old_png = item.get('vignette_path')
