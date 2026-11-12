@@ -8338,7 +8338,7 @@ def catalogue_caisses_import():
     famille = request.form.get('famille', '')
     calage = (request.form.get('calage') or '').strip()
     climatique = (request.form.get('climatique') or '').strip()
-    if not uploaded or not titre or famille not in ('Objets', 'Tableaux') or not calage or not climatique:
+    if not uploaded or not titre or famille not in ('Objets', 'Tableaux', 'Autres') or not calage or not climatique:
         return jsonify({'error': 'PDF, titre, famille, calage et type climatique requis.'}), 400
     data = uploaded.read(20 * 1024 * 1024 + 1)
     if len(data) > 20 * 1024 * 1024 or not data.startswith(b'%PDF-'):
@@ -8386,7 +8386,7 @@ def catalogue_caisses_update(item_id):
         famille = (request.form.get('famille') or '').strip()
         calage = (request.form.get('calage') or '').strip()
         climatique = (request.form.get('climatique') or '').strip()
-        if not titre or famille not in ('Objets', 'Tableaux') or not calage or not climatique:
+        if not titre or famille not in ('Objets', 'Tableaux', 'Autres') or not calage or not climatique:
             return jsonify({'error': 'Titre, famille, calage et type climatique obligatoires.'}), 400
         patch = {'titre': titre[:180], 'famille': famille, 'calage': calage[:120],
                  'climatique': climatique[:80]}
