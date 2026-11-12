@@ -8115,6 +8115,175 @@ ESI Tickets
         return False
 
 
+# -----------------------------------------------------------------------------
+# ESI - Catalogue caisses (bibliotheque independante des tickets)
+# -----------------------------------------------------------------------------
+from flask import Response
+from werkzeug.utils import secure_filename
+
+_CATALOGUE_SEED = {
+    'id': 'esi-tableau-bandes-mousse',
+    'titre': 'Caisse tableau - Bandes de mousse',
+    'famille': 'Tableaux', 'calage': 'Bandes de mousse',
+    'climatique': 'Non renseigne', 'ordre': 0,
+    'pdf_path': '', 'vignette_path': '', 'source': 'exemple',
+    'pdf_url': '/static/catalogue/caisse_tableau_bandes_mousse.pdf',
+    'vignette_url': '/static/catalogue/caisse_tableau_bandes_mousse.png',
+}
+
+
+def _catalogue_admin_required():
+    secret = os.getenv('CATALOGUE_ADMIN_PASSWORD', '')
+    provided = request.headers.get('X-Catalogue-Admin', '')
+    return bool(secret) and hmac.compare_digest(secret, provided)
+
+
+def _catalogue_items():
+    rows = supabase_rest_request('GET', 'catalogue_caisses', 'select=*&order=ordre.asc,titre.asc&limit=1000') or []
+    output = []
+    for row in rows:
+        item = dict(row)
+        item['pdf_url'] = url_for('catalogue_fichier', item_id=item['id'], kind='pdf')
+        item['vignette_url'] = url_for('catalogue_fichier', item_id=item['id'], kind='vignette')
+        output.append(item)
+    # La fiche fournie sert d'exemple permanent, sans ecriture en base.
+    return [_CATALOGUE_SEED.copy()] + output
+
+
+def _catalogue_record(item_id):
+    if item_id == _CATALOGUE_SEED['id']:
+        return _CATALOGUE_SEED.copy()
+    matches = supabase_rest_request('GET','catalogue_caisses',
+        'select=*&id=eq.' + urllib.parse.quote(item_id, safe='') + '&limit=1') or []
+    return matches[0] if matches else None
+
+
+@app.route('/catalogue-caisses')
+def catalogue_caisses_page():
+    return render_template('catalogue_caisses.html')
+
+
+@app.route('/api/catalogue-caisses')
+def catalogue_caisses_liste():
+    try:
+        return jsonify({'ok': True, 'fiches': _catalogue_items()})
+    except Exception as e:
+        # Le document de demonstration reste consultable avant creation de la table.
+        return jsonify({'ok': True, 'fiches': [_CATALOGUE_SEED.copy()],
+                        'avertissement': 'Base catalogue non initialisee : ' + str(e)})
+
+
+@app.route('/api/catalogue-caisses/<item_id>/fichier/<kind>')
+def catalogue_fichier(item_id, kind):
+    if kind not in ('pdf', 'vignette'):
+        abort(404)
+    item = _catalogue_record(item_id)
+    if not item:
+        abort(404)
+    if item_id == _CATALOGUE_SEED['id']:
+        return redirect(item['pdf_url'] if kind == 'pdf' else item['vignette_url'])
+    key = item['pdf_path'] if kind == 'pdf' else item['vignette_path']
+    if not key:
+        abort(404)
+    try:
+        url = supabase_signed_download_url(key, expires_in=300)
+        return redirect(url)
+    except Exception:
+        abort(503)
+
+
+@app.route('/api/catalogue-caisses/import', methods=['POST'])
+def catalogue_caisses_import():
+    if not _catalogue_admin_required():
+        return jsonify({'error': 'Acces administration refuse ou non configure.'}), 403
+    uploaded = request.files.get('file')
+    titre = (request.form.get('titre') or '').strip()
+    famille = request.form.get('famille', '')
+    calage = (request.form.get('calage') or '').strip()
+    climatique = (request.form.get('climatique') or '').strip()
+    if not uploaded or not titre or famille not in ('Objets', 'Tableaux') or not calage or not climatique:
+        return jsonify({'error': 'PDF, titre, famille, calage et type climatique requis.'}), 400
+    data = uploaded.read(20 * 1024 * 1024 + 1)
+    if len(data) > 20 * 1024 * 1024 or not data.startswith(b'%PDF-'):
+        return jsonify({'error': 'PDF invalide ou superieur a 20 Mo.'}), 400
+    try:
+        import fitz
+        doc = fitz.open(stream=data, filetype='pdf')
+        if not doc.page_count:
+            raise ValueError('Document PDF vide.')
+        page = doc[0]
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(1.3, 1.3), alpha=False)
+        vignette = pixmap.tobytes('png')
+        doc.close()
+        ident = str(uuid.uuid4())
+        pdf_path = f'catalogue-caisses/{ident}/fiche.pdf'
+        png_path = f'catalogue-caisses/{ident}/vignette.png'
+        supabase_upload_bytes(pdf_path, data, 'application/pdf')
+        supabase_upload_bytes(png_path, vignette, 'image/png')
+        record = {'id': ident, 'titre': titre[:180], 'famille': famille,
+                  'calage': calage[:120], 'climatique': climatique[:80],
+                  'pdf_path': pdf_path, 'vignette_path': png_path,
+                  'ordre': int(request.form.get('ordre') or 100), 'source': 'supabase'}
+        try:
+            supabase_rest_request('POST', 'catalogue_caisses', '', record)
+        except Exception:
+            supabase_delete_object(pdf_path)
+            supabase_delete_object(png_path)
+            raise
+        return jsonify({'ok': True, 'id': ident}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/catalogue-caisses/<item_id>', methods=['DELETE'])
+def catalogue_caisses_delete(item_id):
+    if not _catalogue_admin_required():
+        return jsonify({'error': 'Acces administration refuse.'}), 403
+    if item_id == _CATALOGUE_SEED['id']:
+        return jsonify({'error': 'La fiche de demonstration est integree au projet.'}), 400
+    try:
+        item = _catalogue_record(item_id)
+        if not item:
+            abort(404)
+        supabase_rest_request('DELETE', 'catalogue_caisses', 'id=eq.' + urllib.parse.quote(item_id,safe=''), prefer='return=minimal')
+        for key in ('pdf_path','vignette_path'):
+            if item.get(key):
+                supabase_delete_object(item[key])
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/catalogue-caisses/assembler', methods=['POST'])
+def catalogue_caisses_assembler():
+    requested = (request.get_json(silent=True) or {}).get('ids') or []
+    if not isinstance(requested, list) or not requested or len(requested) > 150:
+        return jsonify({'error': 'Selectionnez entre 1 et 150 fiches.'}), 400
+    try:
+        from pypdf import PdfReader, PdfWriter
+        writer = PdfWriter()
+        count = 0
+        for item_id in dict.fromkeys(requested):
+            item = _catalogue_record(str(item_id))
+            if not item:
+                return jsonify({'error': 'Une fiche selectionnee est introuvable.'}), 404
+            if item['id'] == _CATALOGUE_SEED['id']:
+                pdf_bytes = (APP_DIR / 'static/catalogue/caisse_tableau_bandes_mousse.pdf').read_bytes()
+            else:
+                pdf_bytes = supabase_download_bytes(item['pdf_path'])
+            reader = PdfReader(BytesIO(pdf_bytes))
+            for page in reader.pages:
+                writer.add_page(page)
+            count += 1
+        output = BytesIO()
+        writer.write(output)
+        output.seek(0)
+        return send_file(output, mimetype='application/pdf', as_attachment=True,
+                         download_name='ESI_catalogue_caisses.pdf')
+    except Exception as e:
+        return jsonify({'error': 'Assemblage impossible : ' + str(e)}), 500
+
+
 @app.route('/')
 def index():
     return redirect(url_for('demandeur'))
