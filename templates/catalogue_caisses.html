@@ -16,7 +16,7 @@
 #editModal .modalinner{height:auto;width:min(660px,100%);padding:22px;max-height:90vh;overflow:auto}
 #editModal form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}#editModal label{display:grid;gap:5px;font-size:12px;font-weight:bold}#editModal input,#editModal select{padding:10px;width:100%;border:1px solid #cbddeb;border-radius:10px}
 #editModal .full{grid-column:1/-1}
-@media(max-width:560px){#editModal form,.manageRow{grid-template-columns:1fr}}
+@media(max-width:560px){ #editModal form,.manageRow{grid-template-columns:1fr}}
 </style></head><body><div class="wrap"><div class="hero">
 <div class="headline"><div class="identity"><img src="/static/logo.png" alt="ESI"><div><div class="eyebrow">ESI FINE ART · BIBLIOTHÈQUE PDF</div><h1>CATALOGUE CAISSES</h1><div class="muted">Toutes les fiches de caisses tableaux et objets, au même endroit.</div></div></div><div class="actions"><a href="/demandeur" class="btn">← Demandeur</a><button class="btn" id="adminToggle">Administration</button></div></div></div>
 <div id="cataloguePublic"><div class="toolbar"><div class="filter"><label for="search">Recherche</label><input id="search" placeholder="Nom de caisse, calage…"></div><div class="filter"><label for="family">Famille</label><select id="family"><option value="">Toutes les caisses</option><option value="Tableaux">Caisses tableaux</option><option value="Objets">Caisses objets</option></select></div><div class="filter"><label for="calage">Calage</label><select id="calage"><option value="">Tous les calages</option></select></div><div class="filter"><label for="climate">Type climatique</label><select id="climate"><option value="">Tous les types</option></select></div><button class="btn" id="clear">Effacer filtres</button></div>
