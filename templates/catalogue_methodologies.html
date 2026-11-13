@@ -74,4 +74,30 @@ $('editForm').onsubmit=async e=>{e.preventDefault();if(!editingId||!ensureAdmin(
 async function deleteRecord(r){if(!ensureAdmin()||!confirm('Supprimer définitivement « '+r.titre+' » et son PDF ?'))return;try{const res=await fetch('/api/catalogue-methodologies/'+encodeURIComponent(r.id),{method:'DELETE',headers:{'X-Catalogue-CSRF':adminCsrf}});const d=await res.json();if(!res.ok)throw Error(d.error||'Suppression impossible');selected.delete(r.id);await load();renderManagement()}catch(err){alert(err.message)}}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closePdf();closeLogin();closeEdit()}});
 load();
+
+// RETOUR : reutilise Demandeur lorsqu'il est encore ouvert.
+// Si l'onglet d'origine a ete ferme ou si le catalogue est ouvert directement,
+// on navigue vers /demandeur dans l'onglet actuel (sans popup supplementaire).
+(function setupCatalogueReturn(){
+  const bouton = document.querySelector('.catalogueReturn');
+  if(!bouton) return;
+  bouton.addEventListener('click', function(event){
+    event.preventDefault();
+    const destination = bouton.getAttribute('href') || '/demandeur';
+    try {
+      const origine = window.opener;
+      if(origine && !origine.closed && origine.location.origin === window.location.origin
+        && origine.location.pathname.replace(/\/$/, '') === '/demandeur') {
+        origine.focus();
+        window.close();
+        // Rarement, un navigateur refuse de fermer l'onglet : revenir sur Demandeur ici.
+        setTimeout(function(){ window.location.assign(destination); }, 200);
+        return;
+      }
+    } catch (error) {
+      // Acces a l'onglet d'origine impossible : navigation locale de secours.
+    }
+    window.location.assign(destination);
+  });
+})();
 </script></body></html>
