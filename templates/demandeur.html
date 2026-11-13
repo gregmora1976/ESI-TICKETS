@@ -18,6 +18,11 @@
     .tab{border:1px solid var(--line);background:#fff;border-radius:16px;padding:12px 16px;font-weight:700;font-size:14px;cursor:pointer}
     .tab.active{background:var(--blue);border-color:var(--blue);color:#fff}
     .ticket-tabs{display:grid;gap:10px}
+    .catalogue-shortcuts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;width:min(100%,630px);margin-left:auto}
+    .catalogue-shortcuts .btn{width:100%;min-height:42px;padding:11px 9px;font-size:12px;white-space:normal;line-height:1.3;text-align:center}
+    .catalogue-shortcuts .btn.primary{background:var(--blue)}
+    @media(max-width:800px){.catalogue-shortcuts{width:100%}}
+    @media(max-width:450px){.catalogue-shortcuts{gap:7px}.catalogue-shortcuts .btn{font-size:10px;padding:10px 6px}}
     .ticket-tab-row{display:flex;gap:10px;flex-wrap:wrap}
     .grid{display:grid;gap:14px;grid-template-columns:1fr 1fr}.grid.three{grid-template-columns:repeat(3,1fr)}
     .field{display:grid;gap:8px}.field label{font-size:14px;font-weight:600;color:#475569}.input,.textarea,.search{width:100%;border:1px solid var(--line);background:#eaf6ff;border-radius:16px;padding:13px 14px;font-size:14px;color:var(--text)}
@@ -171,10 +176,11 @@
               </div>
             </div>
           </div>
-          <div class="actions" style="justify-content:flex-end">
+          <div class="catalogue-shortcuts" aria-label="Catalogues et accès gestion">
             <button class="btn primary" id="openCatalogueCaisses" type="button">CATALOGUE CAISSES</button>
-            <button class="btn secondary" id="openManager" type="button">Ouvrir le portail gestionnaire</button>
-  <button class="btn secondary" id="planningCaisserie" type="button">Gestion réception</button>
+            <button class="btn primary" id="openCatalogueMethodologies" type="button">CATALOGUE MÉTHODOLOGIES</button>
+            <button class="btn secondary" id="openManager" type="button">GESTIONNAIRE</button>
+            <button class="btn secondary" id="planningCaisserie" type="button">RECEPTION</button>
           </div>
         </div>
 
@@ -2232,6 +2238,7 @@ document.getElementById('avisArticleSelectAll').addEventListener('click', ()=>{
 document.getElementById('avisArticleClearAll').addEventListener('click', ()=>{ state.avisSelectedArticleIds = new Set(); renderAvisArticlePicker(); });
 document.getElementById('addSelectedAvisArticles').addEventListener('click', addSelectedArticlesToAvis);
 document.getElementById('openCatalogueCaisses').addEventListener('click', () => window.open('/catalogue-caisses', '_blank'));
+document.getElementById('openCatalogueMethodologies').addEventListener('click', () => window.open('/catalogue-methodologies', '_blank'));
 document.getElementById('openManager').addEventListener('click', ()=>window.open('/login','_blank'));
 document.getElementById('planningCaisserie').addEventListener('click', () => {
   window.open('/gestion-reception', '_blank');
