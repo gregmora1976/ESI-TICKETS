@@ -8484,6 +8484,266 @@ def catalogue_caisses_assembler():
         return jsonify({'error': 'Assemblage impossible : ' + str(e)}), 500
 
 
+
+# -----------------------------------------------------------------------------
+# ESI - Catalogue methodologies (independant du catalogue caisses)
+# -----------------------------------------------------------------------------
+_METHODOLOGIES_TABLE = 'catalogue_methodologies'
+_METHODOLOGIES_DIR = 'catalogue-methodologies'
+
+
+def _methodologies_materials(value):
+    """Normalise les materiels (liste JSON ou texte separe par virgules)."""
+    if isinstance(value, str):
+        value = value.split(',')
+    if not isinstance(value, list):
+        raise ValueError('Liste de materiels invalide.')
+    result = []
+    for item in value:
+        name = str(item or '').strip()
+        if not name or len(name) > 60 or any(ord(c) < 32 for c in name):
+            raise ValueError('Chaque materiel doit avoir un nom de 1 a 60 caracteres.')
+        if name.casefold() not in (x.casefold() for x in result):
+            result.append(name)
+    if not result or len(result) > 12:
+        raise ValueError('Selectionnez entre 1 et 12 materiels par fiche.')
+    return result
+
+
+def _methodologies_record(item_id):
+    rows = supabase_rest_request('GET', _METHODOLOGIES_TABLE,
+        'select=*&id=eq.' + urllib.parse.quote(item_id, safe='') + '&limit=1') or []
+    return dict(rows[0]) if rows else None
+
+
+def _methodologies_items():
+    rows = supabase_rest_request('GET', _METHODOLOGIES_TABLE,
+        'select=*&order=ordre.asc,titre.asc&limit=1000') or []
+    output = []
+    for row in rows:
+        item = dict(row)
+        item['pdf_url'] = url_for('methodologies_file', item_id=item['id'], kind='pdf')
+        item['vignette_url'] = url_for('methodologies_file', item_id=item['id'], kind='vignette')
+        output.append(item)
+    return output
+
+
+@app.route('/catalogue-methodologies')
+def catalogue_methodologies_page():
+    return render_template('catalogue_methodologies.html')
+
+
+@app.route('/api/catalogue-methodologies')
+def catalogue_methodologies_list():
+    try:
+        return jsonify({'ok': True, 'fiches': _methodologies_items()})
+    except Exception as exc:
+        print('[METHODOLOGIES] Liste indisponible:', exc)
+        return jsonify({'error': 'Catalogue indisponible. Verifiez la creation de la table Supabase.'}), 503
+
+
+@app.route('/api/catalogue-methodologies/<item_id>/fichier/<kind>')
+def methodologies_file(item_id, kind):
+    if kind not in ('pdf', 'vignette'):
+        abort(404)
+    item = _methodologies_record(item_id)
+    if not item:
+        abort(404)
+    storage_path = item.get('pdf_path' if kind == 'pdf' else 'vignette_path')
+    if not storage_path:
+        abort(404)
+    try:
+        return redirect(supabase_signed_download_url(storage_path, expires_in=300))
+    except Exception as exc:
+        print('[METHODOLOGIES] Fichier indisponible:', exc)
+        abort(503)
+
+
+@app.route('/api/catalogue-methodologies/ordre', methods=['POST'])
+def methodologies_reorder():
+    if not _catalogue_admin_required():
+        return jsonify({'error': 'Session administrateur invalide ou expiree.'}), 403
+    ids = (request.get_json(silent=True) or {}).get('ids')
+    if (not isinstance(ids, list) or len(ids) > 1000 or
+            any(not isinstance(x, str) for x in ids) or len(ids) != len(set(ids))):
+        return jsonify({'error': 'Liste de fiches invalide.'}), 400
+    try:
+        rows = supabase_rest_request('GET', _METHODOLOGIES_TABLE,
+            'select=id,ordre&order=ordre.asc,titre.asc&limit=1000') or []
+        if len(rows) != len(ids) or set(ids) != {str(x['id']) for x in rows}:
+            return jsonify({'error': 'Catalogue modifie entre-temps. Rechargez la page.'}), 409
+        previous = {str(row['id']): int(row.get('ordre') or 0) for row in rows}
+        changed = []
+        try:
+            for position, ident in enumerate(ids, 1):
+                order = position * 10
+                if previous[ident] != order:
+                    supabase_rest_request('PATCH', _METHODOLOGIES_TABLE,
+                        'id=eq.' + urllib.parse.quote(ident, safe=''),
+                        {'ordre': order}, prefer='return=minimal')
+                    changed.append(ident)
+        except Exception:
+            for ident in reversed(changed):
+                try:
+                    supabase_rest_request('PATCH', _METHODOLOGIES_TABLE,
+                        'id=eq.' + urllib.parse.quote(ident, safe=''),
+                        {'ordre': previous[ident]}, prefer='return=minimal')
+                except Exception as exc:
+                    print('[METHODOLOGIES] Restauration ordre echouee:', exc)
+            raise
+        return jsonify({'ok': True})
+    except Exception as exc:
+        print('[METHODOLOGIES] Erreur classement:', exc)
+        return jsonify({'error': 'Impossible de sauvegarder le classement.'}), 500
+
+
+def _methodologies_next_order():
+    rows = supabase_rest_request('GET', _METHODOLOGIES_TABLE,
+        'select=ordre&order=ordre.desc&limit=1') or []
+    return max(0, int(rows[0].get('ordre') or 0) if rows else 0) + 10
+
+
+def _methodologies_pdf_thumbnail(data):
+    import fitz
+    with fitz.open(stream=data, filetype='pdf') as doc:
+        if not doc.page_count:
+            raise ValueError('Le PDF est vide.')
+        return doc[0].get_pixmap(matrix=fitz.Matrix(1.3, 1.3), alpha=False).tobytes('png')
+
+
+@app.route('/api/catalogue-methodologies/import', methods=['POST'])
+def methodologies_import():
+    if not _catalogue_admin_required():
+        return jsonify({'error': 'Session administrateur invalide ou expiree.'}), 403
+    uploaded = request.files.get('file')
+    titre = (request.form.get('titre') or '').strip()
+    try:
+        materiels = _methodologies_materials(json.loads(request.form.get('materiels') or '[]'))
+    except (ValueError, TypeError) as exc:
+        return jsonify({'error': str(exc)}), 400
+    if not uploaded or not uploaded.filename or not titre:
+        return jsonify({'error': 'Titre et fichier PDF obligatoires.'}), 400
+    data = uploaded.read(20 * 1024 * 1024 + 1)
+    if len(data) > 20 * 1024 * 1024 or not data.startswith(b'%PDF-'):
+        return jsonify({'error': 'Fichier PDF invalide ou superieur a 20 Mo.'}), 400
+    paths = []
+    try:
+        thumbnail = _methodologies_pdf_thumbnail(data)
+        ident = str(uuid.uuid4())
+        pdf_path = f'{_METHODOLOGIES_DIR}/{ident}/fiche.pdf'
+        png_path = f'{_METHODOLOGIES_DIR}/{ident}/vignette.png'
+        supabase_upload_bytes(pdf_path, data, 'application/pdf'); paths.append(pdf_path)
+        supabase_upload_bytes(png_path, thumbnail, 'image/png'); paths.append(png_path)
+        supabase_rest_request('POST', _METHODOLOGIES_TABLE, '', {
+            'id': ident, 'titre': titre[:180], 'materiels': materiels,
+            'pdf_path': pdf_path, 'vignette_path': png_path,
+            'ordre': _methodologies_next_order()
+        })
+        return jsonify({'ok': True, 'id': ident}), 201
+    except Exception as exc:
+        for path in paths:
+            try: supabase_delete_object(path)
+            except Exception: pass
+        print('[METHODOLOGIES] Import echoue:', exc)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/catalogue-methodologies/<item_id>', methods=['PATCH'])
+def methodologies_update(item_id):
+    if not _catalogue_admin_required():
+        return jsonify({'error': 'Session administrateur invalide ou expiree.'}), 403
+    try:
+        item = _methodologies_record(item_id)
+        if not item:
+            return jsonify({'error': 'Fiche introuvable.'}), 404
+        titre = (request.form.get('titre') or '').strip()
+        materiels = _methodologies_materials(json.loads(request.form.get('materiels') or '[]'))
+        if not titre:
+            return jsonify({'error': 'Le titre est obligatoire.'}), 400
+        patch = {'titre': titre[:180], 'materiels': materiels}
+        uploaded = request.files.get('file')
+        paths = []
+        if uploaded and uploaded.filename:
+            data = uploaded.read(20 * 1024 * 1024 + 1)
+            if len(data) > 20 * 1024 * 1024 or not data.startswith(b'%PDF-'):
+                return jsonify({'error': 'PDF invalide ou superieur a 20 Mo.'}), 400
+            thumbnail = _methodologies_pdf_thumbnail(data)
+            suffix = uuid.uuid4().hex
+            pdf_path = f'{_METHODOLOGIES_DIR}/{item_id}/fiche-{suffix}.pdf'
+            png_path = f'{_METHODOLOGIES_DIR}/{item_id}/vignette-{suffix}.png'
+            try:
+                supabase_upload_bytes(pdf_path, data, 'application/pdf'); paths.append(pdf_path)
+                supabase_upload_bytes(png_path, thumbnail, 'image/png'); paths.append(png_path)
+            except Exception:
+                for path in paths:
+                    try: supabase_delete_object(path)
+                    except Exception: pass
+                raise
+            patch.update({'pdf_path': pdf_path, 'vignette_path': png_path})
+        try:
+            supabase_rest_request('PATCH', _METHODOLOGIES_TABLE,
+                'id=eq.' + urllib.parse.quote(item_id, safe=''), patch, prefer='return=minimal')
+        except Exception:
+            for path in paths:
+                try: supabase_delete_object(path)
+                except Exception: pass
+            raise
+        if paths:
+            for path in [item.get('pdf_path'), item.get('vignette_path')]:
+                if path:
+                    try: supabase_delete_object(path)
+                    except Exception as exc: print('[METHODOLOGIES] Ancien fichier non supprime:', exc)
+        return jsonify({'ok': True})
+    except (ValueError, TypeError) as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        print('[METHODOLOGIES] Modification echouee:', exc)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/catalogue-methodologies/<item_id>', methods=['DELETE'])
+def methodologies_delete(item_id):
+    if not _catalogue_admin_required():
+        return jsonify({'error': 'Session administrateur invalide ou expiree.'}), 403
+    try:
+        item = _methodologies_record(item_id)
+        if not item:
+            return jsonify({'error': 'Fiche introuvable.'}), 404
+        supabase_rest_request('DELETE', _METHODOLOGIES_TABLE,
+            'id=eq.' + urllib.parse.quote(item_id, safe=''), prefer='return=minimal')
+        for field in ('pdf_path', 'vignette_path'):
+            if item.get(field):
+                try: supabase_delete_object(item[field])
+                except Exception as exc: print('[METHODOLOGIES] Fichier orphelin:', exc)
+        return jsonify({'ok': True})
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/catalogue-methodologies/assembler', methods=['POST'])
+def methodologies_assemble():
+    ids = (request.get_json(silent=True) or {}).get('ids')
+    if not isinstance(ids, list) or not 1 <= len(ids) <= 150 or any(not isinstance(x, str) for x in ids):
+        return jsonify({'error': 'Selectionnez entre 1 et 150 fiches.'}), 400
+    try:
+        from pypdf import PdfReader, PdfWriter
+        writer = PdfWriter()
+        for ident in dict.fromkeys(ids):
+            item = _methodologies_record(ident)
+            if not item:
+                return jsonify({'error': 'Une fiche est introuvable.'}), 404
+            data = supabase_download_bytes(item['pdf_path'])
+            reader = PdfReader(BytesIO(data))
+            for page in reader.pages:
+                writer.add_page(page)
+        output = BytesIO()
+        writer.write(output)
+        output.seek(0)
+        return send_file(output, mimetype='application/pdf', as_attachment=True,
+            download_name='ESI_catalogue_methodologies.pdf')
+    except Exception as exc:
+        return jsonify({'error': 'Assemblage impossible : ' + str(exc)}), 500
+
 @app.route('/')
 def index():
     return redirect(url_for('demandeur'))
