@@ -107,7 +107,7 @@ def register_security(app, db_request, load_ticket):
         if path.startswith(('/reporting','/api/reporting','/api/export/excel','/api/restart')) and role != 'ADMIN':
             return forbidden()
         if role == 'DEMANDEUR' and (
-            path.startswith(('/gestionnaire', '/gestion-reception', '/cleaner', '/api/cleaner'))
+            path.startswith(('/gestionnaire', '/cleaner', '/api/cleaner'))
         ):
             return forbidden()
         # La validation du depot et les actions physiques ne sont pas des saisies DEMANDEUR.
