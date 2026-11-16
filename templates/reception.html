@@ -471,12 +471,35 @@ body{
   .week-head{display:none}
   .day{min-height:105px;border-right:none}
 }
+
+/* Harmonisation ESI : uniquement l'en-tete, aucun style du calendrier modifie. */
+.topbar{position:relative;top:auto;z-index:10;margin:18px 20px 12px;padding:20px 24px;background:#fff;border:1px solid #e2e8f0;border-radius:28px;box-shadow:0 8px 30px rgba(15,23,42,.06);display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.esi-planning-brand{display:flex;align-items:center;gap:16px;min-width:0}
+.esi-planning-logo{width:98px;height:70px;object-fit:contain;flex-shrink:0}
+.esi-planning-eyebrow{font-size:13px;color:#0284c7;letter-spacing:.08em;text-transform:uppercase;font-weight:800;margin-bottom:3px}
+.topbar .title{font-size:32px;line-height:1.12;font-weight:900;color:#1e293b}
+.topbar .sub{display:block;color:#64748b;font-size:14px;margin-top:7px}
+.topbar .actions{margin-left:auto;display:flex;align-items:center;justify-content:flex-end;gap:9px;flex-wrap:wrap}
+.topbar .btn{border-radius:16px;padding:12px 16px;font-size:14px}
+.topbar .search{background:#eaf6ff;border-radius:16px;padding:12px 14px;min-width:200px}
+@media(max-width:1200px){.topbar{align-items:flex-start}.topbar .actions{margin-left:0;width:100%;justify-content:flex-start}}
+@media(max-width:650px){.topbar{margin:10px 10px 12px;padding:16px;gap:12px}.esi-planning-logo{width:70px;height:54px}.topbar .title{font-size:24px}.topbar .search{min-width:0;width:100%}}
+.topbar-left{display:flex;align-items:center;gap:20px;flex-wrap:wrap;flex:1 1 auto}
+.topbar .stats-wrap{display:flex;gap:8px;flex-wrap:wrap}
+@media(max-width:1200px){.topbar-left{width:100%}}
 </style>
 </head>
 <body>
 <div class="topbar">
   <div class="topbar-left">
-    <div class="title">Planning Packing</div>
+    <div class="esi-planning-brand">
+      <img class="esi-planning-logo" src="/static/logo.png" alt="Logo ESI">
+      <div>
+        <div class="esi-planning-eyebrow">ESI TICKETS</div>
+        <div class="title">PLANNING PACKING</div>
+        <div class="sub">Suivi des packings et de leurs réceptions</div>
+      </div>
+    </div>
 
     <div class="stats-wrap">
       <div class="stat-card">
