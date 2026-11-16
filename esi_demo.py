@@ -84,7 +84,9 @@ def safe_user():
 @app.before_request
 def gate():
     g.user=safe_user()
-    if request.path in ('/connexion','/sante','/demande-acces','/activer-compte') : return
+    if request.path in ('/connexion','/sante','/demande-acces','/activer-compte'):
+        if request.method=='POST': check_csrf()
+        return
     if not g.user:return redirect('/connexion')
     if g.user['must_change'] and request.path not in ('/changer-mot-de-passe','/deconnexion'):
         return redirect('/changer-mot-de-passe')
@@ -122,12 +124,12 @@ def login():
             tries.append(now);TRIES[key]=tries
             email=request.form.get('email','').strip().lower()
             user=db_one('SELECT * FROM users WHERE email=?',(email,))
-            if user and user['active'] and check_password_hash(user['hash'],request.form.get('password','')):
+            if user and user['active'] and user['hash'] != '!' and check_password_hash(user['hash'],request.form.get('password','')):
                 TRIES.pop(key,None); session.clear();session.permanent=True
                 session['uid']=email;session['version']=user['version'];csrf()
                 return redirect('/changer-mot-de-passe' if user['must_change'] else '/demandeur')
             error='Identifiant ou mot de passe incorrect.'
-    return view('Connexion','''<div class="panel narrow"><h1>Connexion individuelle</h1><p class="muted">Les trois comptes de démonstration sont indépendants de Microsoft 365 et de Supabase.</p>{% if error %}<p class="error">{{error}}</p>{% endif %}<form method="post"><label>Adresse e-mail</label><input name="email" type="email" required autocomplete="username" placeholder="demandeur@demo.invalid"><label>Mot de passe provisoire</label><input name="password" type="password" required autocomplete="current-password"><button>SE CONNECTER</button></form><p><a href="/demande-acces">Demander un compte ou une réinitialisation</a> · <a href="/activer-compte">Première connexion</a></p><p class="muted">Comptes : demandeur@demo.invalid · gestionnaire@demo.invalid · admin@demo.invalid</p></div>''',error=error)
+    return view('Connexion','''<div class="panel narrow"><h1>Connexion individuelle</h1><p class="muted">Les trois comptes de démonstration sont indépendants de Microsoft 365 et de Supabase.</p>{% if error %}<p class="error">{{error}}</p>{% endif %}<form method="post"><input type="hidden" name="csrf" value="{{csrf}}"><label>Adresse e-mail</label><input name="email" type="email" required autocomplete="username" placeholder="demandeur@demo.invalid"><label>Mot de passe provisoire</label><input name="password" type="password" required autocomplete="current-password"><button>SE CONNECTER</button></form><p><a href="/demande-acces">Demander un compte ou une réinitialisation</a> · <a href="/activer-compte">Première connexion</a></p><p class="muted">Comptes : demandeur@demo.invalid · gestionnaire@demo.invalid · admin@demo.invalid</p></div>''',error=error,csrf=csrf())
 
 @app.route('/changer-mot-de-passe',methods=['GET','POST'])
 def change_password():
@@ -199,7 +201,7 @@ def admin_users():
 def admin_modify():
     email=request.form.get('email','').strip().lower();role=request.form.get('profil','');active=request.form.get('active')
     if email==DEMO_EMAILS['ADMIN'] or role not in ROLES or active not in ('0','1'):abort(400)
-    if email not in DEMO_EMAILS.values():abort(400)
+    if not db_one('SELECT 1 FROM users WHERE email=?',(email,)):abort(404)
     db_write('UPDATE users SET profil=?,active=?,version=version+1 WHERE email=?',(role,int(active),email))
     flash('Compte fictif modifié. Les sessions précédentes sont invalidées.','ok')
     return redirect('/admin/utilisateurs')
@@ -241,11 +243,11 @@ def request_access():
     return view('Demande d’accès','''<div class="panel narrow"><h1>Demande d’accès à ESI TICKETS</h1>
       <p>Première connexion ou accès perdu ? Un administrateur examinera votre demande.</p>
       {% if msg %}<p class="ok">{{msg}}</p>{% endif %}
-      <form method="post"><label>Adresse e-mail professionnelle</label><input type="email" name="email" required maxlength="254">
+      <form method="post"><input type="hidden" name="csrf" value="{{csrf}}"><label>Adresse e-mail professionnelle</label><input type="email" name="email" required maxlength="254">
       <label>Commentaire (facultatif)</label><textarea name="message" maxlength="400" rows="3" placeholder="Expliquez le problème rencontré"></textarea>
       <button>ENVOYER LA DEMANDE</button></form>
       <p class="muted">Aucun compte n'est créé automatiquement. Ce formulaire n'envoie pas d'e-mail.</p>
-      <p><a href="/connexion">Retour à la connexion</a></p></div>''',msg=msg)
+      <p><a href="/connexion">Retour à la connexion</a></p></div>''',msg=msg,csrf=csrf())
 
 @app.route('/activer-compte',methods=['GET','POST'])
 def activate_user():
@@ -268,141 +270,11 @@ def activate_user():
     return view('Activer mon compte','''<div class="panel narrow"><h1>Première connexion</h1>
       <p class="warning">La démonstration ne vérifie pas la propriété de l'adresse e-mail. Ne l'utilisez pas avec de vrais comptes.</p>
       {% if message %}<p class="error">{{message}}</p>{% endif %}
-      <form method="post"><label>Adresse e-mail</label><input name="email" type="email" value="{{email}}" required>
+      <form method="post"><input type="hidden" name="csrf" value="{{csrf}}"><label>Adresse e-mail</label><input name="email" type="email" value="{{email}}" required>
       <label>Créer mon mot de passe (14 caractères minimum)</label><input name="password" type="password" minlength="14" required>
       <label>Confirmer</label><input name="confirm" type="password" minlength="14" required>
       <button>ACTIVER MON COMPTE</button></form>
-      <a href="/connexion">Retour à la connexion</a></div>''',email=email,message=message)
-
-@app.route('/administrateur')
-@role_allowed('ADMIN')
-def admin_dashboard():
-    users=db_all('SELECT email,profil,active,hash FROM users ORDER BY profil,email')
-    requests=db_all("SELECT * FROM user_requests ORDER BY CASE WHEN state='EN_ATTENTE' THEN 0 ELSE 1 END,id DESC LIMIT 100")
-    audits=db_all('SELECT * FROM admin_audit ORDER BY id DESC LIMIT 30')
-    pending=sum(1 for item in requests if item['state']=='EN_ATTENTE')
-    return view('Administrateur','''<div class="panel"><h1>ADMINISTRATEUR</h1>
-      <p>Gestion des utilisateurs, demandes et accès · environnement de test uniquement.</p>
-      <div class="grid">
-      <div class="box"><h2>{{users|length}}</h2><span>Utilisateurs fictifs</span></div>
-      <div class="box"><h2>{{pending}}</h2><span>Demandes en attente</span></div>
-      <div class="box"><h2>3</h2><span>Profils disponibles</span></div></div></div>
-      <div class="panel"><h2>Demandes de création et réinitialisation</h2>
-      <table><tr><th>Date</th><th>Adresse</th><th>Type</th><th>Statut</th><th>Action</th></tr>
-      {% for r in requests %}<tr><td>{{r.created_at}}</td><td>{{r.email}}</td><td>{{r.kind}}</td>
-      <td>{{r.state}}</td><td>{% if r.state=='EN_ATTENTE' %}
-      <form class="inline" method="post" action="/administrateur/traiter">
-      <input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="id" value="{{r.id}}">
-      {% if r.kind=='CREATION' %}<select name="profil">{% for role in roles %}<option>{{role}}</option>{% endfor %}</select>{% endif %}
-      <button name="decision" value="ACCEPTEE">Accepter</button>
-      <button class="secondary" name="decision" value="REFUSEE">Refuser</button></form>
-      {% else %}Traité par {{r.handled_by}}{% endif %}</td></tr>
-      {% else %}<tr><td colspan="5">Aucune demande.</td></tr>{% endfor %}</table>
-      <p class="muted">Un administrateur doit vérifier l'identité d'un collaborateur avant une réinitialisation.</p></div>
-      <div class="panel"><h2>Utilisateurs</h2>
-      <table><tr><th>Adresse</th><th>Profil</th><th>État</th><th>Activation</th></tr>
-      {% for u in users %}<tr><td>{{u.email}}</td><td>{{u.profil}}</td><td>{{'Actif' if u.active else 'Désactivé'}}</td>
-      <td>{{'À activer' if u.hash=='!' else 'Activé'}}</td></tr>{% endfor %}</table>
-      <p><a class="button secondary" href="/admin/utilisateurs">Modifier les profils / désactiver</a></p></div>
-      <div class="panel"><h2>Historique administrateur</h2><table><tr><th>Date</th><th>Administrateur</th><th>Opération</th><th>Compte</th></tr>
-      {% for a in audits %}<tr><td>{{a.created_at}}</td><td>{{a.actor}}</td><td>{{a.action}}</td><td>{{a.target}}</td></tr>
-      {% else %}<tr><td colspan="4">Aucun mouvement.</td></tr>{% endfor %}</table></div>
-      <p><a href="/demandeur">Retour à l'accueil</a></p>''',users=users,requests=requests,audits=audits,pending=pending,csrf=csrf(),roles=ROLES)
-
-@app.route('/administrateur/traiter',methods=['POST'])
-@role_allowed('ADMIN')
-def admin_handle_request():
-    try: rid=int(request.form.get('id','0'))
-    except ValueError:abort(400)
-    decision=request.form.get('decision','')
-    role=request.form.get('profil','DEMANDEUR')
-    if decision not in ('ACCEPTEE','REFUSEE') or role not in ROLES:abort(400)
-    with _DB_LOCK:
-        with connect() as db:
-            req=db.execute("SELECT * FROM user_requests WHERE id=? AND state='EN_ATTENTE'",(rid,)).fetchone()
-            if not req:abort(404)
-            if decision=='ACCEPTEE':
-                if req['kind']=='CREATION':
-                    existing=db.execute('SELECT 1 FROM users WHERE email=?',(req['email'],)).fetchone()
-                    if existing:abort(409)
-                    db.execute('INSERT INTO users(email,profil,active,hash,must_change) VALUES(?,?,1,?,0)',
-                               (req['email'],role,'!'))
-                elif req['kind']=='REINITIALISATION':
-                    target=db.execute('SELECT email FROM users WHERE email=?',(req['email'],)).fetchone()
-                    if not target:abort(404)
-                    db.execute("UPDATE users SET hash='!',must_change=0,version=version+1 WHERE email=?",(req['email'],))
-            db.execute("UPDATE user_requests SET state=?,handled_by=?,handled_at=CURRENT_TIMESTAMP WHERE id=?",
-                      (decision,g.user['email'],rid))
-            db.execute('INSERT INTO admin_audit(actor,action,target) VALUES(?,?,?)',
-                      (g.user['email'],req['kind']+' '+decision,req['email']))
-    flash('Demande traitée. Après acceptation, le collaborateur peut utiliser « Première connexion ».','ok')
-    return redirect('/administrateur')
-
-if __name__=='__main__':app.run(port=10000)
-)
-
-def demo_audit(action,target):
-    db_write('INSERT INTO admin_audit(actor,action,target) VALUES(?,?,?)',
-             (g.user['email'],action,target))
-
-@app.route('/demande-acces',methods=['GET','POST'])
-def request_access():
-    msg=''
-    if request.method=='POST':
-        email=request.form.get('email','').strip().lower()
-        detail=request.form.get('message','').strip()[:400]
-        # Même message de confirmation, pour ne pas divulguer les comptes existants.
-        if EMAIL_RE.fullmatch(email) and len(email)<=254:
-            now=time.monotonic()
-            key='request:'+str(request.remote_addr)
-            recent=[t for t in TRIES.get(key,[]) if now-t<3600]
-            if len(recent)<5:
-                with _DB_LOCK:
-                    with connect() as db:
-                        user=db.execute('SELECT email FROM users WHERE email=?',(email,)).fetchone()
-                        kind='REINITIALISATION' if user else 'CREATION'
-                        existing=db.execute("SELECT id FROM user_requests WHERE email=? AND kind=? AND state='EN_ATTENTE'",(email,kind)).fetchone()
-                        if not existing:
-                            db.execute('INSERT INTO user_requests(email,kind,message) VALUES(?,?,?)',(email,kind,detail))
-                recent.append(now);TRIES[key]=recent
-            msg='Si votre demande peut être traitée, elle apparaîtra dans la rubrique Administrateur.'
-        else:
-            msg='Vérifiez le format de votre adresse e-mail.'
-    return view('Demande d’accès','''<div class="panel narrow"><h1>Demande d’accès à ESI TICKETS</h1>
-      <p>Première connexion ou accès perdu ? Un administrateur examinera votre demande.</p>
-      {% if msg %}<p class="ok">{{msg}}</p>{% endif %}
-      <form method="post"><label>Adresse e-mail professionnelle</label><input type="email" name="email" required maxlength="254">
-      <label>Commentaire (facultatif)</label><textarea name="message" maxlength="400" rows="3" placeholder="Expliquez le problème rencontré"></textarea>
-      <button>ENVOYER LA DEMANDE</button></form>
-      <p class="muted">Aucun compte n'est créé automatiquement. Ce formulaire n'envoie pas d'e-mail.</p>
-      <p><a href="/connexion">Retour à la connexion</a></p></div>''',msg=msg)
-
-@app.route('/activer-compte',methods=['GET','POST'])
-def activate_user():
-    email=request.values.get('email','').strip().lower()
-    message=''
-    if request.method=='POST':
-        password=request.form.get('password','')
-        confirm=request.form.get('confirm','')
-        with _DB_LOCK:
-            with connect() as db:
-                user=db.execute('SELECT email,active,hash FROM users WHERE email=?',(email,)).fetchone()
-                if not user or not user['active'] or user['hash']!='!':
-                    message='Activation impossible pour ce compte.'
-                elif len(password)<14 or len(password)>128 or password!=confirm:
-                    message='Saisissez deux mots de passe identiques de 14 à 128 caractères.'
-                else:
-                    db.execute('UPDATE users SET hash=?,must_change=0,version=version+1 WHERE email=? AND hash=?',
-                      (generate_password_hash(password,method='scrypt'),email,'!'))
-                    return redirect('/connexion')
-    return view('Activer mon compte','''<div class="panel narrow"><h1>Première connexion</h1>
-      <p class="warning">La démonstration ne vérifie pas la propriété de l'adresse e-mail. Ne l'utilisez pas avec de vrais comptes.</p>
-      {% if message %}<p class="error">{{message}}</p>{% endif %}
-      <form method="post"><label>Adresse e-mail</label><input name="email" type="email" value="{{email}}" required>
-      <label>Créer mon mot de passe (14 caractères minimum)</label><input name="password" type="password" minlength="14" required>
-      <label>Confirmer</label><input name="confirm" type="password" minlength="14" required>
-      <button>ACTIVER MON COMPTE</button></form>
-      <a href="/connexion">Retour à la connexion</a></div>''',email=email,message=message)
+      <a href="/connexion">Retour à la connexion</a></div>''',email=email,message=message,csrf=csrf())
 
 @app.route('/administrateur')
 @role_allowed('ADMIN')
