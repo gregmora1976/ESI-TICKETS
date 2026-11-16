@@ -8957,7 +8957,7 @@ setTimeout(()=>{try{loadLinks(true)}catch(e){}},100);
 @app.route('/gestionnaire')
 def gestionnaire():
     from flask import request, redirect, url_for
-    if request.args.get('pwd') != 'esi2026':
+    if os.getenv('ESI_AUTH_ENABLED', '0').strip() != '1' and request.args.get('pwd') != 'esi2026':
         return redirect(url_for('login'))
 
     # Injection inline volontaire : pas de fichier JS externe, donc pas de probleme de cache/404.
@@ -8990,7 +8990,7 @@ def gestionnaire():
 @app.route('/cleaner')
 def cleaner_page():
     """Portail CLEANER - moteur documentaire transversal d'ESI TICKETS."""
-    if request.args.get('pwd') != 'esi2026':
+    if os.getenv('ESI_AUTH_ENABLED', '0').strip() != '1' and request.args.get('pwd') != 'esi2026':
         return redirect(url_for('login'))
 
     response = app.make_response(render_template('cleaner.html'))
