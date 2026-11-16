@@ -111,7 +111,6 @@ body{font-family:Arial,Helvetica,sans-serif!important;background:linear-gradient
           <div class="folder-state" id="folderState" style="margin-top:10px">Chargement...</div>
         </div>
         <div class="actions">
-          <button class="btn primary" id="openCleaner" type="button">CLEANER</button>
           <button class="btn secondary" id="toggleReferentielsBtn" type="button">Référentiels</button>
           <button class="btn secondary" id="openDemandeur" type="button">Ouvrir le portail demandeur</button>
           <button class="btn primary" id="exportExcel" type="button">Exporter Excel</button>
@@ -1300,7 +1299,6 @@ referentielsModal.addEventListener('click', (e)=>{
 document.addEventListener('keydown', (e)=>{
   if(e.key === 'Escape') closeReferentielsModal();
 });
-document.getElementById('openCleaner').addEventListener('click',()=>window.open('/cleaner?pwd=1234','_blank'));
 document.getElementById('openDemandeur').addEventListener('click',()=>window.open('/demandeur','_blank'));
 document.getElementById('exportExcel').addEventListener('click',()=>window.open('/api/export/excel','_blank'));
 els.searchInput.addEventListener('input',e=>{state.searchTerm=e.target.value;renderTable();});
