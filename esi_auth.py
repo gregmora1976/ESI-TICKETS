@@ -12,7 +12,7 @@ ROLES = {'DEMANDEUR', 'GESTIONNAIRE', 'ADMIN'}
 AUTH_ENABLED = os.environ.get('ESI_AUTH_ENABLED', '0').strip() == '1'
 _LOGIN_TRIES = {}
 
-STYLE = '''<style>body{font-family:Arial,sans-serif;background:#eef5fb;color:#12324d;margin:0;display:grid;place-items:center;min-height:100vh}.card{background:white;border:1px solid #d9e7f1;border-radius:20px;padding:30px;width:min(92vw,460px);box-shadow:0 18px 55px #173c5c16}h1{margin:0 0 8px}p{color:#576c80}label{display:block;margin:14px 0 5px;font-weight:700}input,select{box-sizing:border-box;width:100%;padding:12px;border:1px solid #bfcfdd;border-radius:10px}button{background:#0284c7;border:0;color:white;border-radius:10px;padding:11px 15px;font-weight:bold;cursor:pointer;margin-top:18px}.error{color:#b91c1c}.top{display:flex;align-items:center;justify-content:space-between}.top a{color:#0369a1}table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #e2e8f0;padding:8px;text-align:left;font-size:13px}.mini{padding:5px 8px;margin:0}.wide{width:min(94vw,1100px)}.muted{font-size:12px;color:#64748b}</style>'''
+STYLE = '''<style>body{font-family:Arial,sans-serif;background:#eef5fb;color:#12324d;margin:0;display:grid;place-items:center;min-height:100vh}.card{background:white;border:1px solid #d9e7f1;border-radius:20px;padding:30px;width:min(92vw,460px);box-shadow:0 18px 55px #173c5c16}h1{margin:0 0 8px}p{color:#576c80}label{display:block;margin:14px 0 5px;font-weight:700}input,select{box-sizing:border-box;width:100%;padding:12px;border:1px solid #bfcfdd;border-radius:10px;background:#eaf6ff;color:#12324d}input:focus,select:focus{outline:2px solid #7dd3fc;outline-offset:1px}button{background:#0284c7;border:0;color:white;border-radius:10px;padding:11px 15px;font-weight:bold;cursor:pointer;margin-top:18px}.error{color:#b91c1c}.top{display:flex;align-items:center;justify-content:space-between}.top a{color:#0369a1}table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #e2e8f0;padding:8px;text-align:left;font-size:13px}.mini{padding:5px 8px;margin:0}.wide{width:min(94vw,1100px)}.muted{font-size:12px;color:#64748b}.esi-login-brand{display:flex;align-items:center;gap:16px;margin-bottom:20px}.esi-login-brand img{width:92px;height:70px;object-fit:contain;flex-shrink:0}.esi-login-brand h1{margin:0}.esi-login-brand p{margin-top:10px}@media(max-width:380px){.esi-login-brand{gap:9px}.esi-login-brand img{width:68px;height:54px}.esi-login-brand h1{font-size:25px}}</style>'''
 
 def register_security(app, db_request, load_ticket):
     if AUTH_ENABLED:
@@ -304,14 +304,13 @@ def register_security(app, db_request, load_ticket):
         page = '''<!doctype html><html lang="fr"><meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
         <title>Connexion ESI TICKETS</title>''' + STYLE + '''
-        <div class="card"><h1>ESI TICKETS</h1>
+        <div class="card"><div class="esi-login-brand"><img src="/static/logo.png" alt="Logo ESI"><div><h1>ESI TICKETS</h1><p>Connexion professionnelle</p></div></div>
         {% if stage == 'email' %}
-          <p>Connexion professionnelle</p>
           <form method="post" action="/login">
             <input type="hidden" name="csrf" value="{{csrf}}">
             <input type="hidden" name="step" value="email">
             <input type="hidden" name="next" value="{{next_path}}">
-            <label>Adresse e-mail professionnelle</label>
+            <label>Renseignez votre adresse e-mail</label>
             <input name="email" type="email" value="{{email}}" autocomplete="username" maxlength="254" required autofocus>
             <button type="submit">CONTINUER</button>
           </form>
