@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, request, send_file, abort, redirect, url_for, make_response
+from flask import Flask, render_template, jsonify, request, send_file, abort, redirect, url_for, make_response, g
 from pathlib import Path
 import json, webbrowser, os, urllib.request, urllib.parse
 import csv, re, time
@@ -8162,6 +8162,8 @@ def _catalogue_auth_data():
 
 
 def _catalogue_admin_required():
+    if os.getenv('ESI_AUTH_ENABLED', '0') == '1':
+        return (getattr(g, 'esi_user', None) or {}).get('profil') == 'ADMIN'
     payload = _catalogue_auth_data()
     return bool(payload and hmac.compare_digest(
         str(payload.get('csrf', '')), request.headers.get('X-Catalogue-CSRF', '')))
@@ -8174,6 +8176,9 @@ def _catalogue_login_key():
 
 @app.route('/api/catalogue-caisses/admin/session', methods=['GET'])
 def catalogue_admin_session():
+    if os.getenv('ESI_AUTH_ENABLED', '0') == '1':
+        ok = (getattr(g, 'esi_user', None) or {}).get('profil') == 'ADMIN'
+        return jsonify({'ok':True,'authenticated':ok,'csrf':'esi-session' if ok else None})
     auth = _catalogue_auth_data()
     response = jsonify({'ok': True, 'authenticated': bool(auth),
                         'csrf': auth.get('csrf') if auth else None})
@@ -8183,6 +8188,9 @@ def catalogue_admin_session():
 
 @app.route('/api/catalogue-caisses/admin/login', methods=['POST'])
 def catalogue_admin_login():
+    if os.getenv('ESI_AUTH_ENABLED', '0') == '1':
+        if (getattr(g, 'esi_user', None) or {}).get('profil') != 'ADMIN': abort(403)
+        return jsonify({'ok':True,'csrf':'esi-session'})
     secret = os.getenv('CATALOGUE_ADMIN_PASSWORD', '')
     supplied = str((request.get_json(silent=True) or {}).get('password') or '')
     if not secret:
@@ -8211,6 +8219,8 @@ def catalogue_admin_login():
 
 @app.route('/api/catalogue-caisses/admin/logout', methods=['POST'])
 def catalogue_admin_logout():
+    if os.getenv('ESI_AUTH_ENABLED', '0') == '1':
+        return jsonify({'ok':True})
     if not _catalogue_admin_required():
         return jsonify({'error': 'Session non valide.'}), 403
     response = jsonify({'ok': True})
@@ -8957,7 +8967,7 @@ setTimeout(()=>{try{loadLinks(true)}catch(e){}},100);
 @app.route('/gestionnaire')
 def gestionnaire():
     from flask import request, redirect, url_for
-    if request.args.get('pwd') != 'esi2026':
+    if os.getenv('ESI_AUTH_ENABLED', '0') != '1' and request.args.get('pwd') != 'esi2026':
         return redirect(url_for('login'))
 
     # Injection inline volontaire : pas de fichier JS externe, donc pas de probleme de cache/404.
@@ -8990,7 +9000,7 @@ def gestionnaire():
 @app.route('/cleaner')
 def cleaner_page():
     """Portail CLEANER - moteur documentaire transversal d'ESI TICKETS."""
-    if request.args.get('pwd') != 'esi2026':
+    if os.getenv('ESI_AUTH_ENABLED', '0') != '1' and request.args.get('pwd') != 'esi2026':
         return redirect(url_for('login'))
 
     response = app.make_response(render_template('cleaner.html'))
@@ -9129,7 +9139,7 @@ def _cleaner_rule_upsert(mode, profile_key, target_field, source_alias='', sourc
 
 @app.route('/api/cleaner/config')
 def api_cleaner_config():
-    if request.args.get('pwd') != 'esi2026':
+    if os.getenv('ESI_AUTH_ENABLED', '0') != '1' and request.args.get('pwd') != 'esi2026':
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
     mode = _as_text(request.args.get('mode') or 'douanes').strip().lower()
     ready, error = _cleaner_db_state()
@@ -9168,7 +9178,7 @@ def api_cleaner_config():
 
 @app.route('/api/cleaner/fields/<mode>/<field_id>', methods=['DELETE'])
 def api_cleaner_delete_field(mode, field_id):
-    if request.args.get('pwd') != 'esi2026':
+    if os.getenv('ESI_AUTH_ENABLED', '0') != '1' and request.args.get('pwd') != 'esi2026':
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
     ready, error = _cleaner_db_state()
     if not ready:
@@ -9187,7 +9197,7 @@ def api_cleaner_delete_field(mode, field_id):
 @app.route('/api/cleaner/learn', methods=['POST'])
 def api_cleaner_learn():
     """Valide une extraction et mémorise uniquement des règles de structure, jamais des valeurs métier."""
-    if request.args.get('pwd') != 'esi2026':
+    if os.getenv('ESI_AUTH_ENABLED', '0') != '1' and request.args.get('pwd') != 'esi2026':
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
 
     ready, error = _cleaner_db_state()
@@ -9346,7 +9356,7 @@ def api_cleaner_learn():
 @app.route('/api/cleaner/analyse', methods=['POST'])
 def api_cleaner_analyse():
     """Analyse des documents depuis CLEANER, sans IA ni écriture métier automatique."""
-    if request.args.get('pwd') != 'esi2026':
+    if os.getenv('ESI_AUTH_ENABLED', '0') != '1' and request.args.get('pwd') != 'esi2026':
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
 
     mode = _as_text(request.form.get('mode')).strip().lower()
@@ -9577,7 +9587,7 @@ def api_cleaner_analyse():
 # CLEANER V3.3 - destinations métier après contrôle
 # -----------------------------------------------------------------------------
 def _cleaner_check_pwd():
-    return request.args.get('pwd') == 'esi2026'
+    return os.getenv('ESI_AUTH_ENABLED', '0') == '1' or request.args.get('pwd') == 'esi2026'
 
 
 def _cleaner_num(value, default=0.0):
@@ -10272,7 +10282,7 @@ def api_cleaner_create_enlevement():
 @app.route('/api/cleaner/export-excel', methods=['POST'])
 def api_cleaner_export_excel():
     """Exporte exactement le tableau contrôlé/modifié dans CLEANER."""
-    if request.args.get('pwd') != 'esi2026':
+    if os.getenv('ESI_AUTH_ENABLED', '0') != '1' and request.args.get('pwd') != 'esi2026':
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
 
     data = request.get_json(silent=True) or {}
@@ -10333,7 +10343,7 @@ def login():
     from flask import request, redirect, render_template_string
     error = ''
     if request.method == 'POST':
-        if request.form.get('password') == 'esi2026':
+        if os.getenv('ESI_AUTH_ENABLED', '0') != '1' and request.form.get('password') == 'esi2026':
             return redirect('/gestionnaire?pwd=esi2026')
         error = 'Mot de passe incorrect'
     return render_template_string("""<!DOCTYPE html>
@@ -10394,7 +10404,7 @@ def api_ticket_chat_messages(ticket_id):
             rows = supabase_rest_request('GET', 'ticket_messages',
                 f'select=id,ticket_id,auteur,message,created_at,storage_path,file_name&ticket_id=eq.{encoded}&order=created_at.asc&limit=500') or []
             return jsonify(rows)
-        auteur = _as_text(request.form.get('auteur')).strip()[:100]
+        auteur = (_as_text((getattr(g, 'esi_user', None) or {}).get('email')).strip() if os.getenv('ESI_AUTH_ENABLED', '0') == '1' else _as_text(request.form.get('auteur')).strip())[:100]
         message = _as_text(request.form.get('message')).strip()[:5000]
         fichier = request.files.get('file')
         if not auteur or not (message or (fichier and fichier.filename)):
@@ -10867,6 +10877,7 @@ def api_create_ticket():
         'module': module,
         'status': 'Demande créée',
         'createdAt': datetime.now().isoformat(),
+        'created_by_email': (getattr(g, 'esi_user', None) or {}).get('email', ''),
         'dossier': ticket_dossier,
         'ref': ticket_ref,
         'preteur': form.get('preteur','-') or '-',
@@ -14526,7 +14537,7 @@ def reporting_page():
 .rule{margin-top:18px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 16px;color:var(--muted);font-size:12px;line-height:1.45}
 @media(max-width:900px){.grid{grid-template-columns:1fr}.hero{align-items:flex-start;flex-direction:column}.wrap{padding:12px}}
 </style></head><body><div class="wrap">
-<header class="hero"><div><h1>REPORTING</h1><p>Indicateurs de suivi opérationnel ESI TICKETS</p></div><a class="back" href="/gestionnaire?pwd=esi2026">← Retour gestion</a></header>
+<header class="hero"><div><h1>REPORTING</h1><p>Indicateurs de suivi opérationnel ESI TICKETS</p></div><a class="back" href="/gestionnaire">← Retour gestion</a></header>
 <section class="section"><h2>Reportings disponibles</h2><div class="grid">
 <article class="card active"><div class="eyebrow">Disponible</div><h3>ALLER VOIR</h3><p>Mesure le délai entre la date du RDV et le premier passage du ticket au statut « Terminé ».</p><div class="meta">Calcul en jours ouvrés · samedi et dimanche exclus</div><div class="actions"><a class="btn" href="/reporting/aller-voir">Ouvrir le reporting</a></div></article>
 <article class="card active"><div class="eyebrow">Disponible</div><h3>DEVIS</h3><p>Compare le délai accordé entre la demande et la date de rendu demandée avec le délai réel jusqu’au passage au statut « Terminé ».</p><div class="meta">Calcul en jours ouvrés · samedi et dimanche exclus</div><div class="actions"><a class="btn" href="/reporting/devis">Ouvrir le reporting</a></div></article>
@@ -14950,6 +14961,8 @@ def api_export_ticket_pdf(ticket_id):
 
 @app.route('/api/restart')
 def api_restart():
+    if os.getenv('ESI_AUTH_ENABLED', '0') == '1':
+        return jsonify({'error': 'Redémarrage distant désactivé'}), 403
     import os
     os._exit(0)
 
@@ -15697,6 +15710,11 @@ def _av_make_pdf(ticket, data):
     return output.getvalue()
 
 # ===== fin ESI ALLER VOIR =====
+
+
+# ESI security registration (opt-in, safe rollout).
+from esi_auth import register_security
+ESI_SECURITY = register_security(app, supabase_rest_request, load_ticket)
 
 
 if __name__ == '__main__':
