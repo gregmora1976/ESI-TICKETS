@@ -129,7 +129,7 @@ def login():
                 session['uid']=email;session['version']=user['version'];csrf()
                 return redirect('/changer-mot-de-passe' if user['must_change'] else '/demandeur')
             error='Identifiant ou mot de passe incorrect.'
-    return view('Connexion','''<div class="panel narrow"><h1>Connexion individuelle</h1><p class="muted">Les trois comptes de démonstration sont indépendants de Microsoft 365 et de Supabase.</p>{% if error %}<p class="error">{{error}}</p>{% endif %}<form method="post"><input type="hidden" name="csrf" value="{{csrf}}"><label>Adresse e-mail</label><input name="email" type="email" required autocomplete="username" placeholder="demandeur@demo.invalid"><label>Mot de passe provisoire</label><input name="password" type="password" required autocomplete="current-password"><button>SE CONNECTER</button></form><p><a href="/demande-acces">Demander un compte ou une réinitialisation</a> · <a href="/activer-compte">Première connexion</a></p><p class="muted">Comptes : demandeur@demo.invalid · gestionnaire@demo.invalid · admin@demo.invalid</p></div>''',error=error,csrf=csrf())
+    return view('Connexion','''<div class="panel narrow"><h1>Connexion individuelle</h1><p class="muted">Les trois comptes de démonstration sont indépendants de Microsoft 365 et de Supabase.</p>{% if error %}<p class="error">{{error}}</p>{% endif %}<form method="post"><input type="hidden" name="csrf" value="{{csrf}}"><label>Adresse e-mail</label><input name="email" type="email" required autocomplete="username" placeholder="demandeur@demo.invalid"><label>Mot de passe</label><input name="password" type="password" required autocomplete="current-password"><button>SE CONNECTER</button></form><p><a href="/demande-acces">Demander un compte ou une réinitialisation</a> · <a href="/activer-compte">Première connexion</a></p><p class="muted">Comptes : demandeur@demo.invalid · gestionnaire@demo.invalid · admin@demo.invalid</p></div>''',error=error,csrf=csrf())
 
 @app.route('/changer-mot-de-passe',methods=['GET','POST'])
 def change_password():
@@ -203,6 +203,7 @@ def admin_modify():
     if email==DEMO_EMAILS['ADMIN'] or role not in ROLES or active not in ('0','1'):abort(400)
     if not db_one('SELECT 1 FROM users WHERE email=?',(email,)):abort(404)
     db_write('UPDATE users SET profil=?,active=?,version=version+1 WHERE email=?',(role,int(active),email))
+    demo_audit('MODIFICATION PROFIL/ETAT',email)
     flash('Compte fictif modifié. Les sessions précédentes sont invalidées.','ok')
     return redirect('/admin/utilisateurs')
 
@@ -287,8 +288,16 @@ def admin_dashboard():
       <p>Gestion des utilisateurs, demandes et accès · environnement de test uniquement.</p>
       <div class="grid">
       <div class="box"><h2>{{users|length}}</h2><span>Utilisateurs fictifs</span></div>
-      <div class="box"><h2>{{pending}}</h2><span>Demandes en attente</span></div>
+      <div class="box" style="{% if pending > 0 %}background:#fee2e2;border:2px solid #dc2626;color:#991b1b;{% endif %}"><h2>{{pending}}</h2><span>Demandes en attente</span>{% if pending > 0 %}<p style="font-size:12px;font-weight:bold;margin:8px 0 0">À traiter</p>{% endif %}</div>
       <div class="box"><h2>3</h2><span>Profils disponibles</span></div></div></div>
+      <div class="panel"><h2>Créer directement un utilisateur</h2>
+      <p>Ajoutez un compte autorisé. Son mot de passe sera choisi lors de sa première connexion.</p>
+      <form method="post" action="/administrateur/creer-utilisateur">
+      <input type="hidden" name="csrf" value="{{csrf}}">
+      <div class="grid"><div><label>Adresse e-mail</label><input type="email" name="email" maxlength="254" required placeholder="collaborateur@exemple.fr"></div>
+      <div><label>Profil</label><select name="profil">{% for role in roles %}<option value="{{role}}">{{role}}</option>{% endfor %}</select></div></div>
+      <button type="submit">CRÉER L'UTILISATEUR</button></form>
+      <p class="muted">Après création, le collaborateur utilise « Première connexion » pour choisir son mot de passe. Cette démonstration ne vérifie pas la propriété de l'adresse.</p></div>
       <div class="panel"><h2>Demandes de création et réinitialisation</h2>
       <table><tr><th>Date</th><th>Adresse</th><th>Type</th><th>Statut</th><th>Action</th></tr>
       {% for r in requests %}<tr><td>{{r.created_at}}</td><td>{{r.email}}</td><td>{{r.kind}}</td>
@@ -310,6 +319,27 @@ def admin_dashboard():
       {% for a in audits %}<tr><td>{{a.created_at}}</td><td>{{a.actor}}</td><td>{{a.action}}</td><td>{{a.target}}</td></tr>
       {% else %}<tr><td colspan="4">Aucun mouvement.</td></tr>{% endfor %}</table></div>
       <p><a href="/demandeur">Retour à l'accueil</a></p>''',users=users,requests=requests,audits=audits,pending=pending,csrf=csrf(),roles=ROLES)
+
+@app.route('/administrateur/creer-utilisateur',methods=['POST'])
+@role_allowed('ADMIN')
+def admin_create_user():
+    email=request.form.get('email','').strip().lower()
+    role=request.form.get('profil','')
+    if len(email)>254 or not EMAIL_RE.fullmatch(email) or role not in ROLES:
+        flash('Adresse e-mail ou profil invalide.','error')
+        return redirect('/administrateur')
+    with _DB_LOCK:
+        with connect() as db:
+            existing=db.execute('SELECT 1 FROM users WHERE email=?',(email,)).fetchone()
+            if existing:
+                flash('Cet utilisateur existe déjà.','error')
+                return redirect('/administrateur')
+            db.execute('INSERT INTO users(email,profil,active,hash,must_change) VALUES(?,?,1,?,0)',
+                       (email,role,'!'))
+            db.execute('INSERT INTO admin_audit(actor,action,target) VALUES(?,?,?)',
+                       (g.user['email'],'CREATION DIRECTE '+role,email))
+    flash('Utilisateur créé. Il peut maintenant définir son mot de passe via « Première connexion ».','ok')
+    return redirect('/administrateur')
 
 @app.route('/administrateur/traiter',methods=['POST'])
 @role_allowed('ADMIN')
