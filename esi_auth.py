@@ -499,7 +499,7 @@ def register_security(app, db_request, load_ticket):
 
     # Replace historic login URL only when enabled. Existing handler remains in legacy mode.
     legacy_view = app.view_functions.get('login')
-    if legacy_view:
-        app.view_functions['login']=auth_login
+    if legacy_view and AUTH_ENABLED:
+    app.view_functions['login'] = auth_login
 
     return {'find_user':find_user,'current_user':current_user,'audit':audit}
