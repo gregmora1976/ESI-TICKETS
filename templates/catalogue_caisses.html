@@ -37,7 +37,7 @@
 .catalogueHeaderActions .catalogueAdmin:hover{background:#b91c1c;border-color:#b91c1c}
 @media(max-width:420px){.catalogueHeaderActions{width:100%}.catalogueHeaderActions .btn{flex:1;min-width:0;width:auto}}
 </style></head><body><div class="wrap"><div class="hero">
-<div class="headline"><div class="identity"><img src="/static/logo.png" alt="ESI"><div><div class="eyebrow">ESI FINE ART · BIBLIOTHÈQUE PDF</div><h1>CATALOGUE CAISSES</h1><div class="muted">Toutes les fiches de caisses tableaux et objets, au même endroit.</div></div></div><div class="actions catalogueHeaderActions"><a href="/demandeur" class="btn catalogueReturn">RETOUR</a><button class="btn catalogueAdmin" id="adminToggle" type="button">ADMIN</button></div></div></div>
+<div class="headline"><div class="identity"><img src="/static/logo.png" alt="ESI"><div><div class="eyebrow">ESI FINE ART · BIBLIOTHÈQUE PDF</div><h1>CATALOGUE CAISSES</h1><div class="muted">Toutes les fiches de caisses tableaux et objets, au même endroit.</div></div></div><div class="actions catalogueHeaderActions"><a href="/demandeur" class="btn catalogueReturn">RETOUR</a><button class="btn catalogueAdmin" id="adminToggle" type="button" style="display:none">ADMIN</button></div></div></div>
 <div id="cataloguePublic"><div class="toolbar"><div class="filter"><label for="search">Recherche</label><input id="search" placeholder="Nom de caisse, calage…"></div><div class="filter"><label for="family">Famille</label><select id="family"><option value="">Toutes les caisses</option><option value="Tableaux">Caisses tableaux</option><option value="Objets">Caisses objets</option><option value="Autres">Autres</option></select></div><div class="filter"><label for="calage">Calage</label><select id="calage"><option value="">Tous les calages</option></select></div><div class="filter"><label for="climate">Type climatique</label><select id="climate"><option value="">Tous les types</option></select></div><button class="btn" id="clear">Effacer filtres</button></div>
 <div class="summary"><div><h2>Fiches disponibles <span id="count">(0)</span></h2><div class="muted" id="message">Chargement…</div></div><div class="actions"><button class="btn" id="all">Tout sélectionner (affichées)</button><button class="btn" id="none">Tout désélectionner</button><button class="btn primary" id="merge" disabled>Générer catalogue PDF</button></div></div>
 <div id="cards" class="cards"></div><div class="notice">Sans filtre, toutes les fiches sont affichées à la suite. Les filtres peuvent être combinés. L'export regroupe uniquement les fiches sélectionnées, dans leur ordre d'affichage.</div>
@@ -192,4 +192,15 @@ async function load(){try{let res=await fetch('/api/catalogue-caisses',{cache:'n
     window.location.assign(destination);
   });
 })();
-</script></body></html>
+</script><script>
+// Never reveal catalogue administration controls before confirming session role.
+fetch('/api/esi/me', {cache:'no-store'})
+  .then(r => { if(!r.ok) throw new Error('Session unavailable'); return r.json(); })
+  .then(user => {
+    if(user.enabled === false || (user.enabled === true && user.profil === 'ADMIN')) {
+      document.getElementById('adminToggle').style.display = 'inline-flex';
+    }
+  })
+  .catch(() => {});
+</script>
+</body></html>

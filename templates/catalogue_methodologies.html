@@ -14,7 +14,7 @@
 @media(max-width:420px){.catalogueHeaderActions{width:100%}.catalogueHeaderActions .btn{flex:1;min-width:0;width:auto}}
 </style></head>
 <body><main class="wrap">
-<header class="hero"><div class="head"><div class="identity"><img src="/static/logo.png" alt="ESI"><div><div class="eyebrow">ESI FINE ART · BIBLIOTHÈQUE TECHNIQUE</div><h1>CATALOGUE MÉTHODOLOGIES</h1><div class="muted">Modes opératoires classés par matériel utilisé.</div></div></div><div class="actions catalogueHeaderActions"><a href="/demandeur" class="btn catalogueReturn">RETOUR</a><button class="btn catalogueAdmin" id="adminToggle" type="button">ADMIN</button></div></div></header>
+<header class="hero"><div class="head"><div class="identity"><img src="/static/logo.png" alt="ESI"><div><div class="eyebrow">ESI FINE ART · BIBLIOTHÈQUE TECHNIQUE</div><h1>CATALOGUE MÉTHODOLOGIES</h1><div class="muted">Modes opératoires classés par matériel utilisé.</div></div></div><div class="actions catalogueHeaderActions"><a href="/demandeur" class="btn catalogueReturn">RETOUR</a><button class="btn catalogueAdmin" id="adminToggle" type="button" style="display:none">ADMIN</button></div></div></header>
 <section id="cataloguePublic">
 <div class="toolbar"><div class="field"><label for="search">Recherche</label><input id="search" placeholder="Nom, portique, manutention…"></div><div class="field"><label for="material">Type de matériel</label><select id="material"><option value="">Tous les matériels</option></select></div><button class="btn" id="clear" type="button">Effacer filtres</button></div>
 <div class="summary"><div><h2>Fiches disponibles <span id="count">(0)</span></h2><div class="muted" id="message">Chargement…</div></div><div class="actions"><button class="btn" id="all">Tout sélectionner (affichées)</button><button class="btn" id="none">Tout désélectionner</button><button class="btn primary" id="merge" disabled>Générer catalogue PDF</button></div></div>
@@ -100,4 +100,15 @@ load();
     window.location.assign(destination);
   });
 })();
-</script></body></html>
+</script><script>
+// Never reveal catalogue administration controls before confirming session role.
+fetch('/api/esi/me', {cache:'no-store'})
+  .then(r => { if(!r.ok) throw new Error('Session unavailable'); return r.json(); })
+  .then(user => {
+    if(user.enabled === false || (user.enabled === true && user.profil === 'ADMIN')) {
+      document.getElementById('adminToggle').style.display = 'inline-flex';
+    }
+  })
+  .catch(() => {});
+</script>
+</body></html>
