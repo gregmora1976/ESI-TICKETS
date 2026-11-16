@@ -10,6 +10,11 @@
     *{box-sizing:border-box} body{margin:0;font-family:Arial,Helvetica,sans-serif;background:linear-gradient(180deg,#e0f2fe 0%, #f1f5f9 220px);color:var(--text)}
     .wrap{max-width:1400px;margin:0 auto;padding:32px 18px 60px}
     .hero{background:#fff;border:1px solid var(--line);border-radius:30px;box-shadow:0 8px 30px rgba(15,23,42,.06);overflow:hidden}
+    /* Identite de la session dans l'entete */
+    .esi-header-session{margin-left:auto;display:flex;align-items:center;justify-content:flex-end;gap:12px;min-width:0;flex-wrap:wrap}
+    .esi-header-email{display:none;max-width:280px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:#f8fafc;color:#334155;font-size:13px;font-weight:700;overflow-wrap:anywhere}
+    .esi-header-session .btn{white-space:nowrap;border-radius:12px;padding:12px 14px}
+    @media(max-width:850px){.hero-top{flex-wrap:wrap}.esi-header-session{width:100%;justify-content:flex-start;margin-left:0}.esi-header-email{max-width:100%}}
     .hero-top{display:flex;align-items:center;gap:16px;padding:22px 24px;border-bottom:1px solid var(--line)} .logo{width:98px;height:70px;flex:0 0 auto;object-fit:contain;object-position:center;display:block}
     .eyebrow{color:var(--blue-dark);font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase} h1,h2,h3,p{margin:0} h1{font-size:34px}
     .sub{margin-top:8px;color:var(--muted);font-size:15px}.content{padding:24px;display:grid;gap:22px}.layout{display:grid;grid-template-columns:1.05fr .95fr;gap:22px}.layout.single-column{grid-template-columns:1fr}
@@ -157,6 +162,10 @@
           <h1>DEMANDE DE TICKETS</h1>
           
         </div>
+        <div class="esi-header-session" aria-label="Utilisateur connecté">
+          <span class="esi-header-email" id="esiUserEmail"></span>
+          <button class="btn secondary" id="esiLogout" type="button" style="display:none">DÉCONNEXION</button>
+        </div>
       </div>
 
       <div class="content">
@@ -181,7 +190,6 @@
             <button class="btn primary" id="openCatalogueMethodologies" type="button">CATALOGUE MÉTHODOLOGIES</button>
             <button class="btn secondary" id="openManager" type="button">GESTIONNAIRE</button>
             <button class="btn secondary" id="planningCaisserie" type="button">RECEPTION</button>
-            <button class="btn secondary" id="esiLogout" type="button" style="display:none">DÉCONNEXION</button>
             <a class="btn secondary" id="esiAdminUsers" style="display:none;text-decoration:none;text-align:center;background:#fee2e2;color:#991b1b" href="/administrateur">ADMINISTRATEUR</a>
           </div>
         </div>
@@ -479,7 +487,7 @@
 <script>
 const urlParams = new URLSearchParams(window.location.search);
 let esiAuthEnabled = false;
-fetch('/api/esi/me').then(r=>r.json()).then(u=>{esiAuthEnabled = Boolean(u.enabled);const b=document.getElementById('esiAdminUsers');if(b&&u.profil==='ADMIN') b.style.display='inline-block';if(u.enabled&&u.profil==='DEMANDEUR'){const m=document.getElementById('openManager');if(m)m.style.display='none';const c=document.getElementById('tab-mise-en-caisse');if(c)c.style.display='none';}const quit=document.getElementById('esiLogout');if(quit&&u.enabled){quit.style.display='inline-block';quit.addEventListener('click',()=>{let form=document.createElement('form');form.method='POST';form.action='/logout';let el=document.createElement('input');el.type='hidden';el.name='csrf';el.value=u.csrf;form.append(el);document.body.append(form);form.submit();});}}).catch(()=>{});
+fetch('/api/esi/me').then(r=>r.json()).then(u=>{esiAuthEnabled = Boolean(u.enabled);const b=document.getElementById('esiAdminUsers');if(b&&u.profil==='ADMIN') b.style.display='inline-block';if(u.enabled&&u.profil==='DEMANDEUR'){const m=document.getElementById('openManager');if(m)m.style.display='none';const c=document.getElementById('tab-mise-en-caisse');if(c)c.style.display='none';}const mail=document.getElementById('esiUserEmail');if(mail&&u.enabled&&u.email){mail.textContent=u.email;mail.style.display='inline-block';}const quit=document.getElementById('esiLogout');if(quit&&u.enabled){quit.style.display='inline-block';quit.addEventListener('click',()=>{let form=document.createElement('form');form.method='POST';form.action='/logout';let el=document.createElement('input');el.type='hidden';el.name='csrf';el.value=u.csrf;form.append(el);document.body.append(form);form.submit();});}}).catch(()=>{});
 const state = {
   currentModule:'caisse',
   filesCaisse:[],
