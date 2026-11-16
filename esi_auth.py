@@ -169,35 +169,199 @@ def register_security(app, db_request, load_ticket):
             return forbidden()
         return None
 
-    @app.route('/login', methods=['GET','POST'], endpoint='esi_secure_login')
+    @app.route('/login', methods=['GET', 'POST'], endpoint='esi_secure_login')
     def auth_login():
+        # Connexion en deux etapes : e-mail, puis mot de passe ou activation.
         if not AUTH_ENABLED:
             return redirect('/demandeur')
+
         error = ''
+        stage = 'email'
+        email = ''
+        show_bootstrap = False
+        next_path = safe_next(request.args.get('next') or session.get('esi_login_next'))
+        if not session.get('esi_login_csrf'):
+            session['esi_login_csrf'] = secrets.token_urlsafe(32)
+        flow_csrf = session['esi_login_csrf']
+
         if request.method == 'POST':
-            key = (request.remote_addr or '-') + ':' + (request.form.get('email','').lower()[:250])
+            if not hmac.compare_digest(request.form.get('csrf', ''), flow_csrf):
+                abort(403)
+            next_path = safe_next(request.form.get('next') or session.get('esi_login_next'))
+            step = request.form.get('step', 'email')
+            email = (request.form.get('email') or '').strip().lower()
+            ip = request.remote_addr or '-'
             now = time.monotonic()
-            tries = [x for x in _LOGIN_TRIES.get(key,[]) if now-x < 900]
-            if len(tries) >= 8:
+            # La limitation s'applique aussi aux essais de code d'activation.
+            bucket = 'login-flow:' + ip + ':' + email[:254]
+            tries = [t for t in _LOGIN_TRIES.get(bucket, []) if now - t < 900]
+            max_tries = 20 if step == 'email' else 8
+            if len(tries) >= max_tries:
                 error = 'Trop de tentatives. Réessaie plus tard.'
+                stage = 'email'
             else:
-                tries.append(now); _LOGIN_TRIES[key] = tries
-                email = request.form.get('email','').strip().lower()
-                password = request.form.get('password','')
-                user = find_user(email)
-                if user and user.get('actif') and user.get('mot_de_passe_hash') and check_password_hash(user['mot_de_passe_hash'],password):
-                    session.clear(); session.permanent=True
-                    session['esi_uid'] = str(user['id']); session['esi_csrf'] = secrets.token_urlsafe(32); session['esi_session_version'] = user.get('updated_at'); g.esi_user = user
-                    _LOGIN_TRIES.pop(key,None)
+                tries.append(now)
+                _LOGIN_TRIES[bucket] = tries
+                if step == 'email':
+                    if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email) or len(email) > 254:
+                        error = 'Saisis une adresse e-mail valide.'
+                    else:
+                        session['esi_login_email'] = email
+                        session['esi_login_next'] = next_path
+                        try:
+                            user = find_user(email)
+                        except Exception:
+                            app.logger.exception('ESI login: user lookup failed')
+                            return 'Service de connexion indisponible', 503
+                        if not user or not user.get('actif'):
+                            stage = 'unknown'
+                        elif user.get('mot_de_passe_hash'):
+                            stage = 'password'
+                        else:
+                            stage = 'activate'
+                elif step in ('password', 'activate'):
+                    # On ne peut pas choisir un autre compte en modifiant le formulaire.
+                    if email != session.get('esi_login_email'):
+                        abort(403)
                     try:
-                        db_request('PATCH','utilisateurs_esi','id=eq.'+quote(str(user['id']),safe=''),
-                                   {'dernier_acces_at':datetime.now(timezone.utc).isoformat()},prefer='return=minimal')
-                    except Exception: app.logger.exception('Unable to update last access')
-                    audit('login', email)
-                    if user.get('changement_obligatoire'): return redirect('/changer-mot-de-passe')
-                    return redirect(safe_next(request.form.get('next')))
-                error = 'Identifiants incorrects ou compte inactif.'
-        return render_template_string('''<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connexion ESI TICKETS</title>'''+STYLE+'''<form class="card" method="post"><h1>ESI TICKETS</h1><p>Connexion professionnelle</p><label>Adresse e-mail</label><input name="email" type="email" required autocomplete="username" maxlength="254"><label>Mot de passe</label><input name="password" type="password" required autocomplete="current-password"><p><a href="/premiere-connexion">Première connexion : créer mon mot de passe</a></p><p><a href="/demander-acces">Demander un compte ou une réinitialisation</a></p><input type="hidden" name="next" value="{{ next_path }}"><button type="submit">SE CONNECTER</button>{% if error %}<p class="error">{{error}}</p>{% endif %}</form></html>''',error=error,next_path=safe_next(request.args.get('next')))
+                        user = find_user(email)
+                    except Exception:
+                        app.logger.exception('ESI login: user lookup failed')
+                        return 'Service de connexion indisponible', 503
+                    if not user or not user.get('actif'):
+                        stage = 'unknown'
+                    elif step == 'password':
+                        stage = 'password'
+                        password = request.form.get('password', '')
+                        if (user.get('mot_de_passe_hash') and
+                                check_password_hash(user['mot_de_passe_hash'], password)):
+                            session.clear()
+                            session.permanent = True
+                            session['esi_uid'] = str(user['id'])
+                            session['esi_csrf'] = secrets.token_urlsafe(32)
+                            session['esi_session_version'] = user.get('updated_at')
+                            g.esi_user = user
+                            _LOGIN_TRIES.pop(bucket, None)
+                            try:
+                                db_request('PATCH', 'utilisateurs_esi',
+                                           'id=eq.' + quote(str(user['id']), safe=''),
+                                           {'dernier_acces_at': datetime.now(timezone.utc).isoformat()},
+                                           prefer='return=minimal')
+                            except Exception:
+                                app.logger.exception('Unable to update last access')
+                            audit('login', email)
+                            if user.get('changement_obligatoire'):
+                                return redirect('/changer-mot-de-passe')
+                            return redirect(next_path)
+                        error = 'Mot de passe incorrect.'
+                    else:
+                        stage = 'activate'
+                        if user.get('mot_de_passe_hash'):
+                            stage = 'password'
+                            error = 'Compte deja active : utilise ton mot de passe.'
+                        else:
+                            new_password = request.form.get('password', '')
+                            confirmation = request.form.get('confirm', '')
+                            bootstrap_token = os.environ.get('ESI_BOOTSTRAP_TOKEN', '')
+                            bootstrap_target = os.environ.get('ESI_BOOTSTRAP_ADMIN_EMAIL', '').strip().lower()
+                            needs_bootstrap = user.get('profil') == 'ADMIN' and bool(bootstrap_token)
+                            bootstrap_ok = (len(bootstrap_token) >= 32 and email == bootstrap_target and
+                                            hmac.compare_digest(request.form.get('code_admin', ''), bootstrap_token))
+                            if len(new_password) < 14 or len(new_password) > 128 or new_password != confirmation:
+                                error = 'Choisis deux mots de passe identiques de 14 a 128 caracteres.'
+                            elif needs_bootstrap and not bootstrap_ok:
+                                error = 'Initialisation ADMIN non autorisee : verifie le code et le compte configure dans Render.'
+                            else:
+                                try:
+                                    result = db_request(
+                                        'PATCH', 'utilisateurs_esi',
+                                        'id=eq.' + quote(str(user['id']), safe='') + '&mot_de_passe_hash=is.null',
+                                        {'mot_de_passe_hash': generate_password_hash(new_password, method='scrypt'),
+                                         'changement_obligatoire': False,
+                                         'updated_at': datetime.now(timezone.utc).isoformat()},
+                                        prefer='return=representation') or []
+                                except Exception:
+                                    app.logger.exception('ESI login: account activation failed')
+                                    error = 'Activation indisponible. Réessaie ou contacte un administrateur.'
+                                else:
+                                    if result:
+                                        audit('account_activated', email)
+                                        stage = 'activated'
+                                        session.pop('esi_login_email', None)
+                                        session.pop('esi_login_next', None)
+                                        _LOGIN_TRIES.pop(bucket, None)
+                                    else:
+                                        stage = 'password'
+                                        error = 'Ce compte a deja ete active. Connecte-toi.'
+                else:
+                    abort(400)
+
+        if stage == 'activate':
+            token = os.environ.get('ESI_BOOTSTRAP_TOKEN', '')
+            target = os.environ.get('ESI_BOOTSTRAP_ADMIN_EMAIL', '').strip().lower()
+            show_bootstrap = bool(token and email == target)
+
+        page = '''<!doctype html><html lang="fr"><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>Connexion ESI TICKETS</title>''' + STYLE + '''
+        <div class="card"><h1>ESI TICKETS</h1>
+        {% if stage == 'email' %}
+          <p>Connexion professionnelle</p>
+          <form method="post" action="/login">
+            <input type="hidden" name="csrf" value="{{csrf}}">
+            <input type="hidden" name="step" value="email">
+            <input type="hidden" name="next" value="{{next_path}}">
+            <label>Adresse e-mail professionnelle</label>
+            <input name="email" type="email" value="{{email}}" autocomplete="username" maxlength="254" required autofocus>
+            <button type="submit">CONTINUER</button>
+          </form>
+          <p><a href="/demander-acces">Demander un compte ou une réinitialisation</a></p>
+        {% elif stage == 'unknown' %}
+          <p>Ce compte n'est pas disponible pour la connexion.</p>
+          <p><a href="/demander-acces">Demander un accès</a></p>
+          <p><a href="/login">Utiliser une autre adresse</a></p>
+        {% elif stage == 'password' %}
+          <p>Bienvenue · {{email}}</p>
+          <form method="post" action="/login">
+            <input type="hidden" name="csrf" value="{{csrf}}">
+            <input type="hidden" name="step" value="password">
+            <input type="hidden" name="next" value="{{next_path}}">
+            <input type="hidden" name="email" value="{{email}}">
+            <label>Mot de passe</label>
+            <input name="password" type="password" autocomplete="current-password" required autofocus>
+            <button type="submit">SE CONNECTER</button>
+          </form>
+          <p><a href="/demander-acces">Mot de passe oublié ?</a></p>
+          <p><a href="/login">Changer d'adresse e-mail</a></p>
+        {% elif stage == 'activate' %}
+          <p>Première connexion · {{email}}</p>
+          <p>Crée ton mot de passe personnel (14 caractères minimum).</p>
+          <form method="post" action="/login">
+            <input type="hidden" name="csrf" value="{{csrf}}">
+            <input type="hidden" name="step" value="activate">
+            <input type="hidden" name="next" value="{{next_path}}">
+            <input type="hidden" name="email" value="{{email}}">
+            <label>Choisir mon mot de passe</label>
+            <input name="password" type="password" minlength="14" maxlength="128" autocomplete="new-password" required autofocus>
+            <label>Confirmer le mot de passe</label>
+            <input name="confirm" type="password" minlength="14" maxlength="128" autocomplete="new-password" required>
+            {% if show_bootstrap %}
+              <label>Code de mise en service ADMIN</label>
+              <input name="code_admin" type="password" autocomplete="off" required>
+            {% endif %}
+            <button type="submit">ACTIVER MON COMPTE</button>
+          </form>
+          <p><a href="/login">Changer d'adresse e-mail</a></p>
+        {% elif stage == 'activated' %}
+          <p>Ton compte est activé.</p>
+          <p><a href="/login">Se connecter</a></p>
+        {% endif %}
+        {% if error %}<p class="error">{{error}}</p>{% endif %}
+        </div></html>'''
+        response = render_template_string(page, stage=stage, email=email, error=error,
+                                          csrf=flow_csrf, next_path=next_path,
+                                          show_bootstrap=show_bootstrap)
+        return response
 
     @app.route('/initialiser-admin', methods=['GET','POST'])
     def auth_bootstrap_admin():
