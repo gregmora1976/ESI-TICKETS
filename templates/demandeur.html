@@ -478,7 +478,8 @@
   
 <script>
 const urlParams = new URLSearchParams(window.location.search);
-fetch('/api/esi/me').then(r=>r.json()).then(u=>{const b=document.getElementById('esiAdminUsers');if(b&&u.profil==='ADMIN') b.style.display='inline-block';if(u.enabled&&u.profil==='DEMANDEUR'){const m=document.getElementById('openManager');if(m)m.style.display='none';}const quit=document.getElementById('esiLogout');if(quit&&u.enabled){quit.style.display='inline-block';quit.addEventListener('click',()=>{let form=document.createElement('form');form.method='POST';form.action='/logout';let el=document.createElement('input');el.type='hidden';el.name='csrf';el.value=u.csrf;form.append(el);document.body.append(form);form.submit();});}}).catch(()=>{});
+let esiAuthEnabled = false;
+fetch('/api/esi/me').then(r=>r.json()).then(u=>{esiAuthEnabled = Boolean(u.enabled);const b=document.getElementById('esiAdminUsers');if(b&&u.profil==='ADMIN') b.style.display='inline-block';if(u.enabled&&u.profil==='DEMANDEUR'){const m=document.getElementById('openManager');if(m)m.style.display='none';}const quit=document.getElementById('esiLogout');if(quit&&u.enabled){quit.style.display='inline-block';quit.addEventListener('click',()=>{let form=document.createElement('form');form.method='POST';form.action='/logout';let el=document.createElement('input');el.type='hidden';el.name='csrf';el.value=u.csrf;form.append(el);document.body.append(form);form.submit();});}}).catch(()=>{});
 const state = {
   currentModule:'caisse',
   filesCaisse:[],
@@ -2242,7 +2243,7 @@ document.getElementById('avisArticleClearAll').addEventListener('click', ()=>{ s
 document.getElementById('addSelectedAvisArticles').addEventListener('click', addSelectedArticlesToAvis);
 document.getElementById('openCatalogueCaisses').addEventListener('click', () => window.open('/catalogue-caisses', '_blank'));
 document.getElementById('openCatalogueMethodologies').addEventListener('click', () => window.open('/catalogue-methodologies', '_blank'));
-document.getElementById('openManager').addEventListener('click', ()=>window.open('/gestionnaire','_blank'));
+document.getElementById('openManager').addEventListener('click', ()=>window.open(esiAuthEnabled ? '/gestionnaire' : '/login','_blank'));
 document.getElementById('planningCaisserie').addEventListener('click', () => {
   window.open('/gestion-reception', '_blank');
 });
