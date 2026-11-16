@@ -15698,7 +15698,12 @@ def _av_make_pdf(ticket, data):
 
 # ===== fin ESI ALLER VOIR =====
 
+# ESI TICKETS - Securite utilisateurs
+from esi_auth import register_security
 
+ESI_SECURITY = register_security(
+    app, supabase_rest_request, load_ticket
+)
 if __name__ == '__main__':
       app.run(host='127.0.0.1', port=5050, debug=False)
 
