@@ -430,7 +430,79 @@ def register_security(app, db_request, load_ticket):
         user = current_user()
         if not user or user['profil']!='ADMIN':abort(403)
         rows=db_request('GET','utilisateurs_esi','select=id,nom,prenom,email,profil,actif,changement_obligatoire,dernier_acces_at&order=nom.asc&limit=2000') or []
-        return render_template_string('''<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Administration utilisateurs</title>'''+STYLE+'''<div class="card wide"><div class="top"><h1>ADMIN · UTILISATEURS</h1><a href="/demandeur">Retour</a></div><p>{{users|length}} collaborateurs • Les mots de passe ne sont jamais affichés.</p><form method="post" action="/admin/utilisateurs/ajouter"><input type="hidden" name="csrf" value="{{csrf}}"><h3>Ajouter un utilisateur</h3><input name="nom" placeholder="Nom" required><input name="prenom" placeholder="Prénom"><input name="email" type="email" placeholder="Adresse professionnelle" required><select name="profil"><option>DEMANDEUR</option><option>GESTIONNAIRE</option><option>ADMIN</option></select><button>Ajouter (compte sans mot de passe)</button></form><p><a href="/admin/journal">Consulter le journal d'activité</a></p><h3>Importer des nouveaux comptes</h3><form method="post" action="/admin/utilisateurs/importer" enctype="multipart/form-data"><input type="hidden" name="csrf" value="{{csrf}}"><input name="fichier" type="file" accept=".csv,text/csv" required><button>Importer le CSV (sans supprimer les comptes existants)</button></form><h3>Comptes existants</h3><table><tr><th>Nom</th><th>E-mail</th><th>Profil</th><th>Actif</th><th>Action</th></tr>{% for u in users %}<tr><td>{{u.nom}} {{u.prenom}}</td><td>{{u.email}}</td><td>{{u.profil}}</td><td>{{'Oui' if u.actif else 'Non'}}</td><td><form method="post" action="/admin/utilisateurs/modifier"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="id" value="{{u.id}}"><select name="profil"><option {% if u.profil=='DEMANDEUR' %}selected{% endif %}>DEMANDEUR</option><option {% if u.profil=='GESTIONNAIRE' %}selected{% endif %}>GESTIONNAIRE</option><option {% if u.profil=='ADMIN' %}selected{% endif %}>ADMIN</option></select><select name="actif"><option value="true" {% if u.actif %}selected{% endif %}>Actif</option><option value="false" {% if not u.actif %}selected{% endif %}>Inactif</option></select><button class="mini">Enregistrer</button></form><form method="post" action="/admin/utilisateurs/reinitialiser"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="id" value="{{u.id}}"><button class="mini" style="background:#b45309">Réinitialiser l’accès</button></form></td></tr>{% endfor %}</table></div></html>''', users=rows,csrf=csrf())
+        page = '''<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Administration utilisateurs ESI</title>''' + STYLE + '''
+        <style>
+          .user-table-wrap{overflow-x:auto;margin-top:16px}
+          .user-table{min-width:1060px}
+          .user-table th,.user-table td{vertical-align:middle;padding:10px 7px}
+          .user-table input,.user-table select{min-width:0;width:100%;padding:9px;border-radius:9px}
+          .user-table .user-action{min-width:0;white-space:nowrap}
+          .user-table button{margin:3px 0}
+          .user-table .user-action form{margin:4px 0}
+          .user-table .user-action .mini{font-size:12px;padding:9px 10px}
+          .user-table .user-name{width:17%}.user-table .user-first{width:13%}
+          .user-table .user-email{width:25%}.user-table .user-role{width:14%}
+          .user-table .user-active{width:11%}.user-table .user-action{width:20%}
+          .user-edit-form{display:contents}
+          .user-table tr:has(input:focus){background:#f0f9ff}
+        </style>
+        <div class="card wide">
+          <div class="top"><h1>ADMIN · UTILISATEURS</h1><a href="/administrateur">Retour administration</a></div>
+          <p>{{users|length}} collaborateurs · Modifie les champs sur une ligne, puis clique sur ENREGISTRER. Les mots de passe ne sont jamais affichés.</p>
+          <h3>Ajouter un utilisateur</h3>
+          <form method="post" action="/admin/utilisateurs/ajouter">
+            <input type="hidden" name="csrf" value="{{csrf}}">
+            <label>Nom</label><input name="nom" maxlength="100" placeholder="Nom" required>
+            <label>Prénom</label><input name="prenom" maxlength="100" placeholder="Prénom">
+            <label>Adresse e-mail</label><input name="email" type="email" maxlength="254" placeholder="Adresse professionnelle" required>
+            <label>Profil</label><select name="profil"><option>DEMANDEUR</option><option>GESTIONNAIRE</option><option>ADMIN</option></select>
+            <button>AJOUTER UN UTILISATEUR</button>
+          </form>
+          <p><a href="/admin/journal">Consulter le journal d'activité</a></p>
+          <h3>Importer de nouveaux comptes</h3>
+          <form method="post" action="/admin/utilisateurs/importer" enctype="multipart/form-data">
+            <input type="hidden" name="csrf" value="{{csrf}}">
+            <input name="fichier" type="file" accept=".csv,text/csv" required>
+            <button>IMPORTER LE CSV</button>
+          </form>
+          <h3>Comptes existants</h3>
+          <div class="user-table-wrap"><table class="user-table">
+            <tr><th class="user-name">Nom</th><th class="user-first">Prénom</th><th class="user-email">E-mail</th>
+              <th class="user-role">Profil</th><th class="user-active">État</th><th class="user-action">Actions</th></tr>
+            {% for u in users %}
+            <tr>
+              <td><input form="edit-user-{{loop.index}}" aria-label="Nom" name="nom" maxlength="100" value="{{u.nom or ''}}" required></td>
+              <td><input form="edit-user-{{loop.index}}" aria-label="Prénom" name="prenom" maxlength="100" value="{{u.prenom or ''}}"></td>
+              <td><input form="edit-user-{{loop.index}}" aria-label="Adresse e-mail" name="email" type="email" maxlength="254" value="{{u.email}}" required></td>
+              <td><select form="edit-user-{{loop.index}}" aria-label="Profil" name="profil">
+                <option value="DEMANDEUR" {% if u.profil=='DEMANDEUR' %}selected{% endif %}>DEMANDEUR</option>
+                <option value="GESTIONNAIRE" {% if u.profil=='GESTIONNAIRE' %}selected{% endif %}>GESTIONNAIRE</option>
+                <option value="ADMIN" {% if u.profil=='ADMIN' %}selected{% endif %}>ADMIN</option>
+              </select></td>
+              <td><select form="edit-user-{{loop.index}}" aria-label="Compte actif" name="actif">
+                <option value="true" {% if u.actif %}selected{% endif %}>Actif</option>
+                <option value="false" {% if not u.actif %}selected{% endif %}>Inactif</option>
+              </select></td>
+              <td class="user-action">
+                <form id="edit-user-{{loop.index}}" method="post" action="/admin/utilisateurs/modifier"
+                  onsubmit="return confirm('Enregistrer les modifications de ce compte ?');">
+                  <input type="hidden" name="csrf" value="{{csrf}}">
+                  <input type="hidden" name="id" value="{{u.id}}">
+                  <button class="mini" type="submit">ENREGISTRER</button>
+                </form>
+                <form method="post" action="/admin/utilisateurs/reinitialiser"
+                  onsubmit="return confirm('Réinitialiser le mot de passe de ce compte ?');">
+                  <input type="hidden" name="csrf" value="{{csrf}}">
+                  <input type="hidden" name="id" value="{{u.id}}">
+                  <button class="mini" type="submit" style="background:#b45309">Réinitialiser l’accès</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </table></div>
+          <p class="muted">Changer l'e-mail, le profil ou l'état d'un compte déconnecte ses sessions en cours. Un administrateur ne peut pas désactiver son propre compte.</p>
+        </div></html>'''
+        return render_template_string(page, users=rows, csrf=csrf())
 
     def check_admin_post():
         user=current_user()
@@ -462,15 +534,45 @@ def register_security(app, db_request, load_ticket):
 
     @app.route('/admin/utilisateurs/modifier',methods=['POST'])
     def auth_admin_edit():
-        admin=check_admin_post(); uid=request.form.get('id','')
-        role=request.form.get('profil','');active=request.form.get('actif')=='true'
-        if role not in ROLES:abort(400)
-        if uid==str(admin['id']) and (not active or role!='ADMIN'):abort(400,'Impossible de désactiver son propre accès administrateur.')
-        db_request('PATCH','utilisateurs_esi','id=eq.'+quote(uid,safe=''),
-                 {'profil':role,'actif':active,'updated_at':datetime.now(timezone.utc).isoformat()},prefer='return=minimal')
-        audit('user_updated',uid,role+' active='+str(active))
+        admin = check_admin_post()
+        uid = request.form.get('id','').strip()
+        nom = request.form.get('nom','').strip()
+        prenom = request.form.get('prenom','').strip()
+        email = request.form.get('email','').strip().lower()
+        role = request.form.get('profil','').strip()
+        active_value = request.form.get('actif','')
+        if not uid or not nom or len(nom) > 100 or len(prenom) > 100:
+            abort(400, 'Nom invalide (100 caractères maximum).')
+        if not re.fullmatch(r'[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}', email) or len(email) > 254:
+            abort(400, 'Adresse e-mail invalide.')
+        if role not in ROLES or active_value not in ('true','false'):
+            abort(400, 'Profil ou état invalide.')
+        active = active_value == 'true'
+        existing = db_request('GET', 'utilisateurs_esi',
+            'select=id,nom,prenom,email,profil,actif&id=eq.' + quote(uid, safe='') + '&limit=1') or []
+        if not existing:
+            abort(404, 'Utilisateur introuvable.')
+        previous = existing[0]
+        if uid == str(admin['id']) and (not active or role != 'ADMIN'):
+            abort(400, 'Impossible de désactiver son propre accès administrateur.')
+        found = find_user(email)
+        if found and str(found['id']) != uid:
+            abort(409, 'Cette adresse e-mail est déjà utilisée par un autre compte.')
+        updates = {'nom':nom, 'prenom':prenom, 'email':email, 'profil':role, 'actif':active}
+        changed = {key:value for key,value in updates.items() if previous.get(key) != value}
+        if not changed:
+            return redirect('/admin/utilisateurs')
+        changed['updated_at'] = datetime.now(timezone.utc).isoformat()
+        db_request('PATCH','utilisateurs_esi','id=eq.' + quote(uid, safe=''),
+                   changed,prefer='return=minimal')
+        audit('user_updated', previous.get('email',''),
+              'champs=' + ','.join(key for key in changed if key != 'updated_at') +
+              '; nouvelle_adresse=' + email)
+        if uid == str(admin['id']):
+            # Tout changement du compte courant invalide la version de session.
+            session.clear()
+            return redirect('/login')
         return redirect('/admin/utilisateurs')
-
 
     @app.route('/admin/utilisateurs/reinitialiser', methods=['POST'])
     def auth_admin_reset_password():
@@ -653,7 +755,7 @@ def register_security(app, db_request, load_ticket):
         {% else %}<tr><td colspan="4">Aucune demande en attente</td></tr>{% endfor %}</table>
         <h2>Utilisateurs</h2><table><tr><th>Nom</th><th>E-mail</th><th>Profil</th><th>Accès</th></tr>
         {% for u in users %}<tr><td>{{u.nom}} {{u.prenom}}</td><td>{{u.email}}</td><td>{{u.profil}}</td>
-        <td>{{'Actif' if u.actif else 'Suspendu'}} · {{'Activé' if u.mot_de_passe_hash else 'À activer'}}</td></tr>{% endfor %}</table>
+        <td>{{'Actif' if u.actif else 'Suspendu'}} · {{'Activé' if u.mot_de_passe_hash else 'À activer'}} · <a href="/admin/utilisateurs">Modifier</a></td></tr>{% endfor %}</table>
         <p><a href="/admin/utilisateurs">Modifier les droits / suspendre un compte</a> · <a href="/admin/journal">Historique</a></p></div>'''
         return render_template_string('<!doctype html><html lang="fr"><meta charset="utf-8">'+STYLE+body+'</html>',users=users,pending=pending,csrf=csrf())
 

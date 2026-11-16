@@ -8161,9 +8161,17 @@ def _catalogue_auth_data():
         return None
 
 
+def _catalogue_esi_role_allowed():
+    """When individual ESI login is on, only actual ADMIN accounts manage catalogues."""
+    if os.environ.get('ESI_AUTH_ENABLED', '0').strip() != '1':
+        return True  # Preserve historic catalogue login when ESI login is disabled.
+    user = getattr(g, 'esi_user', None)
+    return bool(user and user.get('profil') == 'ADMIN' and user.get('actif'))
+
+
 def _catalogue_admin_required():
     payload = _catalogue_auth_data()
-    return bool(payload and hmac.compare_digest(
+    return bool(_catalogue_esi_role_allowed() and payload and hmac.compare_digest(
         str(payload.get('csrf', '')), request.headers.get('X-Catalogue-CSRF', '')))
 
 
@@ -8174,6 +8182,8 @@ def _catalogue_login_key():
 
 @app.route('/api/catalogue-caisses/admin/session', methods=['GET'])
 def catalogue_admin_session():
+    if not _catalogue_esi_role_allowed():
+        return jsonify({'ok': False, 'authenticated': False, 'csrf': None}), 403
     auth = _catalogue_auth_data()
     response = jsonify({'ok': True, 'authenticated': bool(auth),
                         'csrf': auth.get('csrf') if auth else None})
@@ -8183,6 +8193,8 @@ def catalogue_admin_session():
 
 @app.route('/api/catalogue-caisses/admin/login', methods=['POST'])
 def catalogue_admin_login():
+    if not _catalogue_esi_role_allowed():
+        return jsonify({'error': 'Accès réservé aux administrateurs ESI TICKETS.'}), 403
     secret = os.getenv('CATALOGUE_ADMIN_PASSWORD', '')
     supplied = str((request.get_json(silent=True) or {}).get('password') or '')
     if not secret:
