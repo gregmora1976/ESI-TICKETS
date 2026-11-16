@@ -71,6 +71,13 @@ def register_security(app, db_request, load_ticket):
         path = request.path
         if path.startswith('/static/') or path in ('/login','/logout','/healthz','/initialiser-admin','/premiere-connexion','/demander-acces'):
             return None
+        # Les QR codes existants portent une signature verifiee par la route.
+        # Seuls les liens en lecture seule restent publics ; une URL sans token
+        # continue a recevoir un 403 dans article_public_page / colis_public_page.
+        if request.method in ('GET','HEAD') and (
+            path.startswith('/article/') or path.startswith('/pre-packing/') or path.startswith('/colis/')
+        ):
+            return None
         try:
             user = current_user()
         except Exception:
@@ -99,8 +106,18 @@ def register_security(app, db_request, load_ticket):
         role = user['profil']
         if path.startswith(('/reporting','/api/reporting','/api/export/excel','/api/restart')) and role != 'ADMIN':
             return forbidden()
-        if path.startswith(('/gestionnaire','/cleaner','/api/cleaner')) and role == 'DEMANDEUR':
+        if role == 'DEMANDEUR' and (
+            path.startswith(('/gestionnaire', '/gestion-reception', '/cleaner', '/api/cleaner'))
+        ):
             return forbidden()
+        # La validation du depot et les actions physiques ne sont pas des saisies DEMANDEUR.
+        if role == 'DEMANDEUR' and path.startswith('/api/reception') and request.method not in ('GET','HEAD','OPTIONS'):
+            return forbidden()
+        if role == 'DEMANDEUR' and path == '/api/tickets' and request.method == 'POST':
+            # La creation 'Mise en caisse' lance directement l'affectation physique
+            # des articles/pre-packings dans app.py : elle n'est pas une simple demande.
+            if request.form.get('module','').strip() == 'Mise en caisse':
+                return forbidden()
         if path.startswith('/api/reception/') and request.method not in ('GET','HEAD','OPTIONS') and role == 'DEMANDEUR':
             return forbidden()
         if path.startswith('/api/catalogue-') and request.method not in ('GET','HEAD','OPTIONS') and role != 'ADMIN':
@@ -135,10 +152,19 @@ def register_security(app, db_request, load_ticket):
                     # Bloquer les actions opérationnelles même via PUT générique.
                     change = request.get_json(silent=True) or {}
                     if not isinstance(change, dict): return forbidden()
-                    if any(k in change for k in ('status','statut','action','updatedAt','termineAt')):
+                    allowed = {
+                        'dossier','ref','preteur','expo','objet','chargeProjet',
+                        'typeCaisse','dimensions','dateEmballage','prixDevis',
+                        'dateRdv','heureRdv','typeVisite','lieuRdv',
+                        'contactRdv','commentaire'
+                    }
+                    if not set(change).issubset(allowed):
                         return forbidden()
-                if suffix.endswith('/messages'):
-                    pass  # Everyone may comment on visible tickets.
+                if role == 'DEMANDEUR' and suffix and suffix.strip('/') and '/' in suffix.strip('/'):
+                    # Seuls les messages sont autorises en POST ; la liste blanche
+                    # empeche d'atteindre de nouvelles routes a effet de bord.
+                    if not (request.method == 'POST' and suffix.endswith('/messages')):
+                        return forbidden()
         if path.startswith('/api/aller-voir/') and request.method not in ('GET','HEAD','OPTIONS') and role == 'DEMANDEUR':
             return forbidden()
         return None
@@ -357,7 +383,7 @@ def register_security(app, db_request, load_ticket):
                 error='Vérifie ton adresse et choisis deux mots de passe identiques (14 à 128 caractères).'
             else:
                 user=find_user(email)
-                if not user or not user.get('actif') or user.get('mot_de_passe_hash'):
+                if not user or not user.get('actif') or user.get('mot_de_passe_hash') or (user.get('profil') == 'ADMIN' and os.environ.get('ESI_BOOTSTRAP_TOKEN')):
                     error='Activation impossible. Vérifie ton accès ou contacte un administrateur.'
                 else:
                     # Protection contre deux activations concurrentes; la condition sur hash est évaluée en DB.

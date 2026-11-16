@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, request, send_file, abort, redirect, url_for, make_response
+from flask import Flask, render_template, jsonify, request, send_file, abort, redirect, url_for, make_response, g
 from pathlib import Path
 import json, webbrowser, os, urllib.request, urllib.parse
 import csv, re, time
@@ -10866,6 +10866,11 @@ def api_create_ticket():
         'id': ticket_id,
         'module': module,
         'status': 'Demande créée',
+        # Identite derivee de la session cote serveur, jamais d'un champ du navigateur.
+        # Conservee dans raw_json (aucune migration Supabase necessaire).
+        'created_by_email': (
+            getattr(g, 'esi_user', None) or {}
+        ).get('email', '').strip().lower() if os.getenv('ESI_AUTH_ENABLED', '0').strip() == '1' else '',
         'createdAt': datetime.now().isoformat(),
         'dossier': ticket_dossier,
         'ref': ticket_ref,
