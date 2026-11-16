@@ -69,7 +69,7 @@ def register_security(app, db_request, load_ticket):
     def auth_before_request():
         if not AUTH_ENABLED: return None
         path = request.path
-        if path.startswith('/static/') or path in ('/login','/logout','/healthz','/initialiser-admin'):
+        if path.startswith('/static/') or path in ('/login','/logout','/healthz','/initialiser-admin','/premiere-connexion','/demander-acces'):
             return None
         try:
             user = current_user()
@@ -123,11 +123,7 @@ def register_security(app, db_request, load_ticket):
                                '/manager-sheet','/fiche','/articles-lies','/valider-sortie','/annuler-enlevement',
                                '/validate-aller-voir')
                 if any(x in suffix for x in operational) and role == 'DEMANDEUR':
-                    allowed_cancel = (suffix.endswith('/status') and str((request.get_json(silent=True) or {}).get('status','')).strip().casefold() in ('annulé','annulee','annulée','annule'))
-                    ticket_id = suffix.strip('/').split('/')[0]
-                    ticket = load_ticket(ticket_id) if allowed_cancel else None
-                    if not (ticket and str(ticket.get('created_by_email') or '').lower() == str(user['email']).lower()):
-                        return forbidden()
+                    return forbidden()  # Le DEMANDEUR ne peut JAMAIS changer un statut, y compris le sien.
                 if request.method == 'DELETE' and role != 'ADMIN': return forbidden()
                 if request.method == 'PUT' and role == 'DEMANDEUR':
                     parts = suffix.strip('/').split('/')
@@ -135,6 +131,11 @@ def register_security(app, db_request, load_ticket):
                     ticket = load_ticket(parts[0])
                     # Old tickets are not silently attributed to someone.
                     if not ticket or str(ticket.get('created_by_email') or '').lower() != str(user['email']).lower():
+                        return forbidden()
+                    # Bloquer les actions opérationnelles même via PUT générique.
+                    change = request.get_json(silent=True) or {}
+                    if not isinstance(change, dict): return forbidden()
+                    if any(k in change for k in ('status','statut','action','updatedAt','termineAt')):
                         return forbidden()
                 if suffix.endswith('/messages'):
                     pass  # Everyone may comment on visible tickets.
@@ -170,7 +171,7 @@ def register_security(app, db_request, load_ticket):
                     if user.get('changement_obligatoire'): return redirect('/changer-mot-de-passe')
                     return redirect(safe_next(request.form.get('next')))
                 error = 'Identifiants incorrects ou compte inactif.'
-        return render_template_string('''<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connexion ESI TICKETS</title>'''+STYLE+'''<form class="card" method="post"><h1>ESI TICKETS</h1><p>Connexion professionnelle</p><label>Adresse e-mail</label><input name="email" type="email" required autocomplete="username" maxlength="254"><label>Mot de passe</label><input name="password" type="password" required autocomplete="current-password"><input type="hidden" name="next" value="{{ next_path }}"><button type="submit">SE CONNECTER</button>{% if error %}<p class="error">{{error}}</p>{% endif %}</form></html>''',error=error,next_path=safe_next(request.args.get('next')))
+        return render_template_string('''<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connexion ESI TICKETS</title>'''+STYLE+'''<form class="card" method="post"><h1>ESI TICKETS</h1><p>Connexion professionnelle</p><label>Adresse e-mail</label><input name="email" type="email" required autocomplete="username" maxlength="254"><label>Mot de passe</label><input name="password" type="password" required autocomplete="current-password"><p><a href="/premiere-connexion">Première connexion : créer mon mot de passe</a></p><p><a href="/demander-acces">Demander un compte ou une réinitialisation</a></p><input type="hidden" name="next" value="{{ next_path }}"><button type="submit">SE CONNECTER</button>{% if error %}<p class="error">{{error}}</p>{% endif %}</form></html>''',error=error,next_path=safe_next(request.args.get('next')))
 
     @app.route('/initialiser-admin', methods=['GET','POST'])
     def auth_bootstrap_admin():
@@ -226,7 +227,7 @@ def register_security(app, db_request, load_ticket):
                 refreshed = db_request('GET','utilisateurs_esi','select=updated_at&id=eq.'+quote(str(user['id']),safe='')+'&limit=1')
                 session['esi_session_version'] = refreshed[0]['updated_at']
                 audit('password_changed',user['email']);success=True
-        return render_template_string('''<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mot de passe ESI</title>'''+STYLE+'''<div class="card"><h1>Changer mon mot de passe</h1><p>Choisir au moins 14 caractères. Obligatoire à la première connexion.</p>{% if success %}<p>Mot de passe modifié. <a href="/demandeur">Accéder à ESI TICKETS</a></p>{% else %}<form method="post"><input type="hidden" name="csrf" value="{{csrf}}"><label>Mot de passe provisoire</label><input name="ancien" type="password" autocomplete="current-password" required><label>Nouveau mot de passe</label><input name="nouveau" type="password" autocomplete="new-password" minlength="14" required><button>ENREGISTRER</button>{% if error %}<p class="error">{{error}}</p>{% endif %}</form>{% endif %}</div></html>''',csrf=csrf(),error=error,success=success)
+        return render_template_string('''<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mot de passe ESI</title>'''+STYLE+'''<div class="card"><h1>Changer mon mot de passe</h1><p>Choisir au moins 14 caractères.</p>{% if success %}<p>Mot de passe modifié. <a href="/demandeur">Accéder à ESI TICKETS</a></p>{% else %}<form method="post"><input type="hidden" name="csrf" value="{{csrf}}"><label>Mot de passe actuel</label><input name="ancien" type="password" autocomplete="current-password" required><label>Nouveau mot de passe</label><input name="nouveau" type="password" autocomplete="new-password" minlength="14" required><button>ENREGISTRER</button>{% if error %}<p class="error">{{error}}</p>{% endif %}</form>{% endif %}</div></html>''',csrf=csrf(),error=error,success=success)
 
     @app.route('/api/esi/me',methods=['GET'])
     def auth_me():
@@ -240,7 +241,7 @@ def register_security(app, db_request, load_ticket):
         user = current_user()
         if not user or user['profil']!='ADMIN':abort(403)
         rows=db_request('GET','utilisateurs_esi','select=id,nom,prenom,email,profil,actif,changement_obligatoire,dernier_acces_at&order=nom.asc&limit=2000') or []
-        return render_template_string('''<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Administration utilisateurs</title>'''+STYLE+'''<div class="card wide"><div class="top"><h1>ADMIN · UTILISATEURS</h1><a href="/demandeur">Retour</a></div><p>{{users|length}} collaborateurs • Les mots de passe ne sont jamais affichés.</p><form method="post" action="/admin/utilisateurs/ajouter"><input type="hidden" name="csrf" value="{{csrf}}"><h3>Ajouter un utilisateur</h3><input name="nom" placeholder="Nom" required><input name="prenom" placeholder="Prénom"><input name="email" type="email" placeholder="Adresse professionnelle" required><select name="profil"><option>DEMANDEUR</option><option>GESTIONNAIRE</option><option>ADMIN</option></select><button>Ajouter (compte sans mot de passe)</button></form><p><a href="/admin/journal">Consulter le journal d'activité</a></p><h3>Importer des nouveaux comptes</h3><form method="post" action="/admin/utilisateurs/importer" enctype="multipart/form-data"><input type="hidden" name="csrf" value="{{csrf}}"><input name="fichier" type="file" accept=".csv,text/csv" required><button>Importer le CSV (sans supprimer les comptes existants)</button></form><h3>Comptes existants</h3><table><tr><th>Nom</th><th>E-mail</th><th>Profil</th><th>Actif</th><th>Action</th></tr>{% for u in users %}<tr><td>{{u.nom}} {{u.prenom}}</td><td>{{u.email}}</td><td>{{u.profil}}</td><td>{{'Oui' if u.actif else 'Non'}}</td><td><form method="post" action="/admin/utilisateurs/modifier"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="id" value="{{u.id}}"><select name="profil"><option {% if u.profil=='DEMANDEUR' %}selected{% endif %}>DEMANDEUR</option><option {% if u.profil=='GESTIONNAIRE' %}selected{% endif %}>GESTIONNAIRE</option><option {% if u.profil=='ADMIN' %}selected{% endif %}>ADMIN</option></select><select name="actif"><option value="true" {% if u.actif %}selected{% endif %}>Actif</option><option value="false" {% if not u.actif %}selected{% endif %}>Inactif</option></select><button class="mini">Enregistrer</button></form><form method="post" action="/admin/utilisateurs/reinitialiser"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="id" value="{{u.id}}"><button class="mini" style="background:#b45309">Mot de passe provisoire</button></form></td></tr>{% endfor %}</table></div></html>''', users=rows,csrf=csrf())
+        return render_template_string('''<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Administration utilisateurs</title>'''+STYLE+'''<div class="card wide"><div class="top"><h1>ADMIN · UTILISATEURS</h1><a href="/demandeur">Retour</a></div><p>{{users|length}} collaborateurs • Les mots de passe ne sont jamais affichés.</p><form method="post" action="/admin/utilisateurs/ajouter"><input type="hidden" name="csrf" value="{{csrf}}"><h3>Ajouter un utilisateur</h3><input name="nom" placeholder="Nom" required><input name="prenom" placeholder="Prénom"><input name="email" type="email" placeholder="Adresse professionnelle" required><select name="profil"><option>DEMANDEUR</option><option>GESTIONNAIRE</option><option>ADMIN</option></select><button>Ajouter (compte sans mot de passe)</button></form><p><a href="/admin/journal">Consulter le journal d'activité</a></p><h3>Importer des nouveaux comptes</h3><form method="post" action="/admin/utilisateurs/importer" enctype="multipart/form-data"><input type="hidden" name="csrf" value="{{csrf}}"><input name="fichier" type="file" accept=".csv,text/csv" required><button>Importer le CSV (sans supprimer les comptes existants)</button></form><h3>Comptes existants</h3><table><tr><th>Nom</th><th>E-mail</th><th>Profil</th><th>Actif</th><th>Action</th></tr>{% for u in users %}<tr><td>{{u.nom}} {{u.prenom}}</td><td>{{u.email}}</td><td>{{u.profil}}</td><td>{{'Oui' if u.actif else 'Non'}}</td><td><form method="post" action="/admin/utilisateurs/modifier"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="id" value="{{u.id}}"><select name="profil"><option {% if u.profil=='DEMANDEUR' %}selected{% endif %}>DEMANDEUR</option><option {% if u.profil=='GESTIONNAIRE' %}selected{% endif %}>GESTIONNAIRE</option><option {% if u.profil=='ADMIN' %}selected{% endif %}>ADMIN</option></select><select name="actif"><option value="true" {% if u.actif %}selected{% endif %}>Actif</option><option value="false" {% if not u.actif %}selected{% endif %}>Inactif</option></select><button class="mini">Enregistrer</button></form><form method="post" action="/admin/utilisateurs/reinitialiser"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="id" value="{{u.id}}"><button class="mini" style="background:#b45309">Réinitialiser l’accès</button></form></td></tr>{% endfor %}</table></div></html>''', users=rows,csrf=csrf())
 
     def check_admin_post():
         user=current_user()
@@ -266,7 +267,7 @@ def register_security(app, db_request, load_ticket):
         if find_user(email): abort(409)
         db_request('POST','utilisateurs_esi','',[{'nom':request.form.get('nom','').strip(),
                   'prenom':request.form.get('prenom','').strip(),'email':email,'profil':role,'actif':True,
-                  'changement_obligatoire':True}],prefer='return=minimal')
+                  'changement_obligatoire':False}],prefer='return=minimal')
         audit('user_created',email)
         return redirect('/admin/utilisateurs')
 
@@ -289,18 +290,11 @@ def register_security(app, db_request, load_ticket):
         rows = db_request('GET','utilisateurs_esi',
             'select=id,email,actif&id=eq.'+quote(uid,safe='')+'&limit=1') or []
         if not rows: abort(404)
-        password = secrets.token_urlsafe(20)
         db_request('PATCH','utilisateurs_esi','id=eq.'+quote(uid,safe=''),
-            {'mot_de_passe_hash':generate_password_hash(password,method='scrypt'),
-             'changement_obligatoire':True,'updated_at':datetime.now(timezone.utc).isoformat()},
-             prefer='return=minimal')
-        audit('password_reset',rows[0]['email'])
-        body = ('<div class="card"><h1>Mot de passe provisoire</h1>'
-                '<p>Compte : {{email}}. Copier ce code et le communiquer via un canal confidentiel. '
-                'Il ne sera plus affiché.</p><pre style="font-size:18px;white-space:pre-wrap">{{password}}</pre>'
-                '<a href="/admin/utilisateurs">Retour</a></div>')
-        return render_template_string('<!doctype html><html lang="fr"><meta charset="utf-8">'+STYLE+body+'</html>',
-            email=rows[0]['email'],password=password)
+            {'mot_de_passe_hash':None,'changement_obligatoire':False,
+             'updated_at':datetime.now(timezone.utc).isoformat()},prefer='return=minimal')
+        audit('password_reset_by_admin',rows[0]['email'])
+        return redirect('/administrateur')
 
     @app.route('/admin/utilisateurs/importer',methods=['POST'])
     def auth_admin_import():
@@ -325,12 +319,183 @@ def register_security(app, db_request, load_ticket):
                 skipped+=1;continue
             seen.add(email)
             new.append({'nom':str(row.get('nom') or '').strip(),'prenom':str(row.get('prenom') or '').strip(),
-                'email':email,'profil':role,'actif':True,'changement_obligatoire':True})
+                'email':email,'profil':role,'actif':True,'changement_obligatoire':False})
         if new:
             db_request('POST','utilisateurs_esi','',new,prefer='return=minimal')
             audit('users_imported',str(len(new)))
-        body='<div class="card"><h1>Import terminé</h1><p>{{count}} ajouté(s), {{skipped}} ignoré(s).</p><p>Initialiser les mots de passe avant la première connexion.</p><a href="/admin/utilisateurs">Retour</a></div>'
+        body='<div class="card"><h1>Import terminé</h1><p>{{count}} ajouté(s), {{skipped}} ignoré(s).</p><p>Les utilisateurs pourront créer leur mot de passe à la première connexion.</p><a href="/admin/utilisateurs">Retour</a></div>'
         return render_template_string('<!doctype html><html lang="fr"><meta charset="utf-8">'+STYLE+body+'</html>',count=len(new),skipped=skipped)
+
+    # ---- Activation autonome et demandes d'accès : SANS vérification par e-mail (choix ESI). ----
+    # Une adresse autorisée non activée peut être revendiquée par son premier demandeur.
+    # Ce risque est assumé et doit être traité avant la mise en production.
+    def public_csrf():
+        if not session.get('esi_public_csrf'): session['esi_public_csrf'] = secrets.token_urlsafe(32)
+        return session['esi_public_csrf']
+
+    def public_post_allowed(bucket):
+        if not hmac.compare_digest(request.form.get('csrf',''), session.get('esi_public_csrf','')): abort(403)
+        now=time.monotonic()
+        key=bucket+':'+(request.remote_addr or '-')
+        trials=[x for x in _LOGIN_TRIES.get(key,[]) if now-x < 3600]
+        if len(trials)>=8: abort(429)
+        trials.append(now); _LOGIN_TRIES[key]=trials
+
+    def valid_email(email):
+        return len(email) <= 254 and bool(re.fullmatch(r'[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}',email))
+
+    @app.route('/premiere-connexion',methods=['GET','POST'])
+    def esi_first_login():
+        if not AUTH_ENABLED:return redirect('/demandeur')
+        error='';done=False
+        if request.method=='POST':
+            public_post_allowed('activate')
+            email=request.form.get('email','').strip().lower()
+            passwd=request.form.get('password','')
+            confirm=request.form.get('confirm','')
+            if not valid_email(email) or len(passwd)<14 or len(passwd)>128 or passwd!=confirm:
+                error='Vérifie ton adresse et choisis deux mots de passe identiques (14 à 128 caractères).'
+            else:
+                user=find_user(email)
+                if not user or not user.get('actif') or user.get('mot_de_passe_hash'):
+                    error='Activation impossible. Vérifie ton accès ou contacte un administrateur.'
+                else:
+                    # Protection contre deux activations concurrentes; la condition sur hash est évaluée en DB.
+                    result=db_request('PATCH','utilisateurs_esi',
+                        'id=eq.'+quote(str(user['id']),safe='')+'&mot_de_passe_hash=is.null',
+                        {'mot_de_passe_hash':generate_password_hash(passwd,method='scrypt'),
+                         'changement_obligatoire':False,'updated_at':datetime.now(timezone.utc).isoformat()},
+                        prefer='return=representation') or []
+                    if result:
+                        audit('account_activated',email)
+                        done=True
+                    else:error='Compte déjà activé. Utilise la connexion classique.'
+        body='''<form class="card" method="post"><h1>Première connexion</h1>
+        <p>Compte déjà autorisé : définis ton mot de passe personnel.</p>
+        <p class="error">Attention : l'identité liée à l'adresse e-mail n'est pas vérifiée automatiquement.</p>
+        {% if done %}<p>Compte activé. <a href="/login">Se connecter</a></p>
+        {% else %}<input type="hidden" name="csrf" value="{{csrf}}">
+        <label>Adresse e-mail</label><input type="email" name="email" maxlength="254" required>
+        <label>Choisir mon mot de passe</label><input name="password" type="password" minlength="14" maxlength="128" autocomplete="new-password" required>
+        <label>Confirmer le mot de passe</label><input name="confirm" type="password" minlength="14" maxlength="128" autocomplete="new-password" required>
+        <button>ACTIVER MON COMPTE</button>{% if error %}<p class="error">{{error}}</p>{% endif %}
+        {% endif %}<p><a href="/login">Retour</a></p></form>'''
+        return render_template_string('<!doctype html><html lang="fr"><meta charset="utf-8">'+STYLE+body+'</html>',csrf=public_csrf(),error=error,done=done)
+
+    @app.route('/demander-acces',methods=['GET','POST'])
+    def esi_request_access():
+        if not AUTH_ENABLED:return redirect('/demandeur')
+        done=False;error=''
+        if request.method=='POST':
+            public_post_allowed('request')
+            email=request.form.get('email','').strip().lower()
+            if not valid_email(email):error='Adresse e-mail invalide.'
+            else:
+                target=find_user(email)
+                kind='REINITIALISATION' if target else 'CREATION'
+                # Éviter les doublons (l'unicité est aussi contrôlée en PostgreSQL).
+                pending=db_request('GET','utilisateurs_esi_demandes',
+                    'select=id&email=eq.'+quote(email,safe='')+'&type=eq.'+kind+'&statut=eq.EN_ATTENTE&limit=1') or []
+                if not pending:
+                    try:
+                        db_request('POST','utilisateurs_esi_demandes','',{
+                            'email':email,'type':kind,'commentaire':request.form.get('commentaire','').strip()[:400]},
+                            prefer='return=minimal')
+                    except Exception:
+                        # Concurrence entre requêtes : la contrainte UNIQUE peut rejeter un doublon.
+                        app.logger.exception('Demande non enregistrée')
+                        error='Impossible de transmettre la demande pour le moment.'
+                if not error:done=True
+        body='''<form class="card" method="post"><h1>Demande d'accès</h1>
+        {% if done %}<p>Demande prise en compte. Un administrateur pourra l'examiner dans ESI TICKETS.</p>
+        {% else %}<p>Nouvel utilisateur ou mot de passe perdu : dépose une demande pour les administrateurs.</p>
+        <input type="hidden" name="csrf" value="{{csrf}}"><label>Adresse e-mail</label>
+        <input name="email" type="email" required maxlength="254">
+        <label>Commentaire (facultatif)</label><input name="commentaire" maxlength="400">
+        <button>ENVOYER LA DEMANDE</button>{% if error %}<p class="error">{{error}}</p>{% endif %}
+        {% endif %}<p><a href="/login">Retour</a></p></form>'''
+        return render_template_string('<!doctype html><html lang="fr"><meta charset="utf-8">'+STYLE+body+'</html>',csrf=public_csrf(),error=error,done=done)
+
+    @app.route('/administrateur', methods=['GET'])
+    def esi_admin_dashboard():
+        if not AUTH_ENABLED:abort(404)
+        user=current_user()
+        if not user or user['profil']!='ADMIN':abort(403)
+        users=db_request('GET','utilisateurs_esi',
+            'select=id,nom,prenom,email,profil,actif,mot_de_passe_hash&order=nom.asc&limit=2000') or []
+        pending=db_request('GET','utilisateurs_esi_demandes',
+            'select=id,email,type,statut,commentaire,created_at&statut=eq.EN_ATTENTE&order=created_at.desc&limit=200') or []
+        body='''<div class="card wide"><div class="top"><h1>ADMINISTRATEUR</h1><a href="/demandeur">RETOUR</a></div>
+        <p>Gestion des utilisateurs et des demandes d'accès.</p>
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div style="padding:18px;background:#eef5fb;border-radius:12px">Utilisateurs : <b>{{users|length}}</b></div>
+        <div style="padding:18px;border-radius:12px;background:{{'#fee2e2' if pending else '#eef5fb'}};color:{{'#991b1b' if pending else '#12324d'}}">
+        <b>Demandes en attente : {{pending|length}}</b>{% if pending %} · À TRAITER{% endif %}</div></div>
+        <h2>Créer directement un utilisateur</h2>
+        <form method="post" action="/administrateur/creer"><input type="hidden" name="csrf" value="{{csrf}}">
+        <label>Nom</label><input name="nom" maxlength="100" required><label>Prénom</label><input name="prenom" maxlength="100">
+        <label>Adresse e-mail</label><input name="email" type="email" required maxlength="254">
+        <label>Profil</label><select name="profil"><option>DEMANDEUR</option><option>GESTIONNAIRE</option><option>ADMIN</option></select>
+        <button>CRÉER L'UTILISATEUR</button></form>
+        <h2>Demandes en attente</h2><table><tr><th>Date</th><th>E-mail</th><th>Nature</th><th>Action</th></tr>
+        {% for d in pending %}<tr><td>{{d.created_at}}</td><td>{{d.email}}</td><td>{{d.type}}</td><td>
+        <form method="post" action="/administrateur/traiter"><input type="hidden" name="csrf" value="{{csrf}}">
+        <input type="hidden" name="id" value="{{d.id}}">
+        {% if d.type=='CREATION' %}<select name="profil"><option>DEMANDEUR</option><option>GESTIONNAIRE</option><option>ADMIN</option></select>{% endif %}
+        <button name="decision" value="ACCEPTEE" class="mini">Accepter</button>
+        <button name="decision" value="REFUSEE" class="mini" style="background:#64748b">Refuser</button></form></td></tr>
+        {% else %}<tr><td colspan="4">Aucune demande en attente</td></tr>{% endfor %}</table>
+        <h2>Utilisateurs</h2><table><tr><th>Nom</th><th>E-mail</th><th>Profil</th><th>Accès</th></tr>
+        {% for u in users %}<tr><td>{{u.nom}} {{u.prenom}}</td><td>{{u.email}}</td><td>{{u.profil}}</td>
+        <td>{{'Actif' if u.actif else 'Suspendu'}} · {{'Activé' if u.mot_de_passe_hash else 'À activer'}}</td></tr>{% endfor %}</table>
+        <p><a href="/admin/utilisateurs">Modifier les droits / suspendre un compte</a> · <a href="/admin/journal">Historique</a></p></div>'''
+        return render_template_string('<!doctype html><html lang="fr"><meta charset="utf-8">'+STYLE+body+'</html>',users=users,pending=pending,csrf=csrf())
+
+    @app.route('/administrateur/creer',methods=['POST'])
+    def esi_admin_create_direct():
+        check_admin_post()
+        email=request.form.get('email','').strip().lower()
+        role=request.form.get('profil','DEMANDEUR')
+        if not valid_email(email) or role not in ROLES:abort(400)
+        if find_user(email):abort(409,'Ce compte existe déjà')
+        db_request('POST','utilisateurs_esi','',{
+            'nom':request.form.get('nom','').strip()[:100],
+            'prenom':request.form.get('prenom','').strip()[:100],
+            'email':email,'profil':role,'actif':True,
+            'mot_de_passe_hash':None,'changement_obligatoire':False},prefer='return=minimal')
+        audit('user_created_direct',email)
+        return redirect('/administrateur')
+
+    @app.route('/administrateur/traiter',methods=['POST'])
+    def esi_admin_review():
+        admin=check_admin_post()
+        decision=request.form.get('decision','')
+        role=request.form.get('profil','DEMANDEUR')
+        if decision not in ('ACCEPTEE','REFUSEE') or role not in ROLES:abort(400)
+        rid=request.form.get('id','')
+        found=db_request('GET','utilisateurs_esi_demandes',
+            'select=id,email,type,statut&id=eq.'+quote(str(rid),safe='')+'&statut=eq.EN_ATTENTE&limit=1') or []
+        if not found:abort(404)
+        req=found[0]
+        if decision=='ACCEPTEE':
+            existing=find_user(req['email'])
+            if req['type']=='CREATION':
+                if existing:abort(409,'Compte déjà présent')
+                db_request('POST','utilisateurs_esi','',{
+                    'email':req['email'],'profil':role,'actif':True,
+                    'mot_de_passe_hash':None,'changement_obligatoire':False},prefer='return=minimal')
+            elif req['type']=='REINITIALISATION':
+                if not existing:abort(404)
+                # L'admin a vérifié l'identité par un canal indépendant.
+                db_request('PATCH','utilisateurs_esi','id=eq.'+quote(str(existing['id']),safe=''),{
+                    'mot_de_passe_hash':None,'changement_obligatoire':False,
+                    'updated_at':datetime.now(timezone.utc).isoformat()},prefer='return=minimal')
+        db_request('PATCH','utilisateurs_esi_demandes',
+            'id=eq.'+quote(str(rid),safe='')+'&statut=eq.EN_ATTENTE',
+            {'statut':decision,'traite_par':str(admin['id']),
+             'traite_at':datetime.now(timezone.utc).isoformat()},prefer='return=minimal')
+        audit('access_request_'+decision,req['email'],req['type'])
+        return redirect('/administrateur')
 
     # Replace historic login URL only when enabled. Existing handler remains in legacy mode.
     legacy_view = app.view_functions.get('login')
