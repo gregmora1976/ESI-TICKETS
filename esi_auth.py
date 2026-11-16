@@ -383,8 +383,22 @@ def register_security(app, db_request, load_ticket):
                 error='Vérifie ton adresse et choisis deux mots de passe identiques (14 à 128 caractères).'
             else:
                 user=find_user(email)
-                if not user or not user.get('actif') or user.get('mot_de_passe_hash') or (user.get('profil') == 'ADMIN' and os.environ.get('ESI_BOOTSTRAP_TOKEN')):
+                # Un premier ADMIN ne peut pas s'attribuer un compte par simple
+                # connaissance de son e-mail pendant la mise en service.
+                # Le jeton de mise en service permet d'activer uniquement le compte
+                # ADMIN explicitement désigné dans Render, sans autre fichier.
+                bootstrap_token = os.environ.get('ESI_BOOTSTRAP_TOKEN', '')
+                bootstrap_target = os.environ.get('ESI_BOOTSTRAP_ADMIN_EMAIL', '').strip().lower()
+                needs_bootstrap = bool(user and user.get('profil') == 'ADMIN' and bootstrap_token)
+                bootstrap_ok = (
+                    len(bootstrap_token) >= 32
+                    and email == bootstrap_target
+                    and hmac.compare_digest(request.form.get('code_admin', ''), bootstrap_token)
+                ) if needs_bootstrap else True
+                if not user or not user.get('actif') or user.get('mot_de_passe_hash'):
                     error='Activation impossible. Vérifie ton accès ou contacte un administrateur.'
+                elif needs_bootstrap and not bootstrap_ok:
+                    error='Activation ADMIN non autorisée : vérifie le compte configuré dans Render et son code de mise en service.'
                 else:
                     # Protection contre deux activations concurrentes; la condition sur hash est évaluée en DB.
                     result=db_request('PATCH','utilisateurs_esi',
@@ -404,6 +418,9 @@ def register_security(app, db_request, load_ticket):
         <label>Adresse e-mail</label><input type="email" name="email" maxlength="254" required>
         <label>Choisir mon mot de passe</label><input name="password" type="password" minlength="14" maxlength="128" autocomplete="new-password" required>
         <label>Confirmer le mot de passe</label><input name="confirm" type="password" minlength="14" maxlength="128" autocomplete="new-password" required>
+        <label>Code de mise en service (premier ADMIN uniquement)</label>
+        <input name="code_admin" type="password" autocomplete="off" placeholder="Laisser vide pour les autres utilisateurs">
+        <p class="muted">Pour le compte ADMIN initial indiqué dans Render, utiliser ESI_BOOTSTRAP_TOKEN. Ne communique jamais ce code.</p>
         <button>ACTIVER MON COMPTE</button>{% if error %}<p class="error">{{error}}</p>{% endif %}
         {% endif %}<p><a href="/login">Retour</a></p></form>'''
         return render_template_string('<!doctype html><html lang="fr"><meta charset="utf-8">'+STYLE+body+'</html>',csrf=public_csrf(),error=error,done=done)
