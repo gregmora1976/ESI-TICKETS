@@ -209,7 +209,7 @@ def forbidden(e):return view('Accès interdit','''<div class="panel narrow"><h1>
 
 
 # -------- Administration de démonstration (sans Supabase) --------
-EMAIL_RE = re.compile(r'^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,}
+EMAIL_RE = re.compile(r'^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,}$')
 
 def demo_audit(action,target):
     db_write('INSERT INTO admin_audit(actor,action,target) VALUES(?,?,?)',
