@@ -267,8 +267,8 @@ def register_security(app, db_request, load_ticket):
                             needs_bootstrap = user.get('profil') == 'ADMIN' and bool(bootstrap_token)
                             bootstrap_ok = (len(bootstrap_token) >= 32 and email == bootstrap_target and
                                             hmac.compare_digest(request.form.get('code_admin', ''), bootstrap_token))
-                            if len(new_password) < 14 or len(new_password) > 128 or new_password != confirmation:
-                                error = 'Choisis deux mots de passe identiques de 14 a 128 caracteres.'
+                            if len(new_password) < 10 or len(new_password) > 128 or new_password != confirmation:
+                                error = 'Choisis deux mots de passe identiques de 10 a 128 caracteres.'
                             elif needs_bootstrap and not bootstrap_ok:
                                 error = 'Initialisation ADMIN non autorisee : verifie le code et le compte configure dans Render.'
                             else:
@@ -334,16 +334,16 @@ def register_security(app, db_request, load_ticket):
           <p><a href="/login">Changer d'adresse e-mail</a></p>
         {% elif stage == 'activate' %}
           <p>Première connexion · {{email}}</p>
-          <p>Crée ton mot de passe personnel (14 caractères minimum).</p>
+          <p>Crée ton mot de passe personnel (10 caractères minimum).</p>
           <form method="post" action="/login">
             <input type="hidden" name="csrf" value="{{csrf}}">
             <input type="hidden" name="step" value="activate">
             <input type="hidden" name="next" value="{{next_path}}">
             <input type="hidden" name="email" value="{{email}}">
             <label>Choisir mon mot de passe</label>
-            <input name="password" type="password" minlength="14" maxlength="128" autocomplete="new-password" required autofocus>
+            <input name="password" type="password" minlength="10" maxlength="128" autocomplete="new-password" required autofocus>
             <label>Confirmer le mot de passe</label>
-            <input name="confirm" type="password" minlength="14" maxlength="128" autocomplete="new-password" required>
+            <input name="confirm" type="password" minlength="10" maxlength="128" autocomplete="new-password" required>
             {% if show_bootstrap %}
               <label>Code de mise en service ADMIN</label>
               <input name="code_admin" type="password" autocomplete="off" required>
@@ -407,7 +407,7 @@ def register_security(app, db_request, load_ticket):
             rows = db_request('GET','utilisateurs_esi','select=mot_de_passe_hash&id=eq.'+quote(str(user['id']),safe='')+'&limit=1') or []
             valid = rows and rows[0].get('mot_de_passe_hash') and check_password_hash(rows[0]['mot_de_passe_hash'],old)
             if not valid: error='Mot de passe actuel incorrect.'
-            elif len(new) < 14 or len(new) > 128 or new == old: error='Choisis un nouveau mot de passe différent, de 14 caractères minimum.'
+            elif len(new) < 10 or len(new) > 128 or new == old: error='Choisis un nouveau mot de passe différent, de 10 caractères minimum.'
             else:
                 new_version = datetime.now(timezone.utc).isoformat()
                 db_request('PATCH','utilisateurs_esi','id=eq.'+quote(str(user['id']),safe=''),
@@ -416,7 +416,7 @@ def register_security(app, db_request, load_ticket):
                 refreshed = db_request('GET','utilisateurs_esi','select=updated_at&id=eq.'+quote(str(user['id']),safe='')+'&limit=1')
                 session['esi_session_version'] = refreshed[0]['updated_at']
                 audit('password_changed',user['email']);success=True
-        return render_template_string('''<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mot de passe ESI</title>'''+STYLE+'''<div class="card"><h1>Changer mon mot de passe</h1><p>Choisir au moins 14 caractères.</p>{% if success %}<p>Mot de passe modifié. <a href="/demandeur">Accéder à ESI TICKETS</a></p>{% else %}<form method="post"><input type="hidden" name="csrf" value="{{csrf}}"><label>Mot de passe actuel</label><input name="ancien" type="password" autocomplete="current-password" required><label>Nouveau mot de passe</label><input name="nouveau" type="password" autocomplete="new-password" minlength="14" required><button>ENREGISTRER</button>{% if error %}<p class="error">{{error}}</p>{% endif %}</form>{% endif %}</div></html>''',csrf=csrf(),error=error,success=success)
+        return render_template_string('''<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mot de passe ESI</title>'''+STYLE+'''<div class="card"><h1>Changer mon mot de passe</h1><p>Choisir au moins 10 caractères.</p>{% if success %}<p>Mot de passe modifié. <a href="/demandeur">Accéder à ESI TICKETS</a></p>{% else %}<form method="post"><input type="hidden" name="csrf" value="{{csrf}}"><label>Mot de passe actuel</label><input name="ancien" type="password" autocomplete="current-password" required><label>Nouveau mot de passe</label><input name="nouveau" type="password" autocomplete="new-password" minlength="10" required><button>ENREGISTRER</button>{% if error %}<p class="error">{{error}}</p>{% endif %}</form>{% endif %}</div></html>''',csrf=csrf(),error=error,success=success)
 
     @app.route('/api/esi/me',methods=['GET'])
     def auth_me():
@@ -644,8 +644,8 @@ def register_security(app, db_request, load_ticket):
             email=request.form.get('email','').strip().lower()
             passwd=request.form.get('password','')
             confirm=request.form.get('confirm','')
-            if not valid_email(email) or len(passwd)<14 or len(passwd)>128 or passwd!=confirm:
-                error='Vérifie ton adresse et choisis deux mots de passe identiques (14 à 128 caractères).'
+            if not valid_email(email) or len(passwd)<10 or len(passwd)>128 or passwd!=confirm:
+                error='Vérifie ton adresse et choisis deux mots de passe identiques (10 à 128 caractères).'
             else:
                 user=find_user(email)
                 # Un premier ADMIN ne peut pas s'attribuer un compte par simple
@@ -681,8 +681,8 @@ def register_security(app, db_request, load_ticket):
         {% if done %}<p>Compte activé. <a href="/login">Se connecter</a></p>
         {% else %}<input type="hidden" name="csrf" value="{{csrf}}">
         <label>Adresse e-mail</label><input type="email" name="email" maxlength="254" required>
-        <label>Choisir mon mot de passe</label><input name="password" type="password" minlength="14" maxlength="128" autocomplete="new-password" required>
-        <label>Confirmer le mot de passe</label><input name="confirm" type="password" minlength="14" maxlength="128" autocomplete="new-password" required>
+        <label>Choisir mon mot de passe</label><input name="password" type="password" minlength="10" maxlength="128" autocomplete="new-password" required>
+        <label>Confirmer le mot de passe</label><input name="confirm" type="password" minlength="10" maxlength="128" autocomplete="new-password" required>
         <label>Code de mise en service (premier ADMIN uniquement)</label>
         <input name="code_admin" type="password" autocomplete="off" placeholder="Laisser vide pour les autres utilisateurs">
         <p class="muted">Pour le compte ADMIN initial indiqué dans Render, utiliser ESI_BOOTSTRAP_TOKEN. Ne communique jamais ce code.</p>
@@ -733,31 +733,15 @@ def register_security(app, db_request, load_ticket):
             'select=id,nom,prenom,email,profil,actif,mot_de_passe_hash&order=nom.asc&limit=2000') or []
         pending=db_request('GET','utilisateurs_esi_demandes',
             'select=id,email,type,statut,commentaire,created_at&statut=eq.EN_ATTENTE&order=created_at.desc&limit=200') or []
-        body='''<div class="card wide"><div class="top"><h1>ADMINISTRATEUR</h1><a href="/demandeur">RETOUR</a></div>
-        <p>Gestion des utilisateurs et des demandes d'accès.</p>
-        <div style="display:flex;gap:12px;flex-wrap:wrap">
-        <div style="padding:18px;background:#eef5fb;border-radius:12px">Utilisateurs : <b>{{users|length}}</b></div>
-        <div style="padding:18px;border-radius:12px;background:{{'#fee2e2' if pending else '#eef5fb'}};color:{{'#991b1b' if pending else '#12324d'}}">
-        <b>Demandes en attente : {{pending|length}}</b>{% if pending %} · À TRAITER{% endif %}</div></div>
-        <h2>Créer directement un utilisateur</h2>
-        <form method="post" action="/administrateur/creer"><input type="hidden" name="csrf" value="{{csrf}}">
-        <label>Nom</label><input name="nom" maxlength="100" required><label>Prénom</label><input name="prenom" maxlength="100">
-        <label>Adresse e-mail</label><input name="email" type="email" required maxlength="254">
-        <label>Profil</label><select name="profil"><option>DEMANDEUR</option><option>GESTIONNAIRE</option><option>ADMIN</option></select>
-        <button>CRÉER L'UTILISATEUR</button></form>
-        <h2>Demandes en attente</h2><table><tr><th>Date</th><th>E-mail</th><th>Nature</th><th>Action</th></tr>
-        {% for d in pending %}<tr><td>{{d.created_at}}</td><td>{{d.email}}</td><td>{{d.type}}</td><td>
-        <form method="post" action="/administrateur/traiter"><input type="hidden" name="csrf" value="{{csrf}}">
-        <input type="hidden" name="id" value="{{d.id}}">
-        {% if d.type=='CREATION' %}<select name="profil"><option>DEMANDEUR</option><option>GESTIONNAIRE</option><option>ADMIN</option></select>{% endif %}
-        <button name="decision" value="ACCEPTEE" class="mini">Accepter</button>
-        <button name="decision" value="REFUSEE" class="mini" style="background:#64748b">Refuser</button></form></td></tr>
-        {% else %}<tr><td colspan="4">Aucune demande en attente</td></tr>{% endfor %}</table>
-        <h2>Utilisateurs</h2><table><tr><th>Nom</th><th>E-mail</th><th>Profil</th><th>Accès</th></tr>
-        {% for u in users %}<tr><td>{{u.nom}} {{u.prenom}}</td><td>{{u.email}}</td><td>{{u.profil}}</td>
-        <td>{{'Actif' if u.actif else 'Suspendu'}} · {{'Activé' if u.mot_de_passe_hash else 'À activer'}} · <a href="/admin/utilisateurs">Modifier</a></td></tr>{% endfor %}</table>
-        <p><a href="/admin/utilisateurs">Modifier les droits / suspendre un compte</a> · <a href="/admin/journal">Historique</a></p></div>'''
-        return render_template_string('<!doctype html><html lang="fr"><meta charset="utf-8">'+STYLE+body+'</html>',users=users,pending=pending,csrf=csrf())
+        page = """<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Administration ESI TICKETS</title><link rel="icon" href="/static/logo.png"><style>
+        *{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#e0f2fe,#f1f5f9 220px);font-family:Arial,sans-serif;color:#1e293b}.wrap{max-width:1400px;margin:0 auto;padding:32px 18px 60px}.hero{background:#fff;border:1px solid #e2e8f0;border-radius:30px;overflow:hidden;box-shadow:0 8px 30px #0f172a10}.header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:22px 24px;border-bottom:1px solid #e2e8f0}.header img{height:70px;width:98px;object-fit:contain}.header h1{font-size:34px;margin:2px 0}.eyebrow{font-weight:700;font-size:13px;color:#0284c7;letter-spacing:.08em}.muted{font-size:13px;color:#64748b}.header-actions{display:flex;gap:9px;flex-wrap:wrap;margin-left:auto}.btn,button{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;cursor:pointer;padding:12px 16px;font:700 14px Arial,sans-serif;background:white;color:#1e293b;border:1px solid #e2e8f0;border-radius:16px}.btn.primary,button.primary{background:#0ea5e9;border-color:#0ea5e9;color:white}.body{padding:24px;display:grid;gap:22px}.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.stat,.card{border:1px solid #e2e8f0;border-radius:24px;padding:22px;background:white}.stat strong{display:block;font-size:30px;margin:6px 0}.warn{color:#b91c1c}.card h2{margin:0 0 17px;font-size:20px}.tile-actions{display:flex;gap:10px;flex-wrap:wrap}.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.field{display:grid;gap:7px}.field label{font-size:13px;font-weight:700;color:#475569}.field input,.field select,td select{background:#eaf6ff;border:1px solid #e2e8f0;padding:12px;border-radius:13px;font:14px Arial,sans-serif;width:100%}.field.full{grid-column:1/-1}.tablewrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:11px 10px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:middle}th{background:#f1f5f9}.actionform{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.actionform select{width:auto;min-width:130px}.actionform button{font-size:12px;padding:9px 12px}.actionform .accept{color:white;background:#0284c7;border-color:#0284c7}.actionform .reject{background:#f1f5f9}.link{color:#0284c7;font-weight:700}@media(max-width:750px){.wrap{padding:12px}.stats,.fields{grid-template-columns:1fr}.body{padding:14px}.header h1{font-size:26px}.header-actions{margin-left:0}}
+        </style></head><body><div class="wrap"><main class="hero"><header class="header"><img src="/static/logo.png" alt="ESI"><div><div class="eyebrow">ESI TICKETS</div><h1>ADMINISTRATEUR</h1><div class="muted">Gestion des utilisateurs et pilotage de l'activité</div></div><div class="header-actions"><a href="/demandeur" class="btn">RETOUR</a><a href="/reporting" class="btn primary">REPORTING</a></div></header><div class="body">
+        <section class="stats"><div class="stat">Comptes utilisateurs<strong>{{users|length}}</strong><span class="muted">Collaborateurs enregistrés</span></div><div class="stat">Demandes en attente<strong class="{{'warn' if pending else ''}}">{{pending|length}}</strong><span class="muted">À examiner par un administrateur</span></div></section>
+        <section class="card"><h2>Outils d'administration</h2><div class="tile-actions"><a href="/admin/utilisateurs" class="btn primary">GÉRER LES UTILISATEURS</a><a href="/reporting" class="btn primary">REPORTING</a><a href="#demandes" class="btn">DEMANDES D'ACCÈS ({{pending|length}})</a><a href="/admin/journal" class="btn">JOURNAL D'ACTIVITÉ</a></div></section>
+        <section class="card"><h2>Créer un utilisateur</h2><form method="post" action="/administrateur/creer" class="fields"><input type="hidden" name="csrf" value="{{csrf}}"><div class="field"><label>Nom</label><input name="nom" maxlength="100" required></div><div class="field"><label>Prénom</label><input name="prenom" maxlength="100"></div><div class="field"><label>Adresse e-mail</label><input name="email" type="email" maxlength="254" required></div><div class="field"><label>Profil</label><select name="profil"><option>DEMANDEUR</option><option>GESTIONNAIRE</option><option>ADMIN</option></select></div><div class="field full"><button class="primary">CRÉER L'UTILISATEUR</button></div></form></section>
+        <section class="card" id="demandes"><h2>Demandes d'accès en attente</h2><div class="tablewrap"><table><thead><tr><th>Date</th><th>Adresse e-mail</th><th>Nature</th><th>Action</th></tr></thead><tbody>{% for d in pending %}<tr><td>{{d.created_at}}</td><td>{{d.email}}</td><td>{{d.type}}</td><td><form method="post" action="/administrateur/traiter" class="actionform"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="id" value="{{d.id}}">{% if d.type=='CREATION' %}<select name="profil"><option>DEMANDEUR</option><option>GESTIONNAIRE</option><option>ADMIN</option></select>{% endif %}<button name="decision" class="accept" value="ACCEPTEE">Accepter</button><button name="decision" class="reject" value="REFUSEE">Refuser</button></form></td></tr>{% else %}<tr><td colspan="4">Aucune demande en attente.</td></tr>{% endfor %}</tbody></table></div></section>
+        <section class="card"><h2>Utilisateurs</h2><div class="tablewrap"><table><thead><tr><th>Nom</th><th>E-mail</th><th>Profil</th><th>État</th><th>Action</th></tr></thead><tbody>{% for u in users %}<tr><td>{{u.nom}} {{u.prenom}}</td><td>{{u.email}}</td><td>{{u.profil}}</td><td>{{'Actif' if u.actif else 'Suspendu'}} · {{'Activé' if u.mot_de_passe_hash else 'À activer'}}</td><td><a href="/admin/utilisateurs" class="link">MODIFIER</a></td></tr>{% endfor %}</tbody></table></div></section></div></main></div></body></html>"""
+        return render_template_string(page, users=users, pending=pending, csrf=csrf())
 
     @app.route('/administrateur/creer',methods=['POST'])
     def esi_admin_create_direct():

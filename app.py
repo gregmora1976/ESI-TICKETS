@@ -8161,17 +8161,9 @@ def _catalogue_auth_data():
         return None
 
 
-def _catalogue_esi_role_allowed():
-    """When individual ESI login is on, only actual ADMIN accounts manage catalogues."""
-    if os.environ.get('ESI_AUTH_ENABLED', '0').strip() != '1':
-        return True  # Preserve historic catalogue login when ESI login is disabled.
-    user = getattr(g, 'esi_user', None)
-    return bool(user and user.get('profil') == 'ADMIN' and user.get('actif'))
-
-
 def _catalogue_admin_required():
     payload = _catalogue_auth_data()
-    return bool(_catalogue_esi_role_allowed() and payload and hmac.compare_digest(
+    return bool(payload and hmac.compare_digest(
         str(payload.get('csrf', '')), request.headers.get('X-Catalogue-CSRF', '')))
 
 
@@ -8182,8 +8174,6 @@ def _catalogue_login_key():
 
 @app.route('/api/catalogue-caisses/admin/session', methods=['GET'])
 def catalogue_admin_session():
-    if not _catalogue_esi_role_allowed():
-        return jsonify({'ok': False, 'authenticated': False, 'csrf': None}), 403
     auth = _catalogue_auth_data()
     response = jsonify({'ok': True, 'authenticated': bool(auth),
                         'csrf': auth.get('csrf') if auth else None})
@@ -8193,8 +8183,6 @@ def catalogue_admin_session():
 
 @app.route('/api/catalogue-caisses/admin/login', methods=['POST'])
 def catalogue_admin_login():
-    if not _catalogue_esi_role_allowed():
-        return jsonify({'error': 'Accès réservé aux administrateurs ESI TICKETS.'}), 403
     secret = os.getenv('CATALOGUE_ADMIN_PASSWORD', '')
     supplied = str((request.get_json(silent=True) or {}).get('password') or '')
     if not secret:
@@ -8975,19 +8963,6 @@ def gestionnaire():
     # Injection inline volontaire : pas de fichier JS externe, donc pas de probleme de cache/404.
     page = render_template('gestionnaire.html')
     inline = '<script>' + GESTIONNAIRE_ARTICLES_LIES_JS + '</script>'
-    reporting_button_js = r'''<script>(function(){
-      function addReportingButton(){
-        if(document.getElementById('esiReportingBtn')) return;
-        var candidates=[document.querySelector('.actions'),document.querySelector('.top-actions'),document.querySelector('header .actions'),document.querySelector('header')];
-        var host=candidates.find(function(x){return !!x;});
-        if(!host) return;
-        var a=document.createElement('a');a.id='esiReportingBtn';a.href='/reporting';a.textContent='REPORTING';
-        a.style.cssText='display:inline-flex;align-items:center;justify-content:center;text-decoration:none;border:0;border-radius:10px;padding:10px 14px;font-weight:900;background:#0284c7;color:#fff;margin-left:8px';
-        host.appendChild(a);
-      }
-      if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',addReportingButton,{once:true});else addReportingButton();
-    })();</script>'''
-    inline += reporting_button_js
     if '</body>' in page:
         page = page.replace('</body>', inline + '\n</body>', 1)
     else:
@@ -14525,6 +14500,95 @@ el('refresh').onclick=load;load();
     return response
 
 
+
+# Activite collaborateurs - lecture seule, sans migration Supabase.
+def _activity_normalise(value):
+    import unicodedata
+    v = unicodedata.normalize('NFKD', str(value or '').strip().casefold())
+    return ' '.join(''.join(c for c in v if not unicodedata.combining(c)).replace('-', ' ').replace('.', ' ').split())
+
+
+def _activity_data(mode, start, end, filter_module):
+    users = supabase_rest_request('GET', 'utilisateurs_esi', 'select=nom,prenom,email&limit=5000') or []
+    emails = {}; aliases = {}
+    for u in users:
+        email = str(u.get('email') or '').strip().lower()
+        first = str(u.get('prenom') or '').strip()
+        last = str(u.get('nom') or '').strip()
+        label = (' '.join([first,last])).strip() or email
+        emails[email] = label
+        for variant in (label, last+' '+first, email):
+            key = _activity_normalise(variant)
+            if key: aliases.setdefault(key,set()).add(email)
+    groups = {}; modules = set(); count_missing = 0; excluded = 0
+    for offset in range(0,50000,500):
+        rows = supabase_rest_request('GET','tickets',
+            'select=module,status,created_at,charge_projet,raw_json&order=created_at.desc&limit=500&offset='+str(offset)) or []
+        for t in rows:
+            if _reporting_ticket_is_cancelled(t):
+                excluded += 1; continue
+            created = _reporting_parse_datetime(t.get('created_at'))
+            if (start or end) and not created: continue
+            if start and created.date() < start: continue
+            if end and created.date() > end: continue
+            module = str(t.get('module') or '').strip() or 'Autre'
+            modules.add(module)
+            if filter_module and filter_module != module: continue
+            raw = t.get('raw_json') or {}
+            if isinstance(raw,str):
+                try: raw = json.loads(raw)
+                except (ValueError,TypeError): raw = {}
+            if not isinstance(raw,dict): raw = {}
+            if mode == 'createur':
+                email = str(raw.get('created_by_email') or '').strip().lower()
+                name = emails.get(email,email) if email else 'Créateur non identifié'
+                if not email: count_missing += 1
+            else:
+                name = str(t.get('charge_projet') or raw.get('chargeProjet') or '').strip()
+                if name in ('-','—','None'): name = ''
+                possible = aliases.get(_activity_normalise(name),set())
+                if name and len(possible)==1: name = emails[next(iter(possible))]
+                if not name: name = 'Chargé de projet non renseigné'; count_missing += 1
+            d = groups.setdefault(name, {'nom':name,'total':0,'termines':0,'en_cours':0,'par_type':{}})
+            d['total'] += 1
+            status = _activity_normalise(t.get('status'))
+            if status in ('termine','terminee'): d['termines'] += 1
+            else: d['en_cours'] += 1
+            d['par_type'][module] = d['par_type'].get(module,0)+1
+        if len(rows)<500: break
+    else:
+        raise RuntimeError('Limite de 50 000 tickets atteinte ; adapter la pagination du reporting.')
+    records = sorted(groups.values(),key=lambda r:(-r['total'],r['nom'].casefold()))
+    return {'rows':records,'total':sum(r['total'] for r in records),'personnes':len(records),
+            'sans_identite':count_missing,'annules_exclus':excluded,'modules':sorted(modules)}
+
+
+@app.route('/api/reporting/utilisateurs')
+def api_reporting_utilisateurs():
+    mode = request.args.get('mode','charge')
+    if mode not in ('charge','createur'): return jsonify({'error':'Mode invalide'}),400
+    try:
+        start = datetime.strptime(request.args['date_debut'],'%Y-%m-%d').date() if request.args.get('date_debut') else None
+        end = datetime.strptime(request.args['date_fin'],'%Y-%m-%d').date() if request.args.get('date_fin') else None
+    except ValueError: return jsonify({'error':'Dates invalides'}),400
+    if start and end and start>end: return jsonify({'error':'Dates inversées'}),400
+    result = _activity_data(mode,start,end,request.args.get('module',''))
+    result['mode']=mode
+    return jsonify(result)
+
+
+@app.route('/reporting/utilisateurs')
+def reporting_utilisateurs_page():
+    page = """<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Activité des utilisateurs - ESI TICKETS</title>
+<style>*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#e0f2fe,#f1f5f9 220px);font-family:Arial,sans-serif;color:#1e293b}.wrap{max-width:1400px;margin:0 auto;padding:30px 18px 60px}.header,.card{background:#fff;border:1px solid #e2e8f0;border-radius:26px;padding:22px;margin-bottom:20px}.header{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.header img{width:98px;height:70px;object-fit:contain}.header h1{font-size:30px;margin:3px 0}.eyebrow{color:#0284c7;font-weight:700;font-size:13px}.muted{font-size:13px;color:#64748b}.back{margin-left:auto;color:#1e293b;background:#fff;border:1px solid #e2e8f0;padding:12px 16px;text-decoration:none;border-radius:14px;font-weight:700}.filters{display:flex;gap:12px;flex-wrap:wrap;align-items:end}.field{display:grid;gap:7px;min-width:160px;flex:1}.field label{font-size:13px;color:#475569;font-weight:700}.field input,.field select{width:100%;padding:12px;background:#eaf6ff;border:1px solid #e2e8f0;border-radius:13px;font:inherit}button{border:0;border-radius:13px;padding:12px 16px;background:#0ea5e9;color:white;font-weight:700;cursor:pointer}.tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px}.tabs button{background:#f1f5f9;color:#1e293b}.tabs button.active{background:#0ea5e9;color:#fff}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px}.stat{border-radius:15px;background:#eaf6ff;padding:15px}.stat strong{display:block;font-size:28px;margin-top:6px}.tablewrap{overflow:auto}table{width:100%;border-collapse:collapse;text-align:left}th,td{padding:10px 12px;border-bottom:1px solid #e2e8f0}th{background:#f1f5f9}.type{font-size:12px;color:#475569}.error{color:#b91c1c}.note{color:#475569;font-size:13px;line-height:1.6}@media(max-width:700px){.stats{grid-template-columns:1fr}.header h1{font-size:24px}.wrap{padding:12px}}</style></head><body><main class="wrap"><header class="header"><img src="/static/logo.png" alt="ESI"><div><div class="eyebrow">ESI TICKETS</div><h1>REPORTING · UTILISATEURS</h1><div class="muted">Activité des collaborateurs</div></div><a class="back" href="/reporting">RETOUR REPORTING</a></header>
+<section class="card"><div class="tabs"><button id="chargeTab" class="active">PAR CHARGÉ DE PROJET</button><button id="createurTab">PAR CRÉATEUR CONNECTÉ</button></div><div class="filters"><div class="field"><label>Du</label><input id="start" type="date"></div><div class="field"><label>Au</label><input id="end" type="date"></div><div class="field"><label>Type de ticket</label><select id="module"><option value="">Tous les types</option></select></div><button id="refresh">ACTUALISER</button></div><div class="stats"><div class="stat">Tickets comptabilisés<strong id="total">—</strong></div><div class="stat">Collaborateurs / catégories<strong id="persons">—</strong></div><div class="stat">Sans identification<strong id="missing">—</strong></div></div><p id="explanation" class="note">Le chargé de projet est le responsable indiqué sur le ticket, pas nécessairement la personne qui l'a créé.</p></section>
+<section class="card"><h2>Activité par collaborateur</h2><p id="error" class="error"></p><div class="tablewrap"><table><thead><tr><th>Collaborateur</th><th>Tickets</th><th>Terminés</th><th>En cours</th><th>Par type</th></tr></thead><tbody id="rows"><tr><td colspan="5">Chargement…</td></tr></tbody></table></div></section><section class="card note"><strong>Méthodologie :</strong> tickets annulés exclus. « Par chargé de projet » couvre l'historique et garde le nom exact lorsque l'identité n'est pas reconnue sans ambiguïté. « Par créateur connecté » utilise l'e-mail stocké lors de la création. Les anciens tickets peuvent donc rester sans créateur identifié. Aucun ticket historique n'est modifié.</section></main>
+<script>let mode='charge';const $=x=>document.getElementById(x);const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));function selectMode(m){mode=m;$('chargeTab').classList.toggle('active',m==='charge');$('createurTab').classList.toggle('active',m==='createur');$('explanation').textContent=m==='charge'?'Responsable désigné sur le ticket, y compris pour les anciens dossiers.':'Personne réellement connectée lors de la création ; les anciens tickets peuvent être non identifiés.';load()}async function load(){const b=$('refresh');b.disabled=true;$('error').textContent='';const q=new URLSearchParams({mode});if($('start').value)q.set('date_debut',$('start').value);if($('end').value)q.set('date_fin',$('end').value);if($('module').value)q.set('module',$('module').value);try{const r=await fetch('/api/reporting/utilisateurs?'+q,{cache:'no-store'});const d=await r.json();if(!r.ok)throw Error(d.error||'Chargement impossible');$('total').textContent=d.total;$('persons').textContent=d.personnes;$('missing').textContent=d.sans_identite;const sel=$('module'),old=sel.value;sel.replaceChildren(new Option('Tous les types',''));for(const type of d.modules||[])sel.add(new Option(type,type));sel.value=old;$('rows').innerHTML=(d.rows||[]).map(x=>'<tr><td><b>'+esc(x.nom)+'</b></td><td>'+x.total+'</td><td>'+x.termines+'</td><td>'+x.en_cours+'</td><td class="type">'+Object.entries(x.par_type||{}).sort((a,b)=>b[1]-a[1]).map(([k,n])=>esc(k)+' : <b>'+n+'</b>').join(' · ')+'</td></tr>').join('')||'<tr><td colspan="5">Aucun ticket.</td></tr>'}catch(e){$('error').textContent=e.message;$('rows').innerHTML=''}finally{b.disabled=false}}$('chargeTab').onclick=()=>selectMode('charge');$('createurTab').onclick=()=>selectMode('createur');$('refresh').onclick=load;load();</script></body></html>"""
+    resp=app.make_response(page)
+    resp.headers['Cache-Control']='no-store'
+    return resp
+
+
 @app.route('/reporting')
 def reporting_page():
     page = """<!doctype html>
@@ -14543,11 +14607,12 @@ def reporting_page():
 .rule{margin-top:18px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 16px;color:var(--muted);font-size:12px;line-height:1.45}
 @media(max-width:900px){.grid{grid-template-columns:1fr}.hero{align-items:flex-start;flex-direction:column}.wrap{padding:12px}}
 </style></head><body><div class="wrap">
-<header class="hero"><div><h1>REPORTING</h1><p>Indicateurs de suivi opérationnel ESI TICKETS</p></div><a class="back" href="/gestionnaire?pwd=esi2026">← Retour gestion</a></header>
+<header class="hero"><div><h1>REPORTING</h1><p>Indicateurs de suivi opérationnel ESI TICKETS</p></div><a class="back" href="/administrateur">← Retour administration</a></header>
 <section class="section"><h2>Reportings disponibles</h2><div class="grid">
 <article class="card active"><div class="eyebrow">Disponible</div><h3>ALLER VOIR</h3><p>Mesure le délai entre la date du RDV et le premier passage du ticket au statut « Terminé ».</p><div class="meta">Calcul en jours ouvrés · samedi et dimanche exclus</div><div class="actions"><a class="btn" href="/reporting/aller-voir">Ouvrir le reporting</a></div></article>
 <article class="card active"><div class="eyebrow">Disponible</div><h3>DEVIS</h3><p>Compare le délai accordé entre la demande et la date de rendu demandée avec le délai réel jusqu’au passage au statut « Terminé ».</p><div class="meta">Calcul en jours ouvrés · samedi et dimanche exclus</div><div class="actions"><a class="btn" href="/reporting/devis">Ouvrir le reporting</a></div></article>
 <article class="card active"><div class="eyebrow">Disponible</div><h3>CAISSE</h3><p>Suivi des Packings, prix d’achat, prix de cession et marge.</p><div class="meta">Tickets annulés exclus · marge calculée sur le prix d’achat</div><div class="actions"><a class="btn" href="/reporting/caisse">Ouvrir le reporting</a></div></article>
+<article class="card active"><div class="eyebrow">Disponible</div><h3>UTILISATEURS</h3><p>Activité par créateur connecté ou chargé de projet, y compris les anciens tickets.</p><div class="meta">Tickets annulés exclus · filtres par période et type</div><div class="actions"><a class="btn" href="/reporting/utilisateurs">Ouvrir le reporting</a></div></article>
 <article class="card future"><div class="eyebrow">À construire</div><h3>RECEPTION</h3><p>Suivi des réceptions, délais, volumes et activité par période.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
 <article class="card future"><div class="eyebrow">À construire</div><h3>EXPEDITION</h3><p>Suivi des enlèvements et expéditions ainsi que de leurs délais de traitement.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
 <article class="card future"><div class="eyebrow">À construire</div><h3>COLISAGE</h3><p>Suivi des opérations de mise en caisse et de la composition des Packings.</p><div class="actions"><span class="soon">Prochainement</span></div></article>
