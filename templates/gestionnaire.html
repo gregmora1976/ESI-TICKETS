@@ -73,6 +73,21 @@
 .esi-chat-file{max-width:200px;font-size:12px}.esi-chat-send{background:#0284c7;color:white;border:0;padding:10px 15px;border-radius:10px;font-weight:700;cursor:pointer}
 .esi-chat-counter{display:inline-block;background:#dc2626;color:white;border-radius:99px;font-size:11px;padding:2px 7px;margin-left:4px}
 
+
+/* Harmonisation visuelle avec la page DEMANDEUR */
+body{font-family:Arial,Helvetica,sans-serif!important;background:linear-gradient(180deg,#e0f2fe 0%,#f1f5f9 220px)!important;color:#1e293b}
+.wrap{max-width:1400px;margin:0 auto;padding:32px 18px 60px}
+.hero{background:#fff;border:1px solid #e2e8f0;border-radius:30px;box-shadow:0 8px 30px rgba(15,23,42,.06);overflow:hidden}
+.hero-top{display:flex;align-items:center;gap:16px;padding:22px 24px;border-bottom:1px solid #e2e8f0;background:#fff;color:#1e293b}
+.hero-top .logo-big{width:98px;height:70px;flex:0 0 auto;object-fit:contain;object-position:center;display:block}
+.hero-top .eyebrow{color:#0284c7;font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.hero-top h1{font-size:34px;color:#1e293b;margin:0}
+.hero-top .sub{margin-top:8px;color:#64748b;font-size:15px}
+.content{padding:24px}
+.card{border-radius:26px;border-color:#e2e8f0}
+.section-title{color:#0284c7}
+.input,.search,.textarea{background:#eaf6ff;border-radius:16px}
+@media(max-width:720px){.wrap{padding:12px}.hero-top{padding:18px}.hero-top h1{font-size:28px}.content{padding:18px}}
 </style>
 
 </head>
@@ -81,7 +96,7 @@
 <div class="wrap">
   <div class="hero">
     <div class="hero-top">
-      <img class="logo-big" src="{{ url_for('static', filename='logo.jpg') }}" onerror="this.style.display='none'">
+      <img class="logo-big" src="/static/logo.png" alt="Logo ESI">
       <div>
         <div class="eyebrow">ESI Tickets</div>
         <h1>GESTION TICKETS</h1>
