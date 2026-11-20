@@ -5898,7 +5898,7 @@ def api_articles_sync_packings():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
-def supabase_rest_request(method, table, query='', payload=None, prefer=None):
+def supabase_rest_request(method, table, query='', payload=None, prefer=None, timeout=60):
     """Appelle l'API REST Supabase Database sans dépendre du SDK Python."""
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError("Variables SUPABASE_URL ou SUPABASE_SERVICE_KEY manquantes")
@@ -5923,7 +5923,7 @@ def supabase_rest_request(method, table, query='', payload=None, prefer=None):
 
     req = urllib.request.Request(url, data=data, method=method.upper(), headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8", errors="replace")
             if not body:
                 return None
@@ -8996,9 +8996,9 @@ def _cleaner_q(value):
 def _cleaner_db_state():
     """Vérifie si la migration Supabase CLEANER V3 a été appliquée."""
     try:
-        supabase_rest_request('GET', 'cleaner_profiles', 'select=id&limit=1')
-        supabase_rest_request('GET', 'cleaner_fields', 'select=id&limit=1')
-        supabase_rest_request('GET', 'cleaner_rules', 'select=id&limit=1')
+        supabase_rest_request('GET', 'cleaner_profiles', 'select=id&limit=1', timeout=3)
+        supabase_rest_request('GET', 'cleaner_fields', 'select=id&limit=1', timeout=3)
+        supabase_rest_request('GET', 'cleaner_rules', 'select=id&limit=1', timeout=3)
         return True, ''
     except Exception as e:
         return False, str(e)
@@ -9008,7 +9008,7 @@ def _cleaner_get_profiles(mode):
     safe_mode = _cleaner_q(mode)
     return supabase_rest_request(
         'GET', 'cleaner_profiles',
-        f'select=*&mode=eq.{safe_mode}&active=eq.true&order=updated_at.desc&limit=500'
+        f'select=*&mode=eq.{safe_mode}&active=eq.true&order=updated_at.desc&limit=500', timeout=3
     ) or []
 
 
@@ -9016,7 +9016,7 @@ def _cleaner_get_fields(mode):
     safe_mode = _cleaner_q(mode)
     return supabase_rest_request(
         'GET', 'cleaner_fields',
-        f'select=*&mode=eq.{safe_mode}&active=eq.true&order=position.asc,created_at.asc&limit=500'
+        f'select=*&mode=eq.{safe_mode}&active=eq.true&order=position.asc,created_at.asc&limit=500', timeout=3
     ) or []
 
 
@@ -9024,7 +9024,7 @@ def _cleaner_get_rules(mode):
     safe_mode = _cleaner_q(mode)
     return supabase_rest_request(
         'GET', 'cleaner_rules',
-        f'select=*&mode=eq.{safe_mode}&active=eq.true&order=validated_count.desc,updated_at.desc&limit=2000'
+        f'select=*&mode=eq.{safe_mode}&active=eq.true&order=validated_count.desc,updated_at.desc&limit=2000', timeout=3
     ) or []
 
 

@@ -681,14 +681,14 @@ _ARTICLE_HEADER_ALIASES = {
     "reference": [
         "ref esi", "reference esi", "reference", "ref", "ref article",
         "inventory number", "inventory no", "object id", "item id", "accession number",
-        "numero inventaire", "n inventaire",
+        "numero inventaire", "n inventaire", "n caisse", "numero caisse",
     ],
-    "quantite": ["quantite", "qte", "qty", "quantity", "nombre", "nb"],
+    "quantite": ["quantite", "qte", "qty", "quantity", "nombre", "nb", "nb oeuvres"],
     "longueur_cm": [
-        "longueur cm", "longueur", "length cm", "lenght cm", "length", "lenght",
+        "longueur cm", "longueur", "l cm", "length cm", "lenght cm", "length", "lenght",
     ],
-    "largeur_cm": ["largeur cm", "largeur", "width cm", "width"],
-    "hauteur_cm": ["hauteur cm", "hauteur", "height cm", "height"],
+    "largeur_cm": ["largeur cm", "largeur", "l cm", "width cm", "width"],
+    "hauteur_cm": ["hauteur cm", "hauteur", "h cm", "height cm", "height"],
     "poids_kg": [
         "poids brut kg", "poids kg", "poids", "gross weight kg", "gross weight",
         "weight kg", "weight", "kg",
@@ -696,7 +696,7 @@ _ARTICLE_HEADER_ALIASES = {
 }
 
 _ARTICLE_DESIGNATION_TITLE_ALIASES = [
-    "title", "artwork title", "object title", "object name", "designation", "product title",
+    "title", "artwork title", "object title", "object name", "designation", "product title", "oeuvres",
 ]
 _ARTICLE_DESIGNATION_DESCRIPTION_ALIASES = [
     "description", "product description", "description du produit", "object description",
@@ -851,12 +851,22 @@ def _detect_article_header_row(ws, aliases_map: Dict[str, List[str]], merged_loo
                 continue
 
             field, score = _article_header_match(txt, aliases_map)
+            # French packing lists use L (cm) and l (cm), distinct only by case.
+            # _norm() deliberately casefolds, so resolve these two headers before matching.
+            if txt.strip() in ('Nb œuvres', 'Nb oeuvres'):
+                field, score = 'quantite', 125
+            elif txt.strip() in ('L (cm)', 'L(cm)'):
+                field, score = 'longueur_cm', 125
+            elif txt.strip() in ('l (cm)', 'l(cm)'):
+                field, score = 'largeur_cm', 125
             if field and score > mapping_scores.get(field, -1):
                 mapping[field] = col_no
                 mapping_scores[field] = score
                 header_values[field] = txt
 
             aux_field, aux_score = _article_aux_header_match(txt)
+            if txt.strip().casefold() in ('œuvres', 'oeuvres'):
+                aux_field, aux_score = 'title_source', 125
             if aux_field and aux_score > aux_scores.get(aux_field, -1):
                 aux_mapping[aux_field] = col_no
                 aux_scores[aux_field] = aux_score
@@ -946,7 +956,10 @@ def extract_articles_xlsx(
     aliases_map = _article_aliases_from_rules(learned_rules, profile_key)
 
     try:
+        packing_summary = any(_norm(sheet.title) == 'synthese caisses' for sheet in wb.worksheets)
         for ws in wb.worksheets:
+            if packing_summary and _norm(ws.title) != 'synthese caisses':
+                continue
             merged_lookup = _merged_value_lookup(ws)
             detected = _detect_article_header_row(ws, aliases_map, merged_lookup)
             if not detected:
@@ -976,6 +989,10 @@ def extract_articles_xlsx(
 
                 reference = _article_number_text(cell("reference"))
                 designation = _text(cell("designation"))
+                if packing_summary and _norm(ws.title) == 'synthese caisses':
+                    # Do not treat totals, truck summaries or headings as crates.
+                    if not re.fullmatch(r'[A-Za-z]{1,3}\d{2,4}', reference):
+                        continue
 
                 # Ignore les lignes TOTAL / sous-totaux et les zones hors liste.
                 if _norm(reference) in {"total", "totaux"} or _norm(designation) in {"total", "totaux"}:
@@ -1039,6 +1056,14 @@ def extract_articles_xlsx(
                     "_profile_key": profile_key,
                 }
 
+                # Liste de caisses : la reference de la caisse devient le N° colis.
+                # Les informations additionnelles restent disponibles pour les champs
+                # personnalises sans ecraser les donnees d'autres types de documents.
+                if _norm(header_values.get('reference')) in {'n caisse', 'numero caisse'}:
+                    row['colis'] = reference
+                    row['observation'] = _text(_ws_value(ws, row_no, 15, merged_lookup)) if _norm(_ws_value(ws, header_row, 15, merged_lookup)) == 'remarques' else ''
+                    row['type_caisse'] = _text(_ws_value(ws, row_no, 6, merged_lookup)) if _norm(_ws_value(ws, header_row, 6, merged_lookup)) == 'type de caisse' else ''
+                    row['preteur'] = _text(_ws_value(ws, row_no, 3, merged_lookup)) if _norm(_ws_value(ws, header_row, 3, merged_lookup)) == 'preteur' else ''
                 # La designation peut venir de Title ou Description selon l'onglet.
                 if "designation" in header_values:
                     row["source_headers"]["designation"] = header_values["designation"]
