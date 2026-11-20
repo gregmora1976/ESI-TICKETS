@@ -9116,7 +9116,7 @@ def _cleaner_rule_upsert(mode, profile_key, target_field, source_alias='', sourc
 
 @app.route('/api/cleaner/config')
 def api_cleaner_config():
-    if request.args.get('pwd') != 'esi2026':
+    if not _cleaner_check_pwd():
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
     mode = _as_text(request.args.get('mode') or 'douanes').strip().lower()
     ready, error = _cleaner_db_state()
@@ -9155,7 +9155,7 @@ def api_cleaner_config():
 
 @app.route('/api/cleaner/fields/<mode>/<field_id>', methods=['DELETE'])
 def api_cleaner_delete_field(mode, field_id):
-    if request.args.get('pwd') != 'esi2026':
+    if not _cleaner_check_pwd():
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
     ready, error = _cleaner_db_state()
     if not ready:
@@ -9174,7 +9174,7 @@ def api_cleaner_delete_field(mode, field_id):
 @app.route('/api/cleaner/learn', methods=['POST'])
 def api_cleaner_learn():
     """Valide une extraction et mémorise uniquement des règles de structure, jamais des valeurs métier."""
-    if request.args.get('pwd') != 'esi2026':
+    if not _cleaner_check_pwd():
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
 
     ready, error = _cleaner_db_state()
@@ -9333,7 +9333,7 @@ def api_cleaner_learn():
 @app.route('/api/cleaner/analyse', methods=['POST'])
 def api_cleaner_analyse():
     """Analyse des documents depuis CLEANER, sans IA ni écriture métier automatique."""
-    if request.args.get('pwd') != 'esi2026':
+    if not _cleaner_check_pwd():
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
 
     mode = _as_text(request.form.get('mode')).strip().lower()
@@ -9564,6 +9564,11 @@ def api_cleaner_analyse():
 # CLEANER V3.3 - destinations métier après contrôle
 # -----------------------------------------------------------------------------
 def _cleaner_check_pwd():
+    # Authentification moderne : profil ADMIN requis, sans ancien mot de passe URL.
+    if os.getenv('ESI_AUTH_ENABLED', '0').strip() == '1':
+        user = getattr(g, 'esi_user', None)
+        return bool(user and user.get('profil') == 'ADMIN')
+    # Compatibilite avec le mode historique lorsque l'authentification est desactivee.
     return request.args.get('pwd') == 'esi2026'
 
 
@@ -10259,7 +10264,7 @@ def api_cleaner_create_enlevement():
 @app.route('/api/cleaner/export-excel', methods=['POST'])
 def api_cleaner_export_excel():
     """Exporte exactement le tableau contrôlé/modifié dans CLEANER."""
-    if request.args.get('pwd') != 'esi2026':
+    if not _cleaner_check_pwd():
         return jsonify({'ok': False, 'error': 'Accès refusé'}), 403
 
     data = request.get_json(silent=True) or {}
