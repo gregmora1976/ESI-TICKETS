@@ -122,7 +122,17 @@ def register_security(app, db_request, load_ticket):
                 return forbidden()
         if path.startswith('/api/reception/') and request.method not in ('GET','HEAD','OPTIONS') and role == 'DEMANDEUR':
             return forbidden()
-        if path.startswith('/api/catalogue-') and request.method not in ('GET','HEAD','OPTIONS') and role != 'ADMIN':
+        # Les exports PDF sont des operations en lecture seule bien qu'ils utilisent POST.
+        # Tous les profils connectes peuvent assembler les fiches ; les modifications
+        # des catalogues restent reservees au profil ADMIN.
+        catalogue_pdf_exports = (
+            '/api/catalogue-caisses/assembler',
+            '/api/catalogue-methodologies/assembler',
+        )
+        if (path.startswith('/api/catalogue-')
+                and request.method not in ('GET', 'HEAD', 'OPTIONS')
+                and role != 'ADMIN'
+                and not (request.method == 'POST' and path in catalogue_pdf_exports)):
             return forbidden()
         if path.startswith('/api/referentiels/') and request.method not in ('GET','HEAD','OPTIONS') and role != 'ADMIN':
             return forbidden()
