@@ -10412,7 +10412,20 @@ def api_ticket_chat_messages(ticket_id):
                 try: supabase_delete_object(storage_path)
                 except Exception: pass
             raise
-        return jsonify(rows[0] if rows else payload), 201
+        # Un nouvel échange rouvre uniquement un ticket terminé.
+        # PATCH ciblé : ne pas rejouer les opérations métier ni toucher aux fichiers.
+        result = dict(rows[0] if rows else payload)
+        try:
+            reopened = supabase_rest_request(
+                'PATCH', 'tickets',
+                f'id=eq.{encoded}&status=eq.{urllib.parse.quote("Terminé", safe="")}',
+                {'status': 'En cours'}, prefer='return=representation'
+            ) or []
+            result['ticket_reopened'] = bool(reopened)
+        except Exception as exc:
+            app.logger.exception('Message enregistré, réouverture impossible pour %s', ticket_id)
+            result['reopen_warning'] = 'Message enregistré, mais le ticket n’a pas pu être rouvert.'
+        return jsonify(result), 201
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
 
