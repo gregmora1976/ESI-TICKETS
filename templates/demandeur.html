@@ -1899,7 +1899,9 @@ async function renderDoneTickets(){
       tickets = tickets.filter(t => ticketSearchText(t).includes(search));
     }
 
-    tickets.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    // Priorité aux tickets en cours avec des échanges non lus, même anciens.
+    const chatPriority = t => t.status === 'En cours' && Boolean(esiChatBadge(t.id)) ? 1 : 0;
+    tickets.sort((a, b) => chatPriority(b) - chatPriority(a) || String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
 
     if(!search && !state.directTicketId){
       // Sans recherche, on garde une vue rapide des demandes les plus récentes.
@@ -2323,7 +2325,7 @@ async function esiChatSend(){
  localStorage.setItem('esi_chat_author',name);
  const fd=new FormData();fd.append('auteur',name);fd.append('message',txt);if(file)fd.append('file',file);
  btn.disabled=true;
- try{const r=await fetch(`/api/tickets/${encodeURIComponent(id)}/messages`,{method:'POST',body:fd});const data=await r.json();if(!r.ok)throw Error(data.error||'Envoi impossible');document.getElementById('esiChatText').value='';document.getElementById('esiChatFile').value='';await esiChatLoad(id);}
+ try{const r=await fetch(`/api/tickets/${encodeURIComponent(id)}/messages`,{method:'POST',body:fd});const data=await r.json();if(!r.ok)throw Error(data.error||'Envoi impossible');document.getElementById('esiChatText').value='';document.getElementById('esiChatFile').value='';await esiChatLoad(id);if(data.reopen_warning)showNotice(data.reopen_warning);await renderDoneTickets();}
  catch(e){document.getElementById('esiChatError').textContent=e.message;}
  finally{btn.disabled=false;}
 }

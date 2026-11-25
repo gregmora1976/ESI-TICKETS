@@ -317,7 +317,7 @@ async function esiChatSend(){
  localStorage.setItem('esi_chat_author',name);
  const fd=new FormData();fd.append('auteur',name);fd.append('message',txt);if(file)fd.append('file',file);
  btn.disabled=true;
- try{const r=await fetch(`/api/tickets/${encodeURIComponent(id)}/messages`,{method:'POST',body:fd});const data=await r.json();if(!r.ok)throw Error(data.error||'Envoi impossible');document.getElementById('esiChatText').value='';document.getElementById('esiChatFile').value='';await esiChatLoad(id);}
+ try{const r=await fetch(`/api/tickets/${encodeURIComponent(id)}/messages`,{method:'POST',body:fd});const data=await r.json();if(!r.ok)throw Error(data.error||'Envoi impossible');document.getElementById('esiChatText').value='';document.getElementById('esiChatFile').value='';await esiChatLoad(id);if(data.reopen_warning)showNotice(data.reopen_warning);if(!state.editMode)await refreshTickets();}
  catch(e){document.getElementById('esiChatError').textContent=e.message;}
  finally{btn.disabled=false;}
 }
@@ -514,6 +514,9 @@ function filteredTickets(){
   });
   const weight = {high:0, medium:1, normal:2};
   list.sort((a,b)=>{
+    const chatPriority = t => t.status === 'En cours' && Boolean(esiChatBadge(t.id)) ? 1 : 0;
+    const chatDiff = chatPriority(b) - chatPriority(a);
+    if(chatDiff) return chatDiff;
     const pa = weight[getPriorityLevel(a.dateEmballage)];
     const pb = weight[getPriorityLevel(b.dateEmballage)];
     if (pa !== pb) return pa - pb;
