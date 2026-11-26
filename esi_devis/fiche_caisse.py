@@ -74,10 +74,10 @@ def generate_pdf(data, result, info):
         txt(x+8,376,'BF : '+num(f['C39'])+' x '+num(f['E39'])+' cm',10)
     header(right,274,rw,'DONNÉES LOGISTIQUES')
     l,e,h=rows[-1][1]
-    for i,(label,v) in enumerate([('Poids estimatif',num(result['poids_caisse'])+' kg'),('Volume',num(l*e*h/1e6)+' m3'),('Surface au sol',num(l*e/1e4)+' m2'),('Marquage',val('marquage','Français'))]):field(right+7,309+i*18,label,v,rw-14)
+    for i,(label,v) in enumerate([('Poids estimatif',num(result['poids_caisse'])+' kg'),('Volume',num(l*e*h/1e6)+' m3'),('Surface au sol',num(l*e/1e4)+' m2'),('Marquage','Français')]):field(right+7,309+i*18,label,v,rw-14)
     # Historical identification block at bottom of the technical sheet.
     header(x,410,W-40,'IDENTIFICATION DU DOSSIER')
-    for i,(label,v) in enumerate([('Dossier',val('dossier',data.get('dossier',''))),('N° caisse',val('numero')),('Exposition',val('exposition')),('Prêteur',val('preteur')),('Ville d’arrivée',val('ville')),('Formation caisse',val('formation')),('Chargé de projet',val('charge'))]):
+    for i,(label,v) in enumerate([('Dossier',val('dossier',data.get('dossier',''))),('N° caisse',val('numero')),('Exposition',val('exposition')),('Prêteur',val('preteur')),('Chargé de projet',val('charge'))]):
         col=i%3; row=i//3; field(x+8+col*267,445+row*16,label,v,250)
     txt(x+8,493,'Observations fabrication : '+val('observations'),9,maxw=W-56)
     header(x,504,W-40,'RÉSERVÉ À LA SOCIÉTÉ ESI - CONTRÔLE QUALITÉ')
