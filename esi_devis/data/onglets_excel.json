@@ -1,0 +1,140 @@
+[
+  {
+    "nom": "T1",
+    "etat": "visible",
+    "couleur": "#00B0F0",
+    "categorie": "Caisses Tableaux"
+  },
+  {
+    "nom": "T1-T6",
+    "etat": "visible",
+    "couleur": "#00B0F0",
+    "categorie": "Caisses Tableaux"
+  },
+  {
+    "nom": "T1-T6 + Caissons",
+    "etat": "visible",
+    "couleur": "#00B0F0",
+    "categorie": "Caisses Tableaux"
+  },
+  {
+    "nom": "T1-T3 MRT",
+    "etat": "visible",
+    "couleur": "#00B0F0",
+    "categorie": "Caisses Tableaux"
+  },
+  {
+    "nom": "MRT",
+    "etat": "visible",
+    "couleur": "#00B0F0",
+    "categorie": "Caisses Tableaux"
+  },
+  {
+    "nom": "T1 LOUVRE",
+    "etat": "visible",
+    "couleur": "#00B0F0",
+    "categorie": "Caisses Tableaux"
+  },
+  {
+    "nom": "T1-T6 LOUVRE",
+    "etat": "visible",
+    "couleur": "#00B0F0",
+    "categorie": "Caisses Tableaux"
+  },
+  {
+    "nom": "T à Glissières",
+    "etat": "visible",
+    "couleur": "#00B0F0",
+    "categorie": "Caisses Tableaux"
+  },
+  {
+    "nom": "T Séparations mousse",
+    "etat": "visible",
+    "couleur": "#00B0F0",
+    "categorie": "Caisses Tableaux"
+  },
+  {
+    "nom": "Caisson Tableaux",
+    "etat": "visible",
+    "couleur": "#FFC000",
+    "categorie": "Caissons / Wrapp"
+  },
+  {
+    "nom": "Objet 1",
+    "etat": "visible",
+    "couleur": "#92D050",
+    "categorie": "Caisses Objets"
+  },
+  {
+    "nom": "Objet 2 à 6",
+    "etat": "visible",
+    "couleur": "#92D050",
+    "categorie": "Caisses Objets"
+  },
+  {
+    "nom": "Caisse à Plateau",
+    "etat": "visible",
+    "couleur": "#92D050",
+    "categorie": "Caisses Objets"
+  },
+  {
+    "nom": "Palette",
+    "etat": "visible",
+    "couleur": "#92D050",
+    "categorie": "Caisses Objets"
+  },
+  {
+    "nom": "Caisse Cuvette",
+    "etat": "visible",
+    "couleur": "#92D050",
+    "categorie": "Caisses Objets"
+  },
+  {
+    "nom": "Tapisserie",
+    "etat": "visible",
+    "couleur": "#92D050",
+    "categorie": "Caisses Objets"
+  },
+  {
+    "nom": "Claire-Voie",
+    "etat": "visible",
+    "couleur": "#92D050",
+    "categorie": "Caisses Objets"
+  },
+  {
+    "nom": "1 Caisson Objet",
+    "etat": "visible",
+    "couleur": "#FFC000",
+    "categorie": "Caissons / Wrapp"
+  },
+  {
+    "nom": "6 Caissons Objets",
+    "etat": "visible",
+    "couleur": "#FFC000",
+    "categorie": "Caissons / Wrapp"
+  },
+  {
+    "nom": "Wrapp",
+    "etat": "visible",
+    "couleur": "#FFC000",
+    "categorie": "Caissons / Wrapp"
+  },
+  {
+    "nom": "Vente de Matière",
+    "etat": "visible",
+    "couleur": "#FF0000",
+    "categorie": "Vente de Matière"
+  },
+  {
+    "nom": "Prix Matiere",
+    "etat": "visible",
+    "couleur": "#D9D9D9",
+    "categorie": "Paramètres / Infos"
+  },
+  {
+    "nom": "Infos Clients",
+    "etat": "hidden",
+    "couleur": "#D9D9D9",
+    "categorie": "Paramètres / Infos"
+  }
+]

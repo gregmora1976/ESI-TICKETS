@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ESI Chiffrage - Matrice</title>
+  <style>
+    :root{--bg:#f1f5f9;--panel:#fff;--text:#1e293b;--muted:#64748b;--line:#e2e8f0;--blue:#0ea5e9;--blue-dark:#0284c7;--green:#92D050;--orange:#FFC000;--tab-blue:#00B0F0;--red:#FF0000;--success-bg:#dcfce7;--success:#15803d;--sky-bg:#e0f2fe;--sky:#0369a1;--amber-bg:#fef3c7;--amber:#b45309}
+    *{box-sizing:border-box} body{margin:0;font-family:Arial,Helvetica,sans-serif;background:linear-gradient(180deg,#e0f2fe 0%, #f1f5f9 220px);color:var(--text)}
+    .wrap{max-width:1400px;margin:0 auto;padding:32px 18px 60px}.hero{background:#fff;border:1px solid var(--line);border-radius:30px;box-shadow:0 8px 30px rgba(15,23,42,.06);overflow:hidden}
+    .hero-top{display:flex;align-items:center;gap:18px;padding:22px 24px;border-bottom:1px solid var(--line)}.logo{width:110px;height:72px;flex:0 0 auto;display:block;overflow:visible}.eyebrow{color:var(--blue-dark);font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}h1,h2,h3,p{margin:0}h1{font-size:34px}.sub{margin-top:8px;color:var(--muted);font-size:15px}
+    .content{padding:24px;display:grid;gap:22px}.card{background:#fff;border:1px solid var(--line);border-radius:26px;padding:22px}.section-title{color:var(--blue-dark);font-size:14px;font-weight:700;margin-bottom:14px}.top-actions{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.tabs{display:flex;gap:10px;flex-wrap:wrap}.tab{border:1px solid var(--line);background:#fff;border-radius:16px;padding:12px 16px;font-weight:700;font-size:14px;cursor:pointer}.tab.active{background:var(--blue);border-color:var(--blue);color:#fff}.btn{border:none;border-radius:16px;padding:13px 18px;font-size:14px;font-weight:700;cursor:pointer}.btn.primary{background:var(--blue);color:#fff}.btn.secondary{background:#fff;border:1px solid var(--line);color:var(--text)}.btn.dark{background:#0f172a;color:#fff}.layout{display:grid;grid-template-columns:.8fr 1.2fr;gap:22px}.home-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.category-card{border:1px solid var(--line);border-radius:24px;padding:16px;background:#f8fafc}.category-head{font-weight:900;margin-bottom:12px}.sheet-btn{width:100%;border:1px solid #bae6fd;background:#e0f2fe;border-radius:16px;padding:12px 14px;text-align:left;font-weight:800;margin:6px 0;cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center;color:var(--text);transition:.18s}.sheet-btn:hover{border-color:#7dd3fc;background:#bae6fd}.sheet-btn:focus-visible{outline:3px solid rgba(14,165,233,.22);border-color:var(--blue)}.badge{display:inline-block;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800}.badge.ok{background:var(--success-bg);color:var(--success)}.badge.todo{background:var(--amber-bg);color:var(--amber)}.expert-list{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.expert-item{border:1px solid var(--line);background:#fff;border-radius:14px;padding:11px;font-weight:800;cursor:pointer}.form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.field{display:grid;gap:8px}.field label{font-size:14px;font-weight:700;color:#475569}.input,.select{width:100%;border:1px solid var(--line);background:#f8fafc;border-radius:16px;padding:13px 14px;font-size:14px;color:var(--text)}.sheet-banner{border-radius:24px;padding:16px 18px;margin-bottom:18px;font-size:24px;font-weight:900;display:flex;justify-content:space-between;gap:12px;align-items:center}.result-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.result-box{background:#f8fafc;border:1px solid var(--line);border-radius:16px;padding:12px}.result-label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;font-weight:900;margin-bottom:5px}.result-value{font-size:22px;color:#0f172a;font-weight:900}.technical-notice{margin-top:18px;border:1px solid var(--line);border-radius:20px;background:#f8fafc;overflow:hidden}.technical-notice-head{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);font-weight:900;color:var(--blue-dark)}.technical-notice-title{font-size:14px}.technical-notice-preview{display:block;width:100%;height:auto;background:#fff}.technical-notice-actions{display:flex;gap:10px;align-items:center;justify-content:flex-end;padding:12px 14px;border-top:1px solid var(--line);background:#fff}.technical-notice-actions a{text-decoration:none}.technical-notice-empty{margin-top:18px;border:1px dashed var(--line);border-radius:18px;padding:14px;color:var(--muted);font-size:13px;background:#f8fafc}.notice{position:fixed;right:18px;bottom:18px;background:#0f172a;color:#fff;padding:14px 16px;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.2);opacity:0;transform:translateY(10px);transition:.2s;pointer-events:none;max-width:420px}.notice.show{opacity:1;transform:translateY(0)}.hidden{display:none !important}.muted{color:var(--muted);font-size:13px}.oeuvre{border:1px solid var(--line);border-radius:18px;padding:14px;background:#f8fafc;margin-bottom:10px}.glissieres-table{display:grid;gap:8px}.glissieres-row{display:grid;grid-template-columns:42px repeat(4,minmax(90px,1fr));gap:8px;align-items:end}.glissieres-row.sep-row{grid-template-columns:42px repeat(3,minmax(90px,1fr))}.glissieres-head{font-size:12px;font-weight:900;color:#475569;text-transform:uppercase;letter-spacing:.04em}.glissieres-row .input{padding:10px 12px;border-radius:12px}.glissieres-num{font-weight:900;color:#0f172a;padding-bottom:11px}.actions{display:flex;gap:12px;justify-content:flex-end;flex-wrap:wrap}.pill{border-radius:999px;background:#f1f5f9;border:1px solid var(--line);padding:7px 12px;font-size:12px;font-weight:800;color:#475569}.modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.58);display:none;align-items:center;justify-content:center;padding:18px;z-index:60}.modal-backdrop.show{display:flex}.modal-card{background:#fff;border:1px solid var(--line);border-radius:30px;box-shadow:0 25px 80px rgba(0,0,0,.28);width:min(1180px,100%);max-height:92vh;overflow:auto}.modal-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding:22px 24px;border-bottom:1px solid var(--line)}.modal-title{font-size:28px;font-weight:900;color:#0f172a}.modal-body{padding:22px 24px;display:grid;grid-template-columns:1.05fr .95fr;gap:22px}.modal-close{border:none;background:#f1f5f9;color:#0f172a;border-radius:14px;padding:10px 14px;font-weight:900;cursor:pointer}.modal-card .card{box-shadow:none}.modal-sub{color:var(--muted);font-size:13px;margin-top:6px}.home-intro{border:1px dashed var(--line);background:#f8fafc;border-radius:22px;padding:18px;color:var(--muted);font-weight:700}
+.library-modal-card{width:min(1280px,100%)}.library-toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px}.library-search{max-width:520px}.library-table{width:100%;border-collapse:separate;border-spacing:0;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:#fff}.library-table th,.library-table td{padding:11px 12px;border-bottom:1px solid var(--line);font-size:13px;text-align:left;vertical-align:middle}.library-table th{background:#f8fafc;color:#475569;text-transform:uppercase;font-size:11px;letter-spacing:.05em}.library-table tr:last-child td{border-bottom:none}.library-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}.btn.small{padding:9px 11px;border-radius:12px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center}.btn.danger{background:#fff;border:1px solid #fecaca;color:#b91c1c}.library-preview-box{margin-top:16px;border:1px solid var(--line);border-radius:20px;overflow:hidden;background:#fff}.library-preview-head{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);font-weight:900;color:var(--blue-dark)}.library-preview-frame{width:100%;height:560px;border:0;background:#fff}.deco-prices{margin-top:18px;border:1px solid #fde68a;background:#fffbeb;border-radius:18px;padding:14px}.deco-prices-title{font-weight:900;margin-bottom:12px}.deco-detail{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}.deco-detail-row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;font-size:13px}.deco-detail-row strong{color:#0f172a}.deco-result-empty{background:#f8fafc;border-radius:16px;padding:24px 16px;text-align:center;color:var(--muted);font-size:14px}.deco-prices-title{font-size:18px;font-weight:900;color:#0f172a;margin-bottom:14px}
+        @media(max-width:1100px){.layout,.home-grid,.modal-body{grid-template-columns:1fr}.expert-list{grid-template-columns:repeat(2,1fr)}}@media(max-width:720px){h1{font-size:28px}.hero-top,.content,.card{padding:18px}.form-grid,.grid2,.result-grid,.expert-list{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<div class="wrap"><div class="hero">
+  <div class="hero-top">
+    <img class="logo" src="/devis-caisses/logo.png" alt="ESI">
+    <div><div class="eyebrow">ESI Chiffrage</div><h1>MATRICE DE CHIFFRAGE</h1><div class="sub">Même logique que la matrice Excel, avec moteur Python.</div></div>
+  </div>
+  <div class="content">
+    <div class="card top-actions">
+      <div><div class="section-title" style="margin-bottom:6px">Navigation</div><div class="tabs"><button class="tab active" id="btnHome">Accueil classique</button><button class="tab" id="btnExpert">EXPERT - tous les onglets</button></div></div>
+      <div class="actions"><a class="btn secondary" href="/demandeur">RETOUR</a><a class="btn dark" href="/devis-caisses/admin" style="text-decoration:none">ADMIN</a><button class="btn secondary" id="btnLibrary">Bibliothèque des notices</button><button class="btn secondary" id="btnRefresh">Réinitialiser</button></div>
+    </div>
+    <div id="home" class="card"><div class="section-title">Types de caisses classiques</div><div class="home-grid" id="homeGrid"></div></div>
+    <div id="expert" class="card hidden"><div class="section-title">Mode EXPERT - tous les onglets Excel</div><div class="expert-list" id="expertList"></div></div>
+    <div class="home-intro">Clique sur un type de caisse pour ouvrir sa fenêtre de chiffrage. Les résultats apparaissent dans la même fenêtre.</div>
+  </div>
+</div></div><div class="modal-backdrop" id="calcModal" aria-hidden="true"><div class="modal-card" role="dialog" aria-modal="true"><div class="modal-head"><div><div class="section-title" style="margin-bottom:6px">Matrice de chiffrage</div><div class="modal-title" id="modalTitle">Type de caisse</div><div class="modal-sub" id="modalSub">Calcul Python basé sur l'onglet Excel.</div></div><button class="modal-close" id="modalClose" type="button">Fermer ×</button></div><div class="modal-body"><div class="card"><div id="formArea"><div class="section-title">Sélectionne un type de caisse</div></div></div><div class="card"><div class="section-title">Résultat chiffrage</div><div id="resultArea"><div class="muted">Aucun calcul lancé.</div></div></div></div></div></div><div class="modal-backdrop" id="libraryModal" aria-hidden="true"><div class="modal-card library-modal-card" role="dialog" aria-modal="true"><div class="modal-head"><div><div class="section-title" style="margin-bottom:6px">Base documentaire</div><div class="modal-title">Bibliothèque des notices</div><div class="modal-sub">Notices associées aux combinaisons type de caisse + isolant + calage.</div></div><button class="modal-close" id="libraryClose" type="button">Fermer ×</button></div><div class="content"><div class="card"><div class="library-toolbar"><input class="input library-search" id="librarySearch" placeholder="Rechercher type, isolant, calage ou titre"><button class="btn secondary" id="libraryReload">Actualiser</button></div><div id="libraryList"><div class="muted">Chargement...</div></div><div id="libraryPreview" class="hidden"></div></div></div></div></div><div class="notice" id="notice"></div>
+<script>
+const state={config:null,current:null,options:{},lastData:null,lastResult:null,currentNotice:null,interfaceMode:'classic'};const $=id=>document.getElementById(id);function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}function notice(msg){const n=$('notice');n.textContent=msg;n.classList.add('show');clearTimeout(notice.t);notice.t=setTimeout(()=>n.classList.remove('show'),2600);}function ongletMeta(name){return (state.config.onglets||[]).find(o=>o.nom===name)||{nom:name,couleur:'#e2e8f0',categorie:''};}function isMigre(name){return (state.config.migres||[]).includes(name);}function euro(v){if(v===null||v===undefined||v==='')return '-';const n=Number(v);return Number.isFinite(n)?(state.current==='Caisse déco'?Math.ceil(n).toLocaleString('fr-FR',{maximumFractionDigits:0}):n.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2}))+' €':esc(v);}function num(v,unit=''){if(v===null||v===undefined||v==='')return '-';const n=Number(v);return Number.isFinite(n)?Math.ceil(n).toLocaleString('fr-FR',{maximumFractionDigits:0})+unit:esc(v);}function activate(tab){state.interfaceMode=tab==='expert'?'expert':'classic';$('home').classList.toggle('hidden',tab!=='home');$('expert').classList.toggle('hidden',tab!=='expert');$('btnHome').classList.toggle('active',tab==='home');$('btnExpert').classList.toggle('active',tab==='expert');}
+async function init(){const res=await fetch('/devis-caisses/api/config');state.config=await res.json();state.options=state.config.options||{};renderHome();renderExpert();}
+function renderHome(){const grid=$('homeGrid');grid.innerHTML='';const colors={Tableaux:'#00B0F0',Objets:'#92D050','Caissons / Wrapp':'#F97316','Caisse déco':'#FFD700'};for(const [cat,allNames] of Object.entries(state.config.classiques)){const names=allNames.filter(n=>CLASSIC_SHEETS.has(n)||n==='Caisse déco');if(!names.length)continue;const div=document.createElement('div');div.className='category-card';div.innerHTML=`<div class="category-head" style="color:#0f172a"><span class="pill" style="background:${colors[cat]||'#e2e8f0'}">${esc(cat)}</span></div>`;names.forEach(name=>{const b=document.createElement('button');b.className='sheet-btn';b.innerHTML=`<span>${esc(name)}</span><span class="badge ${isMigre(name)?'ok':'todo'}">${isMigre(name)?'Actif':'À intégrer'}</span>`;b.onclick=()=>{state.interfaceMode='classic';openSheet(name);};div.appendChild(b);});grid.appendChild(div);}}
+function renderExpert(){const list=$('expertList');list.innerHTML='';(state.config.onglets||[]).forEach(o=>{const b=document.createElement('button');b.className='expert-item';b.style.borderLeft=`8px solid ${o.couleur||'#e2e8f0'}`;b.innerHTML=`${esc(o.nom)}<br><span class="muted">${esc(o.categorie||'')}</span>`;b.onclick=()=>{state.interfaceMode='expert';openSheet(o.nom);};list.appendChild(b);});}
+function showModal(){const m=$('calcModal');m.classList.add('show');m.setAttribute('aria-hidden','false');}
+function closeModal(){const m=$('calcModal');m.classList.remove('show');m.setAttribute('aria-hidden','true');}
+function openSheet(name){state.current=name;state.lastData=null;state.lastResult=null;state.currentNotice=null;const meta=ongletMeta(name);$('modalTitle').textContent=name;$('modalSub').textContent=isMigre(name)?'Fenêtre de chiffrage - calcul actif':'Onglet conservé - intégration à venir';$('resultArea').innerHTML='<div class="muted">Aucun calcul lancé.</div>';showModal();if(!isMigre(name)){$('formArea').innerHTML=`<div class="sheet-banner" style="background:${meta.couleur||'#e2e8f0'}"><span>${esc(name)}</span><span class="badge todo">À intégrer</span></div><p class="muted">Cet onglet conserve son nom Excel et sera intégré lors d'une prochaine étape.</p>`;return;}if(name==='T1')renderT1();else if(name==='T1-T6')renderT1T6();else if(name==='MRT')renderMRT();else if(name==='T1-T3 MRT')renderT1T3MRT();else if(name==='T à Glissières')renderTGlissieres();else if(name==='T Séparations mousse')renderTSeparationsMousse();else if(name==='Objet 1')renderObjet1();else if(name==='Objet 2 à 6')renderObjet2A6();else if(name==='Caisse déco')renderCaisseDeco();else render2026(name);simplifyClassic(name);}
+// Mode Classique : presentation et valeurs imposees uniquement. Le mode Expert reste intact.
+const CLASSIC_SHEETS=new Set(['T1','T1-T6','MRT','Objet 1','T à Glissières','Tapisserie','Wrapp','1 Caisson Objet','Caisson Tableaux']);
+const classicObjectLabels=[['Aucun','Aucun'],['Mousse au carré','Mousse au Carré 50 mm'],['Écrin','Ecrin horizontal'],['Bancs','Guillotines horizontales']];
+function classicHide(id,value){
+ let el=$(id);
+ if(!el){el=document.createElement('input');el.type='hidden';el.id=id;$('formArea').appendChild(el);}
+ if(value!==undefined){const wanted=String(value);if(el.tagName==='SELECT'){
+   const option=Array.from(el.options).find(o=>normChoice(o.value)===normChoice(wanted));
+   if(!option)throw Error('Option classique absente : '+id+' / '+wanted);
+   el.value=option.value;
+ }else el.value=wanted;}
+ const wrapper=el.closest('.field');if(wrapper)wrapper.classList.add('hidden');
+ return el;
+}
+function classicChoices(id,choices,label){
+ const el=$(id),old=el.value;const available=Array.from(el.options).map(o=>o.value);
+ el.innerHTML=choices.map(([text,v])=>{const exact=available.find(x=>normChoice(x)===normChoice(v));if(exact===undefined)throw Error('Option classique absente : '+id+' / '+v);return `<option value="${esc(exact)}">${esc(text)}</option>`;}).join('');
+ if(Array.from(el.options).some(o=>o.value===old))el.value=old;
+ if(label)el.closest('.field').querySelector('label').textContent=label;
+ return el;
+}
+function classicKeep(ids){const allowed=new Set(ids);$('formArea').querySelectorAll('.field').forEach(w=>{const el=w.querySelector('input,select,textarea');if(el&&!allowed.has(el.id))w.classList.add('hidden');});}
+function classicClient(){
+ const old=$('demandeur'),dossier=$('dossier');if(!old||!dossier)return;
+ old.id='client';old.closest('.field').querySelector('label').textContent='Client';
+ const header=document.createElement('div');header.className='grid2';header.style.marginBottom='14px';header.append(old.closest('.field'),dossier.closest('.field'));$('formArea').querySelector('.sheet-banner').after(header);
+}
+function simplifyClassic(name){
+ if(state.interfaceMode!=='classic'||!CLASSIC_SHEETS.has(name)||name==='T1-T6')return;
+ classicClient();
+ const base=['client','dossier','longueur_cm','hauteur_cm'];
+ const finish=['type_isolant','fermeture','peinture'];
+ const fixed={type_contreplaque:'Peuplier 15 mm',barres:'Pin raboté 4 faces',poignees:'Bois',garnissage:'Oui'};
+ const setFixed=values=>Object.entries(values).forEach(([id,v])=>classicHide(id,v));
+ if(name==='T1'){
+   setFixed({...fixed,skis:'Skis',type_calage:'Bandes de mousse',option_calage:'Aucun',epaisseur_mousse:'PU 50 mm'});
+   classicKeep([...base,'epaisseur_cm',...finish,'tyvek']);
+ }else if(name==='Objet 1'){
+   setFixed({...fixed,skis:'10 dessous en skis',cuvette_au_dessus:'Non',option:'Aucun',nombre_cote_ouvrant:'GC + Couvercle',plateau_interieur:'Aucun',base:'Stratocell 50 mm',nombre_calages:'2',type_mousse:'PU',type_mousse_calage:'Stratocell 35 Kg'});
+   classicChoices('type_calage',classicObjectLabels,'Type de calage');
+   classicKeep([...base,'largeur_cm',...finish,'type_calage']);
+ }else if(name==='MRT'){
+   setFixed({mode_dimensions:"Dimensions de l'oeuvre",type_contreplaque:'Peuplier 15 mm',barres:'Pin raboté 4 faces',fermeture:'Vis bois',poignees:'Métal x 2 sur bouts',type_isolant:'Aucun',tyvek:'Non',face_mrt:'Mrt Ouvert',arriere_mrt:'Mrt Ouvert'});
+   const holder=document.createElement('div');holder.innerHTML=selectHtml('classic_mrt','MRT ouvert ou fermé',['Ouvert','Fermé'],'Ouvert');$('longueur_cm').closest('.form-grid').appendChild(holder.firstElementChild);
+   const sync=()=>{const v=$('classic_mrt').value==='Fermé'?'Mrt Fermé cp 10 mm':'Mrt Ouvert';classicHide('face_mrt',v);classicHide('arriere_mrt',v);};$('classic_mrt').addEventListener('change',sync);sync();
+   classicKeep([...base,'epaisseur_cm','classic_mrt']);
+ }else if(name==='T à Glissières'){
+   setFixed({...fixed,skis:'10 dessous en skis',epaisseur_mousse:'Mousse 30 mm',cuvette_au_dessus:'Non',tyvek:'Non'});
+   classicKeep(['client','dossier',...finish]);
+ }else{
+   const h=(cell,v)=>classicHide('x2026_'+cell,v);
+   const keep=cells=>classicKeep(['client','dossier',...cells.map(c=>'x2026_'+c)]);
+   if(name==='Tapisserie'){
+     h('C13','Peuplier 15 mm');h('C15','Pin raboté 4 faces');h('C21','Bois');h('F15','Oui');h('F21','10 dessous en skis');
+     h('D24','40');h('F24','40');h('C26','Guillotines ethafoam');h('F26','Non');
+     h('C31','');h('D31','');h('F31','15');h('C33','Aucun');h('F33','Non');
+     keep(['C17','C19','F19','C24']);
+   }else if(name==='Wrapp'){
+     const el=classicChoices('x2026_C23',[['Pas de calage','Aucun'],['Entourage mousse 50 mm','Mousse au Carré 50 mm']],'Type de calage');
+     // La reference de mousse doit correspondre a la variante 50 mm.
+     const sync=()=>h('E23',normChoice(el.value)==='aucun'?'PU 30 mm':'PU 50 mm');sync();el.addEventListener('change',sync);
+     keep(['C22','D22','E22','C23']);
+   }else if(name==='1 Caisson Objet'){
+     h('C13','Peuplier 15 mm');h('C15','Vis bois');h('C17','métal sur bouts');h('E25','Non');h('C24','Aucun');h('C25','Stratocell 50 mm');h('E24','Stratocell 35 Kg');h('C26','Cp 15 mm');
+     const el=classicChoices('x2026_C22',classicObjectLabels.map(([l,v])=>[l,v==='Mousse au Carré 50 mm'?'Entourage 50 mm ':v]),'Type de calage');
+     const sync=()=>h('E22',normChoice(el.value)==='guillotineshorizontales'?'2':'PU');sync();el.addEventListener('change',sync);
+     keep(['C21','D21','E21','C22']);
+   }else if(name==='Caisson Tableaux'){
+     h('C13','Peuplier 15 mm');h('C17','Vis bois');h('C19','Métal x 2 sur bouts');h('F15','Non');h('F13','Non');h('F14','PU 50 mm');h('B26','Bandes de mousse');h('H25','');h('I25','');h('J25','');h('H26','Aucun');
+     keep(['B25','C25','D25']);
+   }
+ }
+ // Ne laisser aucun bloc vide des formulaires generiques visibles.
+ $('formArea').querySelectorAll('.oeuvre').forEach(group=>{const fields=Array.from(group.querySelectorAll('.field'));if(fields.length&&fields.every(f=>f.classList.contains('hidden')))group.classList.add('hidden');});
+ $('formArea').querySelectorAll('.grid2,.form-grid').forEach(group=>{if(group.children.length===0||Array.from(group.children).every(x=>x.classList.contains('hidden')))group.classList.add('hidden');});
+}
+
+function render2026(name){
+ const groups=(state.config.formulaires_2026||{})[name]||[];
+ const meta=ongletMeta(name);
+ const field=f=>{
+   const id='x2026_'+f.cell;
+   if(f.kind==='select')return selectHtml(id,f.label,(f.options||[]).map(String),String(f.default??''));
+   if(f.kind==='number')return `<div class="field"><label>${esc(f.label)}</label><input class="input" id="${id}" inputmode="decimal" type="number" min="0" step="any" value="${esc(f.default??'')}"></div>`;
+   return inputHtml(id,f.label,f.default??'');
+ };
+ let html=`<div class="sheet-banner" style="background:${meta.couleur}"><span>${esc(name)}</span><span class="badge ok">Calcul actif</span></div><div class="grid2">${inputHtml('demandeur','Demandeur','')}${inputHtml('dossier','Dossier','')}</div>`;
+ if(name==='Caisse Cuvette')html+='<p class="muted">Les dimensions intérieures comprennent le calage. Les cuvettes 2 à 6 reprennent la longueur et la largeur de la première.</p>';
+ for(const group of groups)html+=`<div class="oeuvre"><strong>${esc(group.title)}</strong><div style="height:10px"></div><div class="form-grid">${group.fields.map(field).join('')}</div></div>`;
+ html+='<div class="actions"><button class="btn primary" onclick="calculateCurrent()">Calculer</button></div>';
+ $('formArea').innerHTML=html;
+}
+function collect2026(data){
+ const groups=(state.config.formulaires_2026||{})[state.current]; if(!groups)return;
+ data.cellules={};
+ for(const group of groups)for(const f of group.fields){const el=$('x2026_'+f.cell);if(!el)continue;const v=el.value;data.cellules[f.cell]=v;
+   if(f.label==='Isolant')data.type_isolant=v;
+   if(f.label==='Calage'&&v&&v!=='Aucun'&&!data.type_calage)data.type_calage=v;
+   if(f.label==='Longueur (cm)'&&!data.longueur_cm&&v)data.longueur_cm=v;
+   if(f.label==='Épaisseur / largeur (cm)'&&!data.epaisseur_cm&&v)data.epaisseur_cm=v;
+   if(f.label==='Hauteur (cm)'&&!data.hauteur_cm&&v)data.hauteur_cm=v;
+ }
+}
+function cuvetteFields(){return `${inputHtml('cuvette_longueur','Cuvette : longueur (cm), facultatif','')}${inputHtml('cuvette_largeur','Cuvette : largeur (cm), facultatif','')}${inputHtml('cuvette_hauteur','Cuvette : hauteur (cm) si Oui','')}`;}
+const classicOptionFilters={T1:{type_calage:['Aucun','Bandes de mousse','Bandes de mousses','Entourage Stratocell 30mm','Entourage Stratocell 30 mm','Sous verre 2 faces']}};function normChoice(s){return String(s??'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');}function filteredChoices(id,choices){let list=choices||[];if(state.interfaceMode!=='classic'||!state.current)return list;const allowed=(classicOptionFilters[state.current]||{})[id];if(!allowed)return list;const allowedNorm=new Set(allowed.map(normChoice));const out=list.filter(x=>allowedNorm.has(normChoice(x)));return out.length?out:allowed;}function selectHtml(id,label,choices,value){const list=filteredChoices(id,choices);const selected=list.includes(value)?value:(list.length?list[0]:value);return `<div class="field"><label>${esc(label)}</label><select class="select" id="${id}">${(list||[]).map(x=>`<option value="${esc(x)}" ${x===selected?'selected':''}>${esc(x)}</option>`).join('')}</select></div>`;}function inputHtml(id,label,value=''){return `<div class="field"><label>${esc(label)}</label><input class="input" id="${id}" value="${esc(value)}"></div>`;}
+function renderT1(){const o=state.options.T1||{};const meta=ongletMeta('T1');$('formArea').innerHTML=`<div class="sheet-banner" style="background:${meta.couleur}"><span>T1</span><span class="badge ok">Calcul actif</span></div><div class="grid2">${inputHtml('demandeur','Demandeur','')}${inputHtml('dossier','Dossier','')}</div><div style="height:14px"></div><div class="form-grid">${inputHtml('longueur_cm','Longueur','120')}${inputHtml('epaisseur_cm','Epaisseur / profondeur','10')}${inputHtml('hauteur_cm','Hauteur','90')}${selectHtml('type_isolant','Type isolant',o.type_isolant,'Aucun')}${selectHtml('fermeture','Fermeture',o.fermeture,'Vis bois')}${selectHtml('peinture','Peinture',o.peinture,'Non')}${selectHtml('tyvek','Tyvek',o.tyvek,'Non')}${selectHtml('type_calage','Type de calage',o.type_calage,'Bandes de mousse')}${state.interfaceMode==='expert'?`${selectHtml('option_calage','Option calage',o.option_calage,'Aucun')}${selectHtml('epaisseur_mousse','Épaisseur mousse',o.epaisseur_mousse,'PU 50 mm')}${selectHtml('type_contreplaque','Contreplaqué',o.type_contreplaque||['Peuplier 10 mm','Peuplier 15 mm'],'Peuplier 15 mm')}${selectHtml('barres','Barres',o.barres||['Pin non raboté','Pin raboté 4 faces'],'Pin raboté 4 faces')}${selectHtml('poignees','Poignées',o.poignees||['Bois','Non'],'Bois')}${selectHtml('skis','Skis',o.skis||['Skis','10 dessous en skis','10 dessous en semelles'],'Skis')}${selectHtml('garnissage','Valsem',['Oui','Non'],'Oui')}`:'<input type="hidden" id="option_calage" value="Aucun"><input type="hidden" id="epaisseur_mousse" value="PU 50 mm">'}</div><div style="height:18px"></div><div class="actions"><button class="btn primary" onclick="calculateCurrent()">Calculer</button></div>`;}
+function renderT1T6(){const o=state.options['T1-T6']||{};const meta=ongletMeta('T1-T6');const calageChoices=state.interfaceMode==='expert'?(o.type_calage||[]):['Aucun','Bandes de mousse','Sous verre 2 faces'];let oeuvres='';for(let i=1;i<=6;i++){oeuvres+=`<div class="oeuvre"><strong>Œuvre ${i}</strong><div style="height:10px"></div><div class="form-grid">${inputHtml(`o${i}_longueur_cm`,'Longueur',i===1?'120':'')}${inputHtml(`o${i}_epaisseur_cm`,'Epaisseur / profondeur',i===1?'10':'')}${inputHtml(`o${i}_hauteur_cm`,'Hauteur',i===1?'90':'')}${selectHtml(`o${i}_type_calage`,'Type de calage',calageChoices,'Bandes de mousse')}</div></div>`;}$('formArea').innerHTML=`<div class="sheet-banner" style="background:${meta.couleur}"><span>T1-T6</span><span class="badge ok">Calcul actif</span></div><div class="grid2">${inputHtml('demandeur','Demandeur','')}${inputHtml('dossier','Dossier','')}</div><div style="height:14px"></div><div class="grid2">${selectHtml('type_isolant','Type isolant',o.type_isolant,'Aucun')}${selectHtml('fermeture','Fermeture',o.fermeture,'Vis bois')}${selectHtml('peinture','Peinture',o.peinture,'Non')}${selectHtml('tyvek','Tyvek',o.tyvek,'Non')}</div>${state.interfaceMode==='expert'?`<div class="grid2">${selectHtml('option_calage','Option calage',o.option_calage,'Aucun')}${selectHtml('type_contreplaque','Contreplaqué',o.type_contreplaque||['Peuplier 10 mm','Peuplier 15 mm'],'Peuplier 15 mm')}${selectHtml('barres','Barres',o.barres||['Pin non raboté','Pin raboté 4 faces'],'Pin raboté 4 faces')}${selectHtml('poignees','Poignées',o.poignees||['Bois','Non'],'Bois')}${selectHtml('skis','Skis',o.skis||['Skis','10 dessous en skis','10 dessous en semelles'],'Skis')}${selectHtml('garnissage','Valsem',['Oui','Non'],'Oui')}</div>`:'<input type="hidden" id="option_calage" value="Aucun">'}<div style="height:14px"></div>${oeuvres}<div class="actions"><button class="btn primary" onclick="calculateCurrent()">Calculer</button></div>`;}
+function renderT1T3MRT(){const o=state.options['T1-T3 MRT']||{};const meta=ongletMeta('T1-T3 MRT');let blocks='';for(let i=1;i<=3;i++){blocks+=`<div class="oeuvre"><strong>MRT ${i}</strong><div style="height:10px"></div><div class="form-grid">${selectHtml(`m${i}_mode_dimensions`,'Mode dimensions',o.mode_dimensions,i===1?"Dimensions de l'oeuvre":'Aucun')}${inputHtml(`m${i}_longueur_cm`,'Longueur',i===1?'207.2':'')}${inputHtml(`m${i}_epaisseur_cm`,'Epaisseur / profondeur',i===1?'4.2':'')}${inputHtml(`m${i}_hauteur_cm`,'Hauteur',i===1?'166.5':'')}${selectHtml(`m${i}_face_mrt`,'Face MRT',o.face_mrt,'Mrt Ouvert')}${selectHtml(`m${i}_arriere_mrt`,'Arrière MRT',o.arriere_mrt,'Mrt Ouvert')}</div></div>`;}$('formArea').innerHTML=`<div class="sheet-banner" style="background:${meta.couleur}"><span>T1-T3 MRT</span><span class="badge ok">Calcul actif</span></div><div class="grid2">${selectHtml('type_contreplaque','Type contreplaqué',o.type_contreplaque,'Peuplier 15 mm')}${selectHtml('barres','Barres',o.barres,'Pin raboté 4 faces')}${selectHtml('type_isolant','Type isolant',o.type_isolant,'Isotherme en 30')}${selectHtml('fermeture','Fermeture',o.fermeture,'Vis bois')}${selectHtml('peinture','Peinture',o.peinture,'Non')}${selectHtml('poignees','Poignées',o.poignees,'Bois')}${selectHtml('skis','Skis',o.skis,'Skis')}${selectHtml('garnissage','Garnissage Valsem',o.garnissage,'Oui')}${selectHtml('option_calage','Option calage',o.option_calage,'Aucun')}${selectHtml('type_calage','Type de calage',o.type_calage,'Aucun')}${inputHtml('demandeur','Demandeur','')}${inputHtml('dossier','Dossier','')}</div><div style="height:14px"></div>${blocks}<div class="actions"><button class="btn primary" onclick="calculateCurrent()">Calculer</button></div>`;}
+function renderTGlissieres(){const o=state.options['T à Glissières']||{};const meta=ongletMeta('T à Glissières');let rows='<div class="glissieres-table"><div class="glissieres-row glissieres-head"><div>N°</div><div>Longueur</div><div>Épaisseur</div><div>Hauteur</div><div>Quantité</div></div>';for(let i=1;i<=15;i++){rows+=`<div class="glissieres-row"><div class="glissieres-num">${i}</div><input class="input" id="g${i}_longueur_cm" value="${i===1?'120':''}"><input class="input" id="g${i}_largeur_cm" value="${i===1?'10':''}"><input class="input" id="g${i}_hauteur_cm" value="${i===1?'90':''}"><input class="input" id="g${i}_quantite" value="${i===1?'1':''}"></div>`;}rows+='</div>';$('formArea').innerHTML=`<div class="sheet-banner" style="background:${meta.couleur}"><span>T à Glissières</span><span class="badge ok">Calcul actif</span></div><div class="grid2">${selectHtml('type_contreplaque','Type contreplaqué',o.type_contreplaque,'Peuplier 15 mm')}${selectHtml('barres','Barres',o.barres,'Pin raboté 4 faces')}${selectHtml('garnissage','Garnissage Valsem',o.garnissage,'Oui')}${selectHtml('type_isolant','Type isolant',o.type_isolant,'Aucun')}${selectHtml('fermeture','Fermeture',o.fermeture,'Vis bois')}${selectHtml('peinture','Peinture',o.peinture,'Non')}${selectHtml('poignees','Poignées',o.poignees,'Bois')}${selectHtml('skis','Skis',o.skis,'Skis')}${selectHtml('epaisseur_mousse','Epaisseur mousse dessus/dessous',o.epaisseur_mousse,'Mousse 30 mm')}${selectHtml('cuvette_au_dessus','Cuvette au dessus',o.cuvette_au_dessus,'Non')}${cuvetteFields()}${inputHtml('demandeur','Demandeur','')}${inputHtml('dossier','Dossier','')}</div><div style="height:14px"></div><div class="oeuvre"><strong>Tableaux / œuvres à glissières</strong><div style="height:10px"></div>${rows}</div><div class="actions"><button class="btn primary" onclick="calculateCurrent()">Calculer</button></div>`;}
+function renderTSeparationsMousse(){const o=state.options['T Séparations mousse']||{};const meta=ongletMeta('T Séparations mousse');function rangRows(prefix,def){let rows='<div class="glissieres-table"><div class="glissieres-row sep-row glissieres-head"><div>N°</div><div>Longueur</div><div>Largeur / épaisseur</div><div>Hauteur</div></div>';for(let i=1;i<=10;i++){rows+=`<div class="glissieres-row sep-row"><div class="glissieres-num">${i}</div><input class="input" id="${prefix}${i}_longueur_cm" value="${def&&i===1?'72.10':''}"><input class="input" id="${prefix}${i}_largeur_cm" value="${def&&i===1?'3.50':''}"><input class="input" id="${prefix}${i}_hauteur_cm" value="${def&&i===1?'54.00':''}"></div>`;}return rows+'</div>';}const rang1=rangRows('s1_',true);const rang2=rangRows('s2_',false);$('formArea').innerHTML=`<div class="sheet-banner" style="background:${meta.couleur}"><span>T Séparations mousse</span><span class="badge ok">Calcul actif</span></div><div class="grid2">${selectHtml('type_contreplaque','Type contreplaqué',o.type_contreplaque,'Peuplier 15 mm')}${selectHtml('barres','Barres',o.barres,'Pin raboté 4 faces')}${selectHtml('garnissage','Garnissage Valsem',o.garnissage,'Oui')}${selectHtml('type_isolant','Type isolant',o.type_isolant,'Aucun')}${selectHtml('fermeture','Fermeture',o.fermeture,'Vis bois')}${selectHtml('peinture','Peinture',o.peinture,'Non')}${selectHtml('skis','Skis',o.skis,'10 dessous en semelles')}${selectHtml('poignees','Poignées',o.poignees,'Bois')}${selectHtml('separations','Séparations',o.separations,'Carton')}${inputHtml('demandeur','Demandeur','')}${inputHtml('dossier','Dossier','')}</div><div style="height:14px"></div><div class="oeuvre"><strong>Rang 1 - 10 œuvres maximum</strong><div style="height:10px"></div>${rang1}</div><div class="oeuvre"><strong>Rang 2 - 10 œuvres maximum</strong><div style="height:10px"></div>${rang2}</div><div class="actions"><button class="btn primary" onclick="calculateCurrent()">Calculer</button></div>`;}
+function renderObjet1(){const o=state.options['Objet 1']||{};const meta=ongletMeta('Objet 1');$('formArea').innerHTML=`<div class="sheet-banner" style="background:${meta.couleur}"><span>Objet 1</span><span class="badge ok">Calcul actif</span></div><div class="form-grid">${inputHtml('longueur_cm','Longueur','100')}${inputHtml('largeur_cm','Largeur / épaisseur','100')}${inputHtml('hauteur_cm','Hauteur','100')}${selectHtml('type_contreplaque','Type contreplaqué',o.type_contreplaque,'Peuplier 15 mm')}${selectHtml('barres','Barres',o.barres,'Pin raboté 4 faces')}${selectHtml('garnissage','Garnissage Valsem',o.garnissage,'Oui')}${selectHtml('type_isolant','Type isolant',o.type_isolant,'Aucun')}${selectHtml('fermeture','Fermeture',o.fermeture,'Vis bois')}${selectHtml('peinture','Peinture',o.peinture,'Non')}${selectHtml('poignees','Poignées',o.poignees,'Non')}${selectHtml('skis','Skis',o.skis,'10 dessous en skis')}${selectHtml('cuvette_au_dessus','Cuvette au dessus',o.cuvette_au_dessus,'Non')}${cuvetteFields()}${selectHtml('option','Option',o.option,'Aucun')}${selectHtml('nombre_cote_ouvrant','Nbre de côté ouvrant',o.nombre_cote_ouvrant,'GC + Couvercle')}${selectHtml('type_calage','Type de calage',o.type_calage,'Ecrin horizontal')}${inputHtml('nombre_calages','Nombre calages','2')}${selectHtml('type_mousse','Mousse (pour entourage/écrin)',o.type_mousse||['PU','Ethafoam','Stratocell'],'PU')}${selectHtml('type_mousse_calage','Mousse du calage (bancs/guillotines)',o.type_mousse_calage||['Stratocell 35 Kg','Ethafoam','Stratocell 65 Kg'],'Stratocell 35 Kg')}${selectHtml('plateau_interieur','Plateau intérieur',o.plateau_interieur,'Aucun')}${selectHtml('base','Base',o.base,'Stratocell 50 mm')}${inputHtml('demandeur','Demandeur','')}${inputHtml('dossier','Dossier','')}</div><div style="height:18px"></div><div class="actions"><button class="btn primary" onclick="calculateCurrent()">Calculer</button></div>`;}function renderObjet2A6(){const o=state.options['Objet 2 à 6']||{};const meta=ongletMeta('Objet 2 à 6');let blocks='';for(let i=1;i<=6;i++){blocks+=`<div class="oeuvre"><strong>Objet ${i}</strong><div style="height:10px"></div><div class="form-grid">${inputHtml(`ob${i}_longueur_cm`,'Longueur',i===1?'100':'')}${inputHtml(`ob${i}_largeur_cm`,'Largeur / épaisseur',i===1?'100':'')}${inputHtml(`ob${i}_hauteur_cm`,'Hauteur',i===1?'100':'')}${selectHtml(`ob${i}_type_calage`,'Type de calage',o.type_calage,'Aucun')}${selectHtml(`ob${i}_plateau_interieur`,'Plateau intérieur',o.plateau_interieur,'Aucun')}${selectHtml(`ob${i}_base`,'Base',o.base,'Aucun')}${inputHtml(`ob${i}_nombre_calages`,'Nombre de calages','2')}${selectHtml(`ob${i}_type_mousse_calage`,'Type de mousse',o.type_mousse_calage||['PU','Ethafoam','Stratocell'],'PU')}</div></div>`;}$('formArea').innerHTML=`<div class="sheet-banner" style="background:${meta.couleur}"><span>Objet 2 à 6</span><span class="badge ok">Calcul actif</span></div><div class="grid2">${inputHtml('client','Client','ESI')}${inputHtml('dossier','Dossier','')}${selectHtml('type_contreplaque','Type contreplaqué',o.type_contreplaque,'Peuplier 15 mm')}${selectHtml('barres','Barres',o.barres,'Pin raboté 4 faces')}${selectHtml('garnissage','Garnissage Valsem',o.garnissage,'Oui')}${selectHtml('type_isolant','Type isolant',o.type_isolant,'Aucun')}${selectHtml('fermeture','Fermeture',o.fermeture,'Vis bois')}${selectHtml('peinture','Peinture',o.peinture,'Non')}${selectHtml('poignees','Poignées',o.poignees,'Bois')}${selectHtml('skis','Skis',o.skis,'Skis')}${selectHtml('cuvette_au_dessus','Cuvette au dessus',o.cuvette_au_dessus,'Non')}${inputHtml('cuvette_hauteur','Hauteur de cuvette (cm)','')}${inputHtml('demandeur','Demandeur','')}</div><div style="height:14px"></div>${blocks}<div class="actions"><button class="btn primary" onclick="calculateCurrent()">Calculer</button></div>`;
+  const cuvette=$('cuvette_au_dessus'), height=$('cuvette_hauteur');
+  function updateCuvette(){const active=normChoice(cuvette.value)==='oui';height.closest('.field').style.display=active?'':'none';height.disabled=!active;}
+  cuvette.addEventListener('change',updateCuvette);updateCuvette();
+  for(let i=1;i<=6;i++){
+    const calage=$(`ob${i}_type_calage`), count=$(`ob${i}_nombre_calages`), foam=$(`ob${i}_type_mousse_calage`);
+    function updateCalage(){const counted=['bancsouverts','bancsfermes','guillotineshorizontales','guillotinesverticales'].includes(normChoice(calage.value));count.closest('.field').style.display=counted?'':'none';count.disabled=!counted;foam.closest('.field').style.display=counted?'none':'';foam.disabled=counted;}
+    calage.addEventListener('change',updateCalage);updateCalage();
+  }
+}
+function decoPricesHtml(prices){
+ if(document.documentElement.dataset.esiRole!=='ADMIN')return '';
+ const p=prices||{};
+ const priceField=(id,label,val)=>`<div class="field"><label>${esc(label)}</label><input class="input" id="${id}" type="number" step="0.01" value="${esc(val??'')}"></div>`;
+ return `<div class="deco-prices-title">Paramètres</div><div class="grid2">
+ ${priceField('deco_cp_m2','CP €/m²',p.cp_m2)}${priceField('deco_barres_ml','Barres €/ml',p.barres_ml)}
+ ${priceField('deco_chevrons_ml','Chevrons €/ml',p.chevrons_ml)}${priceField('deco_consommables','Consommables €',p.consommables)}
+ ${priceField('deco_taux_horaire','Main œuvre €/h',p.taux_horaire)}${priceField('deco_heures','Temps h',p.heures)}
+ ${priceField('deco_frais_generaux','Frais généraux %',p.frais_generaux)}${priceField('deco_marge','Marge %',p.marge)}
+ </div><div class="muted" style="margin-top:10px">Pour enregistrer les tarifs, utiliser la page ADMIN.</div>`;
+}
+function renderCaisseDeco(){
+ const cfg=(state.config&&state.config.caisse_deco)||{};
+ const types=cfg.types||['PLEINE CP TYPE 16'];
+ const prices=cfg.prices||{};
+ $('formArea').innerHTML=`<div class="sheet-banner" style="background:#FFD700"><span>Caisse déco</span><span class="badge ok">Calcul actif</span></div>
+ <div class="section-title" style="color:#0f172a;font-size:18px;margin-bottom:14px">Informations caisse</div>
+ <div class="grid2">${inputHtml('numero_dossier','N° dossier','')}${inputHtml('numero_colis','Colis n°','')}${inputHtml('client','Client','')}${inputHtml('charge_projet','Chargé de projet','')}${selectHtml('type_caisse','Type caisse',types,types[0])}${inputHtml('longueur','Longueur int. cm','')}${inputHtml('largeur','Largeur int. cm','')}${inputHtml('hauteur','Hauteur int. cm','')}</div>
+ <div style="height:14px"></div><div class="field"><label>Observations</label><textarea class="input" id="observations" rows="5"></textarea></div>
+ <div style="height:14px"></div><div class="actions" style="justify-content:flex-start"><button class="btn primary" style="min-width:190px" onclick="calculateCurrent()">Calculer</button></div>`;
+ $('resultArea').innerHTML=`<div class="deco-result-empty">Renseigner les dimensions puis cliquer sur Calculer.</div><div style="height:16px"></div>${decoPricesHtml(prices)}`;
+}
+async function saveDecoPrices(){
+ const ids=['cp_m2','barres_ml','chevrons_ml','consommables','taux_horaire','heures','frais_generaux','marge'];const payload={};
+ ids.forEach(k=>{const el=$('deco_'+k);if(el)payload[k]=el.value;});
+ try{const res=await fetch('/devis-caisses/api/caisse-deco/prices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const out=await res.json();if(!out.ok){notice(out.error||'Erreur enregistrement tarifs');return;}state.config.caisse_deco.prices=out.prices||payload;notice('Tarifs Caisse déco enregistrés');}catch(e){notice('Erreur enregistrement tarifs');}
+}
+function renderMRT(){const o=state.options.MRT||{};const meta=ongletMeta('MRT');$('formArea').innerHTML=`<div class="sheet-banner" style="background:${meta.couleur}"><span>MRT</span><span class="badge ok">Calcul actif</span></div><div class="form-grid">${selectHtml('mode_dimensions','Mode dimensions',o.mode_dimensions,"Dimensions de l'oeuvre")}${inputHtml('longueur_cm','Longueur','120')}${inputHtml('epaisseur_cm','Epaisseur / profondeur','10')}${inputHtml('hauteur_cm','Hauteur','90')}${selectHtml('type_contreplaque','Type contreplaqué',o.type_contreplaque,'Peuplier 15 mm')}${selectHtml('barres','Barres',o.barres,'Pin raboté 4 faces')}${selectHtml('fermeture','Fermeture',o.fermeture,'Vis bois')}${selectHtml('poignees','Poignées',o.poignees,'Métal x 2 sur bouts')}${selectHtml('face_mrt','Face MRT',o.face_mrt,'Mrt Ouvert')}${selectHtml('arriere_mrt','Arrière MRT',o.arriere_mrt,'Mrt Ouvert')}${inputHtml('demandeur','Demandeur','')}${inputHtml('dossier','Dossier','')}</div><div style="height:18px"></div><div class="actions"><button class="btn primary" onclick="calculateCurrent()">Calculer</button></div>`;}
+function collectBasic(){const ids=['longueur_cm','epaisseur_cm','hauteur_cm','type_isolant','fermeture','peinture','tyvek','type_calage','option_calage','epaisseur_mousse','mode_dimensions','type_contreplaque','barres','poignees','face_mrt','arriere_mrt','demandeur','dossier','largeur_cm','cuvette_au_dessus','option','nombre_cote_ouvrant','plateau_interieur','base','garnissage','skis','poignees','nombre_calages','separations','numero_dossier','numero_colis','client','charge_projet','type_caisse','longueur','largeur','hauteur','observations','cuvette_longueur','cuvette_largeur','cuvette_hauteur','type_mousse','type_mousse_calage'];const data={};ids.forEach(id=>{const el=$(id);if(el&&!el.disabled)data[id]=el.value;});return data;}
+async function calculateCurrent(){let data=collectBasic();collect2026(data);if(state.interfaceMode==='classic'&&CLASSIC_SHEETS.has(state.current)&&state.current!=='T1-T6'&&data.client!==undefined)data.demandeur=data.client;if(state.current==='Caisse déco'){data.prices={};['cp_m2','barres_ml','chevrons_ml','consommables','taux_horaire','heures','frais_generaux','marge'].forEach(k=>{const el=$('deco_'+k);if(el)data.prices[k]=el.value;});}if(state.current==='T1-T6'){data.oeuvres=[];for(let i=1;i<=6;i++){data.oeuvres.push({longueur_cm:$(`o${i}_longueur_cm`).value,epaisseur_cm:$(`o${i}_epaisseur_cm`).value,hauteur_cm:$(`o${i}_hauteur_cm`).value,type_calage:$(`o${i}_type_calage`).value});}}if(state.current==='T1-T3 MRT'){data.mrts=[];for(let i=1;i<=3;i++){data.mrts.push({mode_dimensions:$(`m${i}_mode_dimensions`).value,longueur_cm:$(`m${i}_longueur_cm`).value,epaisseur_cm:$(`m${i}_epaisseur_cm`).value,hauteur_cm:$(`m${i}_hauteur_cm`).value,face_mrt:$(`m${i}_face_mrt`).value,arriere_mrt:$(`m${i}_arriere_mrt`).value});}}if(state.current==='T à Glissières'){data.tableaux=[];for(let i=1;i<=15;i++){data.tableaux.push({longueur_cm:$(`g${i}_longueur_cm`).value,largeur_cm:$(`g${i}_largeur_cm`).value,hauteur_cm:$(`g${i}_hauteur_cm`).value,quantite:$(`g${i}_quantite`).value,intervalle:'2.2'});}}if(state.current==='T Séparations mousse'){data.rang1=[];data.rang2=[];for(let i=1;i<=10;i++){data.rang1.push({longueur_cm:$(`s1_${i}_longueur_cm`).value,largeur_cm:$(`s1_${i}_largeur_cm`).value,hauteur_cm:$(`s1_${i}_hauteur_cm`).value});data.rang2.push({longueur_cm:$(`s2_${i}_longueur_cm`).value,largeur_cm:$(`s2_${i}_largeur_cm`).value,hauteur_cm:$(`s2_${i}_hauteur_cm`).value});}}if(state.current==='Objet 2 à 6'){data.objets=[];for(let i=1;i<=6;i++){data.objets.push({longueur_cm:$(`ob${i}_longueur_cm`).value,largeur_cm:$(`ob${i}_largeur_cm`).value,hauteur_cm:$(`ob${i}_hauteur_cm`).value,type_calage:$(`ob${i}_type_calage`).value,plateau_interieur:$(`ob${i}_plateau_interieur`).value,base:$(`ob${i}_base`).value,nombre_calages:$(`ob${i}_nombre_calages`).disabled?null:$(`ob${i}_nombre_calages`).value,type_mousse_calage:$(`ob${i}_type_mousse_calage`).disabled?null:$(`ob${i}_type_mousse_calage`).value});}}state.lastData=data;state.lastResult=null;state.currentNotice=null;$('resultArea').innerHTML='<div class="muted">Calcul en cours...</div>';const res=await fetch(`/devis-caisses/api/calculate/${encodeURIComponent(state.current)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const out=await res.json();if(!out.ok){$('resultArea').innerHTML=`<div class="technical-notice-empty">${esc(out.error||'Erreur de calcul')}</div>`;notice(out.error||'Erreur de calcul');return;}state.lastResult=out.result;state.currentNotice=await loadNoticeForCurrent();renderResult(out.result);notice('Calcul terminé');}
+async function loadNoticeForCurrent(){
+ if(!state.current||!state.lastData)return null;
+ try{
+   const res=await fetch('/devis-caisses/api/notice/find',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheet:state.current,data:state.lastData})});
+   const out=await res.json();
+   return out.ok ? out.notice : null;
+ }catch(e){return null;}
+}
+function askNoticeFile(){
+ if(!state.current||!state.lastData){notice('Lance un calcul avant d’associer une notice.');return;}
+ const input=$('noticePdfInput');
+ if(input){input.value='';input.click();}
+}
+async function associateNoticeFromInput(input){
+ const file=input.files&&input.files[0];
+ if(!file)return;
+ if(!file.name.toLowerCase().endsWith('.pdf')){notice('Le fichier doit être un PDF.');return;}
+ const title=prompt('Titre de la notice technique ?', `Notice technique - ${state.current}`)||`Notice technique - ${state.current}`;
+ const fd=new FormData();
+ fd.append('sheet',state.current);
+ fd.append('data',JSON.stringify(state.lastData||{}));
+ fd.append('title',title);
+ fd.append('pdf',file);
+ try{
+   const res=await fetch('/devis-caisses/api/notice/associate',{method:'POST',body:fd});
+   const out=await res.json();
+   if(!out.ok){notice(out.error||'Erreur association notice');return;}
+   state.currentNotice=out.notice;
+   renderResult(state.lastResult||{});
+   notice('Notice associée à cette combinaison');
+ }catch(e){notice('Erreur association notice');}
+}
+function renderResult(r){
+ const dimL=r.dimensions_exterieures_longueur,dimE=r.dimensions_exterieures_epaisseur,dimH=r.dimensions_exterieures_hauteur;
+ const dimensions=(dimL||dimE||dimH)?`${num(dimL,'')} x ${num(dimE,'')} x ${num(dimH,'')} cm`:'-';
+ if(state.current==='Caisse déco'){
+   const prices=(state.lastData&&state.lastData.prices)||(state.config&&state.config.caisse_deco&&state.config.caisse_deco.prices)||{};
+   let html='<div class="result-grid">';
+   [['Dimensions extérieures',dimensions],['Prix d’achat',euro(r.prix_achat)],['Prix de cession',euro(r.prix_cession)]].forEach(([lab,val])=>{html+=`<div class="result-box"><div class="result-label">${lab}</div><div class="result-value">${val}</div></div>`;});
+   html+='</div>';
+   if(r.detail){const d=r.detail;html+=`<div class="deco-detail"><div class="section-title" style="margin-bottom:8px">Détail du calcul</div><div class="deco-detail-row"><span>Contreplaqué</span><strong>${euro(d.cp)}</strong></div><div class="deco-detail-row"><span>Barres</span><strong>${euro(d.barres)}</strong></div><div class="deco-detail-row"><span>Chevrons</span><strong>${euro(d.chevrons)}</strong></div><div class="deco-detail-row"><span>Consommables</span><strong>${euro(d.consommables)}</strong></div><div class="deco-detail-row"><span>Main d'œuvre</span><strong>${euro(d.main_oeuvre)}</strong></div><div class="deco-detail-row"><span>Frais généraux</span><strong>${euro(d.frais)}</strong></div><div class="deco-detail-row"><span>Marge</span><strong>${euro(d.marge)}</strong></div></div>`;}
+   html+=`<div style="height:16px"></div>${decoPricesHtml(prices)}`;
+   $('resultArea').innerHTML=html;
+   return;
+ }
+ const cards=[['Dimensions extérieures',dimensions],['Poids caisse',num(r.poids_caisse,' kg')],['Bilan carbone',r.bilan_carbone!==undefined?num(r.bilan_carbone,' kg CO₂e'):'-'],['Prix de cession',euro(r.prix_cession)]];
+ let html='<div class="result-grid">';cards.forEach(([lab,val])=>{html+=`<div class="result-box"><div class="result-label">${lab}</div><div class="result-value">${val}</div></div>`;});html+='</div>';
+ if(Array.isArray(r.dimensions_caissons)&&r.dimensions_caissons.length>1){html+='<div class="oeuvre"><strong>Dimensions extérieures des caissons</strong>'+r.dimensions_caissons.map(c=>`<p>Caisson ${esc(c.numero)} : ${num(c.longueur)} × ${num(c.epaisseur)} × ${num(c.hauteur)} cm</p>`).join('')+'</div>';}
+ const noticeDoc=state.currentNotice;if(noticeDoc&&noticeDoc.pdf){html+=`<div class="technical-notice"><div class="technical-notice-head"><span class="technical-notice-title">${esc(noticeDoc.title)}</span><span class="pill">${noticeDoc.auto?'PDF associé':'PDF officiel'}</span></div><iframe class="technical-notice-preview" src="${noticeDoc.pdf}#toolbar=0&navpanes=0" title="${esc(noticeDoc.title)}" style="width:100%;height:430px;border:0;background:#fff"></iframe><div class="technical-notice-actions"><a class="btn secondary" href="${noticeDoc.pdf}" target="_blank">Ouvrir le PDF</a></div></div>`;}else{html+='<div class="technical-notice-empty">Aucune notice technique associée à cette combinaison pour le moment.</div>';}html+=`<div class="actions" style="margin-top:14px"><button class="btn secondary" onclick="askNoticeFile()">Associer une notice PDF</button><input id="noticePdfInput" type="file" accept="application/pdf,.pdf" class="hidden" onchange="associateNoticeFromInput(this)"><button class="btn primary" onclick="generateInternalPdf()">Générer fiche PDF interne</button></div>`;$('resultArea').innerHTML=html;
+}
+async function generateInternalPdf(){if(!state.current||!state.lastResult){notice('Lance un calcul avant de générer la fiche PDF.');return;}try{const res=await fetch('/devis-caisses/api/fiche-pdf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheet:state.current,data:state.lastData,result:state.lastResult})});if(!res.ok){const err=await res.json().catch(()=>({error:'Erreur génération PDF'}));notice(err.error||'Erreur génération PDF');return;}const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`fiche_chiffrage_${state.current.replaceAll(' ','_')}.pdf`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);notice('Fiche PDF générée');}catch(e){notice('Erreur génération PDF');}}
+
+let libraryData=[];
+function showLibraryModal(){const m=$('libraryModal');m.classList.add('show');m.setAttribute('aria-hidden','false');loadLibraryNotices();}
+function closeLibraryModal(){const m=$('libraryModal');m.classList.remove('show');m.setAttribute('aria-hidden','true');}
+async function loadLibraryNotices(){
+ const box=$('libraryList'); if(box)box.innerHTML='<div class="muted">Chargement des notices...</div>';
+ try{
+  const res=await fetch('/devis-caisses/api/notices');
+  const out=await res.json();
+  libraryData=out.notices||[];
+  renderLibraryNotices();
+ }catch(e){ if(box)box.innerHTML='<div class="technical-notice-empty">Erreur chargement bibliothèque.</div>'; }
+}
+function renderLibraryNotices(){
+ const box=$('libraryList'); if(!box)return;
+ const q=String(($('librarySearch')&&$('librarySearch').value)||'').toLowerCase();
+ const rows=(libraryData||[]).map((n,idx)=>({n,idx})).filter(x=>[x.n.sheet,x.n.type_isolant,x.n.type_calage,x.n.title,x.n.key].join(' ').toLowerCase().includes(q));
+ if(!rows.length){box.innerHTML='<div class="technical-notice-empty">Aucune notice trouvée.</div>';return;}
+ let html='<table class="library-table"><thead><tr><th>Type</th><th>Isolant</th><th>Calage</th><th>Titre</th><th>Mise à jour</th><th style="text-align:right">Actions</th></tr></thead><tbody>';
+ rows.forEach(({n,idx})=>{
+  const pdf=n.pdf_url||n.pdf||'';
+  html+=`<tr><td>${esc(n.sheet||'-')}</td><td>${esc(n.type_isolant||'-')}</td><td>${esc(n.type_calage||'-')}</td><td>${esc(n.title||'Notice technique')}</td><td>${esc((n.updated_at||'').slice(0,10)||'-')}</td><td><div class="library-actions"><button class="btn secondary small" onclick="previewLibraryNotice(${idx})">Prévisualiser</button>${pdf?`<a class="btn secondary small" href="${esc(pdf)}" target="_blank">Ouvrir</a>`:''}<button class="btn danger small" onclick="deleteLibraryNotice(${idx})">Supprimer</button></div></td></tr>`;
+ });
+ html+='</tbody></table>';
+ box.innerHTML=html;
+}
+function previewLibraryNotice(i){
+ const n=libraryData[i]; if(!n)return;
+ const pdf=n.pdf_url||n.pdf||''; const title=n.title||'Notice technique';
+ const box=$('libraryPreview'); if(!box)return;
+ if(!pdf){box.innerHTML='<div class="technical-notice-empty">Aucun PDF disponible.</div>';box.classList.remove('hidden');return;}
+ box.innerHTML=`<div class="library-preview-box"><div class="library-preview-head"><span>${esc(title)}</span><a class="btn secondary small" href="${esc(pdf)}" target="_blank">Ouvrir dans un onglet</a></div><iframe class="library-preview-frame" src="${esc(pdf)}#toolbar=0&navpanes=0"></iframe></div>`;
+ box.classList.remove('hidden');
+}
+async function deleteLibraryNotice(i){
+ const n=libraryData[i]; if(!n)return;
+ if(!confirm(`Supprimer l'association de notice ?\n\n${n.sheet||''} - ${n.type_isolant||''} - ${n.type_calage||''}`))return;
+ try{
+  const res=await fetch('/devis-caisses/api/notice/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:n.key,id:n.id})});
+  const out=await res.json();
+  if(!out.ok){notice(out.error||'Erreur suppression notice');return;}
+  notice('Association supprimée');
+  await loadLibraryNotices();
+  if(state.current&&state.lastData){state.currentNotice=await loadNoticeForCurrent(); if(state.lastResult)renderResult(state.lastResult);}
+ }catch(e){notice('Erreur suppression notice');}
+}
+$('modalClose').onclick=closeModal;$('calcModal').addEventListener('click',e=>{if(e.target&&e.target.id==='calcModal')closeModal();});document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+$('btnHome').onclick=()=>activate('home');$('btnExpert').onclick=()=>activate('expert');$('btnLibrary').onclick=showLibraryModal;$('libraryClose').onclick=closeLibraryModal;$('libraryReload').onclick=loadLibraryNotices;$('librarySearch').addEventListener('input',renderLibraryNotices);$('libraryModal').addEventListener('click',e=>{if(e.target&&e.target.id==='libraryModal')closeLibraryModal();});$('btnRefresh').onclick=()=>{state.current=null;$('formArea').innerHTML='<div class="section-title">Sélectionne un type de caisse</div><p class="muted">Sélectionne une typologie pour utiliser le moteur de calcul 2026. La Caisse à Plateau reste en attente.</p>';$('resultArea').innerHTML='<div class="muted">Aucun calcul lancé.</div>';};init().catch(e=>notice('Erreur chargement configuration'));
+</script></body></html>

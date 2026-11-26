@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ESI-DEVIS | Administration</title>
+<style>
+:root{font-family:Arial,Helvetica,sans-serif;color:#0f172a;background:#f1f5f9}*{box-sizing:border-box}body{margin:0;background:linear-gradient(#e0f2fe,#f1f5f9 240px)}.page{max-width:1320px;margin:auto;padding:30px 20px}header,.panel{background:white;border:1px solid #dbeafe;border-radius:20px;padding:23px;margin-bottom:18px;box-shadow:0 8px 24px #0f172a0a}header{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}.eyebrow{color:#0284c7;font-weight:bold;font-size:13px}h1{font-size:30px;margin:5px 0}h2{font-size:19px;margin:0 0 15px}p,.muted{color:#64748b}a{color:#0284c7}.btn{border:0;border-radius:12px;background:#0284c7;color:white;padding:12px 19px;cursor:pointer;font-weight:bold}.btn.secondary{background:#f1f5f9;color:#0f172a}.btn:disabled{opacity:.5;cursor:wait}.actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}.field label{display:block;font-size:13px;font-weight:bold;color:#475569;margin-bottom:7px}.field input,.search{width:100%;border:1px solid #bfdbfe;background:#eff6ff;border-radius:12px;padding:11px;font-size:15px}.search{max-width:480px}.status{padding:12px 15px;border-radius:12px;background:#f1f5f9;margin-top:14px;display:none}.status.show{display:block}.status.error{background:#fee2e2;color:#991b1b}.status.ok{background:#dcfce7;color:#166534}.table-scroll{overflow:auto;max-height:65vh;border:1px solid #e2e8f0;border-radius:14px}table{width:100%;border-collapse:collapse;font-size:14px}th{text-align:left;color:#475569;background:#f8fafc;position:sticky;top:0;z-index:1}th,td{padding:10px 12px;border-bottom:1px solid #e2e8f0}td input{max-width:150px;width:100%;background:#e8f4fd;border:1px solid #bfdbfe;border-radius:9px;padding:9px}.small{font-size:12px;color:#64748b}.tag{background:#e0f2fe;color:#075985;padding:4px 9px;border-radius:10px;font-size:12px}#workspace{display:none}#login{max-width:550px;margin:35px auto}.sticky-actions{position:sticky;bottom:12px;padding:14px;background:white;box-shadow:0 5px 26px #0002;border-radius:16px;display:flex;gap:15px;justify-content:flex-end;align-items:center}input:focus{outline:2px solid #38bdf8}
+</style></head><body><main class="page"><header><div><div class="eyebrow">ESI FINE ART • MATRICE DE CHIFFRAGE</div><h1>Administration des tarifs</h1><p>Prix matières, marges et coefficients — formules de calcul conservées</p></div><a class="btn secondary" href="/devis-caisses/">RETOUR</a></header>
+<section class="panel" id="login"><h2>Accès administrateur</h2><p>Accès réservé au profil administrateur ESI TICKETS.</p><div style="margin-top:18px"><button class="btn" id="connect">Ouvrir l'administration</button></div><div id="loginStatus" class="status"></div></section>
+<div id="workspace"><section class="panel"><h2>1. Marge de cession générale</h2><div class="grid"><div class="field"><label for="margin">Marge de cession (%)</label><input id="margin" type="number" min="0" max="1000" step="0.01"></div></div><p class="small">Appliquée au prix d'achat calculé par les modules. La valeur initiale est 30 %. Les marges intégrées aux anciennes formules Excel ne sont pas modifiées.</p></section>
+<section class="panel"><h2>2. Caisse déco — tarifs et coefficients</h2><div class="grid" id="deco"></div></section>
+<section class="panel"><h2>3. Prix matières — ancienne matrice Excel</h2><p>Seuls les prix de la colonne B (matières nommées en colonne A) peuvent être modifiés. Les colonnes C à I restent réservées aux calculs.</p><div class="actions"><input class="search" id="search" placeholder="Rechercher une matière…"><span id="count" class="muted"></span></div><div style="height:14px"></div><div class="table-scroll"><table><thead><tr><th>Matière</th><th>Valeur d'origine</th><th>Nouvelle valeur</th></tr></thead><tbody id="rows"></tbody></table></div><p class="small">Une valeur identique à celle d'origine n'ajoute aucun remplacement. Les formules restent intactes.</p></section>
+<div class="sticky-actions"><span id="storage" class="small"></span><button class="btn secondary" id="reset">Rétablir les valeurs d'origine à l'écran</button><button class="btn" id="save">ENREGISTRER</button></div><div id="saveStatus" class="status"></div></div></main>
+<script>
+let token='',config=null;
+const $=id=>document.getElementById(id);
+const decoLabels={cp_m2:'Contreplaqué (€/m²)',barres_ml:'Barres (€/ml)',chevrons_ml:'Chevrons (€/ml)',consommables:'Consommables (€)',taux_horaire:'Main-d’œuvre (€/h)',heures:'Temps standard (h)',frais_generaux:'Frais généraux (%)',marge:'Marge Caisse déco (%)'};
+function showStatus(id,message,error=false){const e=$(id);e.textContent=message;e.className='status show '+(error?'error':'ok');}
+async function api(path,method='GET',body=null){const r=await fetch(path,{method,headers:{...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});const j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'Erreur serveur');return j;}
+function render(){ $('login').style.display='none';$('workspace').style.display='block';$('margin').value=config.marge_cession_percent;$('storage').textContent=config.storage==='supabase'?'Sauvegarde Supabase':'Sauvegarde locale (non persistante sur Render)';$('deco').innerHTML=Object.entries(decoLabels).map(([k,label])=>`<div class="field"><label for="d_${k}">${label}</label><input id="d_${k}" type="number" min="0" step="0.01" value="${Number(config.deco_prices[k]||0)}"></div>`).join('');drawRows();}
+function isNamedMaterial(cell){
+  const label=String(cell.label||'').trim();
+  // Les lignes de repli "Cellule A3" ne sont pas des matières nommées.
+  if(!label || /^cellule\s+[A-Z]+[0-9]+$/i.test(label)) return false;
+  // Exclure les libellés constitués seulement de chiffres ou de ponctuation.
+  return /[A-Za-zÀ-ÿ]/.test(label);
+}
+function drawRows(){
+  const named=(config.cells||[]).filter(cell=>/^B[0-9]+$/.test(cell.cell)&&isNamedMaterial(cell));
+  const q=$('search').value.trim().toLocaleLowerCase('fr');
+  const matching=named.filter(x=>String(x.label).toLocaleLowerCase('fr').includes(q));
+  $('count').textContent=matching.length+' matières affichées sur '+named.length;
+  const body=$('rows');body.replaceChildren();
+  for(const cell of matching){
+    const tr=document.createElement('tr');
+    let td=document.createElement('td');td.textContent=cell.label;tr.appendChild(td);
+    td=document.createElement('td');td.textContent=String(cell.value);tr.appendChild(td);
+    td=document.createElement('td');
+    const inp=document.createElement('input');inp.type='number';inp.step='any';inp.min='0';inp.dataset.key=cell.key;inp.value=cell.current;
+    inp.addEventListener('input',()=>{cell.current=inp.value});td.appendChild(inp);tr.appendChild(td);body.appendChild(tr);
+  }
+  if(!matching.length){const tr=document.createElement('tr');const td=document.createElement('td');td.colSpan=3;td.className='muted';td.textContent='Aucune matière nommée trouvée.';tr.appendChild(td);body.appendChild(tr);}
+}
+$('connect').onclick=async()=>{try{config=await api('/devis-caisses/api/admin/config');render();}catch(e){token='';showStatus('loginStatus',e.message,true);}};
+$('search').addEventListener('input',drawRows);
+$('reset').onclick=()=>{if(!confirm('Rétablir à l’écran les valeurs d’origine ? Vous devrez ensuite enregistrer.'))return;for(const x of config.cells)x.current=x.value;$('margin').value=30;for(const [k] of Object.entries(decoLabels))$('d_'+k).value=config.deco_prices[k];drawRows();};
+$('save').onclick=async()=>{const button=$('save');const cells={};for(const row of config.cells){const v=Number(row.current);if(!Number.isFinite(v)||v<0){showStatus('saveStatus','Valeur invalide : '+row.key,true);return;}if(v!==Number(row.value))cells[row.key]=v;}const deco_prices={};for(const k of Object.keys(decoLabels))deco_prices[k]=$('d_'+k).value;button.disabled=true;try{await api('/devis-caisses/api/admin/save','POST',{cells,marge_cession_percent:$('margin').value,deco_prices});config=await api('/devis-caisses/api/admin/config');render();showStatus('saveStatus','Paramètres enregistrés. Les prochains chiffrages utiliseront ces valeurs.');}catch(e){showStatus('saveStatus',e.message,true);}finally{button.disabled=false;}};
+$('connect').click();
+</script></body></html>

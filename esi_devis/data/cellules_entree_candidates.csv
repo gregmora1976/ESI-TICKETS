@@ -1,0 +1,71 @@
+sheet,cell,label,value
+T1,C9,N° de dossier,1
+T1,E9,Grégory MORA,Responsable Dossier
+T1,F9,Responsable Dossier,Grégory MORA
+T1,B10,N° de dossier,Ville de destination
+T1,C10,Ville de destination,1
+T1,E10,ESI / Responsable Dossier,Client
+T1,F10,Client / Grégory MORA,ESI
+T1,B11,Ville de destination,Caisse N°
+T1,C11,Caisse N°,1
+T1,E11,Client,Délai
+T1,F11,Délai / ESI,1900-01-01 00:00:00
+T1,B13,Peuplier 15 mm,Type de Contreplaqué
+T1,C13,Type de Contreplaqué,Peuplier 15 mm
+T1,B15,Pin raboté 4 faces,Barres
+T1,C15,Barres,Pin raboté 4 faces
+T1,E15,Pin raboté 4 faces / Oui,Garnissage Valsem
+T1,F15,Garnissage Valsem,Oui
+T1,B17,Aucun,Type d'isolant
+T1,C17,Type d'isolant,Aucun
+T1,B19,Vis bois,Fermeture
+T1,C19,Fermeture,Vis bois
+T1,E19,Vis bois / Non,Peinture
+T1,F19,Peinture,Non
+T1,B21,Bois,Poignées
+T1,C21,Poignées,Bois
+T1,E21,Bois / Non,Tyvek
+T1,F21,Tyvek,Non
+T1,B23,Skis,Skis
+T1,C23,Skis,Skis
+T1,E23,Skis / Aucun,Option Calage
+T1,F23,Option Calage,Aucun
+T1,E25,PU 50 mm,Epaisseur Mousse
+T1,F25,Epaisseur Mousse,PU 50 mm
+T1,C28,Epaisseur,Longueur
+T1,D28,Longueur / Hauteur,Epaisseur
+T1,E28,Longueur / Epaisseur,Hauteur
+T1,C29,Longueur,100
+T1,D29,Epaisseur,5
+T1,E29,Hauteur,100
+T1,B34,Type de calage,Bandes de mousse
+T1,C35,Longueur,Largeur
+T1,D35,Largeur / Epaisseur,Longueur
+T1,E35,Largeur / Longueur / Quantité,Epaisseur
+T1,F35,Longueur / Epaisseur,Quantité
+T1,C36,Dessus / Largeur,5
+T1,B37,Dessus,Dessous
+T1,C37,Dessous,5
+T1,B38,Dessous,Ethafoam 50 mm
+T1,B39,Ethafoam 50 mm,Rattrapage
+T1,B42,Remplissage 1,Remplissage 2
+T1,D48,Poids de la Caisse / Bilan Carbone,Kg
+T1,E48,Kg,Bilan Carbone
+T1,B49,Poids de la Caisse,Minutes de Production
+T1,D49,Minutes de Production / Kg,Min
+T1,Q56,CO²,Poids en Kg
+T1,R56,Poids en Kg,CO²
+T1,F58,Quantité,2
+T1,B59,Grand côtés,Dessus dessous
+T1,B60,Dessus dessous,Bouts
+T1,B64,Barres de GC,Remplis GC
+T1,B65,Remplis GC,Dessus / Dessous
+T1,B68,Longueur Bouts,Hauteur Bouts
+T1,B72,Mousse 1,GC
+T1,B73,GC,Dessus dessous
+T1,B74,Dessus dessous,Bouts
+T1,B79,Extrudé 1,GC
+T1,B80,GC,Dessus dessous
+T1,B81,Dessus dessous,Bouts
+T1,B86,Plaquettes,GC
+T1,B87,GC,Dessus dessous

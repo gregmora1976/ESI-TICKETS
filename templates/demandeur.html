@@ -150,6 +150,7 @@
 .esi-chat-file{max-width:200px;font-size:12px}.esi-chat-send{background:#0284c7;color:white;border:0;padding:10px 15px;border-radius:10px;font-weight:700;cursor:pointer}
 .esi-chat-counter{display:inline-block;background:#dc2626;color:white;border-radius:99px;font-size:11px;padding:2px 7px;margin-left:4px}
 
+.esi-gestion-block{border-left:1px solid #dbeafe;padding-left:20px;flex:1;min-width:280px}.top-actions>div:first-child{flex:1}.esi-gestion-block .catalogue-shortcuts{margin-left:0;width:100%}#esiToolsDialog::backdrop{background:#173c5c66}@media(max-width:800px){.esi-gestion-block{border-left:0;border-top:1px solid #dbeafe;padding:12px 0 0;flex-basis:100%}}
 </style>
 </head>
 <body>
@@ -171,7 +172,7 @@
       <div class="content">
         <div class="card top-actions">
           <div>
-            <div class="section-title" style="margin-bottom:6px">Type de ticket</div>
+            <div class="section-title" style="margin-bottom:6px">DEMANDE TICKET</div>
             <div class="tabs ticket-tabs">
               <div class="ticket-tab-row">
                 <button class="tab active" id="tab-caisse" type="button">CAISSE</button>
@@ -185,15 +186,22 @@
               </div>
             </div>
           </div>
-          <div class="catalogue-shortcuts" aria-label="Catalogues et accès gestion">
+          <div class="esi-gestion-block"><div class="section-title" style="margin-bottom:6px">GESTION &amp; OUTILS</div><div class="catalogue-shortcuts" aria-label="Gestion et outils">
+            <button class="btn primary" id="openTools" type="button">OUTILS</button>
+            <button class="btn secondary" id="openManager" type="button">GESTION TICKETS</button>
+            <button class="btn secondary" id="planningCaisserie" type="button">GESTION RECEPTION</button>
+            <a class="btn secondary" id="esiAdminUsers" style="display:none;text-decoration:none;text-align:center;background:#fee2e2;color:#991b1b" href="/administrateur">ADMINISTRATEUR</a>
+          </div></div>
+        </div>
+        <dialog id="esiToolsDialog" style="border:1px solid #dbeafe;border-radius:20px;padding:24px;width:min(92vw,460px);color:inherit;box-shadow:0 18px 60px #173c5c33">
+          <div class="section-title" style="margin-bottom:16px">OUTILS ESI</div>
+          <div style="display:grid;gap:12px">
             <button class="btn primary" id="openCatalogueCaisses" type="button">CATALOGUE CAISSES</button>
             <button class="btn primary" id="openCatalogueMethodologies" type="button">CATALOGUE MÉTHODOLOGIES</button>
-            <button class="btn secondary" id="openManager" type="button">GESTIONNAIRE</button>
-            <button class="btn secondary" id="planningCaisserie" type="button">RECEPTION</button>
-            <a class="btn secondary" id="esiAdminUsers" style="display:none;text-decoration:none;text-align:center;background:#fee2e2;color:#991b1b" href="/administrateur">ADMINISTRATEUR</a>
+            <button class="btn primary" id="openDevisCaisses" type="button">DEVIS CAISSE</button>
+            <button class="btn secondary" id="closeTools" type="button">FERMER</button>
           </div>
-        </div>
-
+        </dialog>
         <div class="success" id="successBox">Votre demande a bien été envoyée.</div>
 
         <div class="layout" id="mainLayout">
@@ -2251,6 +2259,9 @@ document.getElementById('avisArticleSelectAll').addEventListener('click', ()=>{
 });
 document.getElementById('avisArticleClearAll').addEventListener('click', ()=>{ state.avisSelectedArticleIds = new Set(); renderAvisArticlePicker(); });
 document.getElementById('addSelectedAvisArticles').addEventListener('click', addSelectedArticlesToAvis);
+document.getElementById('openTools').addEventListener('click',()=>document.getElementById('esiToolsDialog').showModal());
+document.getElementById('closeTools').addEventListener('click',()=>document.getElementById('esiToolsDialog').close());
+document.getElementById('openDevisCaisses').addEventListener('click',()=>window.open('/devis-caisses/','_blank'));
 document.getElementById('openCatalogueCaisses').addEventListener('click', () => window.open('/catalogue-caisses', '_blank'));
 document.getElementById('openCatalogueMethodologies').addEventListener('click', () => window.open('/catalogue-methodologies', '_blank'));
 document.getElementById('openManager').addEventListener('click', ()=>window.open(esiAuthEnabled ? '/gestionnaire' : '/login','_blank'));

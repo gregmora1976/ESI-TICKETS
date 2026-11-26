@@ -10,3 +10,5 @@ pdfplumber
 qrcode[pil]
 reportlab
 PyMuPDF
+pypdfium2
+python-dotenv

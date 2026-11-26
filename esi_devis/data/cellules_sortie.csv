@@ -1,0 +1,9 @@
+sheet,label,label_cell,value_cell,formula,cached_value
+T1,Poids de la Caisse,B48,C48,=Q121,40.93123020000001
+T1,Minutes de Production,B49,C49,=D123,120.02948740480004
+T1,Total matière,B122,C122,"=IF($F$9=0,0,M121)",131.20282000187632
+T1,Total MO,B123,C123,"=IF($F$9=0,0,O121)",102.02506429408002
+T1,Total frais généraux,B124,C124,"=IF($F$9=0,0,((C122+C123)/Frais_Généraux)-(C122+C123))",125.58424539013032
+T1,Total revient,B125,C125,"=IF($F$9=0,0,SUM(C122:C124))",358.8121296860867
+T1,Marge,B126,C126,"=IF($F$9=0,0,(C125/(1-Marge)-C125))",27.00736460002804
+T1,Prix de vente,B129,C129,=SUM(C125:C128),385.8194942861147
