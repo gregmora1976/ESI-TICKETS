@@ -15869,6 +15869,9 @@ from esi_auth import register_security
 ESI_SECURITY = register_security(
     app, supabase_rest_request, load_ticket
 )
+from esi_devis.routes import devis_bp
+app.register_blueprint(devis_bp)
+
 if __name__ == '__main__':
       app.run(host='127.0.0.1', port=5050, debug=False)
 
