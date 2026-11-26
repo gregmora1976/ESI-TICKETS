@@ -58,6 +58,8 @@ class FlaskHandler(legacy.Handler):
         if self.response_headers.get('Content-Type', '').startswith('text/html') and not admin:
             css = b'<style>a[href="/devis-caisses/admin"],button[onclick="askNoticeFile()"],button[onclick^="deleteLibraryNotice("],button[onclick="saveDecoPrices()"],.deco-prices-title{display:none!important}input[id^="deco_"]{pointer-events:none;opacity:.65}</style>'
             body = body.replace(b'</head>', css + b'</head>', 1)
+        if not classic_only and self.response_headers.get('Content-Type', '').startswith('text/html'):
+            body = body.replace(b'</head>', b'<meta name="esi-fabrication" content="1"></head>', 1)
         if classic_only and self.response_headers.get('Content-Type', '').startswith('text/html'):
             body = body.replace(b'<html lang="fr">', b'<html lang="fr" data-esi-role="DEMANDEUR">', 1)
             body = body.replace(b'</head>', b'<style>#btnExpert,#expert{display:none!important}</style></head>', 1)
@@ -91,6 +93,23 @@ def dispatch(subpath):
     # Refuse persistent mutations when the separate Devis database is not configured.
     if path.startswith('/api/') and path not in {'/api/health'} and not legacy._admin_supabase_enabled() and os.getenv('ESI_DEVIS_LOCAL_TEST') != '1':
         return jsonify(ok=False, error='Connexion Supabase DEVIS non configurée'), 503
+    if path == '/api/fabrication-t1':
+        if user.get('profil') not in {'GESTIONNAIRE', 'ADMIN'}:
+            return jsonify(ok=False, error='Accès technique requis'), 403
+        if request.method != 'POST':
+            return jsonify(ok=False, error='Méthode non autorisée'), 405
+        from .fiche_caisse import generate_pdf
+        try:
+            payload = request.get_json() or {}
+            data = payload['data']
+            info = payload.get('info', {})
+            if not isinstance(data, dict) or not isinstance(info, dict):
+                raise ValueError('Données invalides')
+            result = legacy.calculate_sheet('T1', data)
+            pdf = generate_pdf(data, result, info)
+            return Response(pdf, mimetype='application/pdf', headers={'Cache-Control':'no-store','Content-Disposition':'inline; filename="fiche_caisse_T1.pdf"'})
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify(ok=False, error=str(exc)), 400
     handler = FlaskHandler(quote(path, safe='/'))
     if classic_only and request.method == 'POST' and (path.startswith('/api/calculate/') or path in {'/api/fiche-pdf','/api/notice/find'}):
         try:
