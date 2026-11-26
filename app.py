@@ -1,3 +1,5 @@
+from esi_test_guard import activate, local_auth_db, register_preview
+activate()
 from flask import Flask, render_template, jsonify, request, send_file, abort, redirect, url_for, make_response, g
 from pathlib import Path
 import json, webbrowser, os, urllib.request, urllib.parse
@@ -15867,8 +15869,9 @@ def _av_make_pdf(ticket, data):
 from esi_auth import register_security
 
 ESI_SECURITY = register_security(
-    app, supabase_rest_request, load_ticket
+    app, local_auth_db(), load_ticket
 )
+register_preview(app)
 from esi_devis.routes import devis_bp
 app.register_blueprint(devis_bp)
 
