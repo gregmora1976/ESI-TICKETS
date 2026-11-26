@@ -240,15 +240,34 @@ function renderResult(r){
 }
 function prepareFabrication(){
  if(state.current!=='T1'||!state.lastResult)return;
- const data=JSON.parse(JSON.stringify(state.lastData));
+ const data=JSON.parse(JSON.stringify(state.lastData)), r=state.lastResult, f=r.fabrication_t1;
+ if(!f||typeof f!=='object'){notice('Données techniques indisponibles : relancez le calcul.');return;}
  const existing=$('fabricationPanel');if(existing)existing.remove();
- const panel=document.createElement('div');panel.id='fabricationPanel';panel.className='card';panel.style.marginTop='18px';
+ const panel=document.createElement('div');panel.id='fabricationPanel';panel.className='modal-backdrop show';panel.style.zIndex='90';
  const fields=[['dossier','N° dossier',data.dossier],['numero','N° caisse',''],['exposition','Exposition',''],['preteur','Prêteur',''],['ville','Ville arrivée',''],['inventaire','Inventaire',''],['formation','Formation caisse',''],['charge','Chargé de projet',''],['marquage','Marquage','Français'],['observations','Observations fabrication','']];
- panel.innerHTML='<h2>Fiche de fabrication T1</h2><p>Les caractéristiques techniques proviennent du dernier calcul. Pour les modifier, revenir au formulaire et relancer le calcul.</p><div class="form-grid">'+fields.map(([k,l,v])=>'<label>'+esc(l)+'<input class="input" data-fabrication="'+k+'" maxlength="160" value="'+esc(v||'')+'"></label>').join('')+'</div><div class="actions" style="margin-top:12px"><button class="btn primary" id="fabricationPreview">Prévisualiser le PDF</button><a class="btn secondary hidden" id="fabricationDownload" download="fiche_caisse_T1.pdf">Télécharger le PDF</a></div><p id="fabricationMessage"></p><iframe title="Aperçu fiche T1" id="fabricationFrame" style="width:100%;height:580px;border:0;display:none"></iframe>';
- $('resultArea').appendChild(panel);let url=null;
- panel.addEventListener('input',()=>{if(url)URL.revokeObjectURL(url);url=null;$('fabricationFrame').style.display='none';$('fabricationDownload').classList.add('hidden');});
- $('fabricationPreview').onclick=async()=>{const button=$('fabricationPreview');button.disabled=true;try{const info=Object.fromEntries([...panel.querySelectorAll('[data-fabrication]')].map(el=>[el.dataset.fabrication,el.value]));const res=await fetch('/devis-caisses/api/fabrication-t1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data,info})});if(!res.ok)throw new Error((await res.json()).error||'Erreur PDF');if(url)URL.revokeObjectURL(url);url=URL.createObjectURL(await res.blob());$('fabricationFrame').src=url;$('fabricationFrame').style.display='block';$('fabricationDownload').href=url;$('fabricationDownload').classList.remove('hidden');$('fabricationMessage').textContent='Document à contrôler avant transmission au fabricant.';}catch(e){$('fabricationMessage').textContent=e.message;}finally{button.disabled=false;}};
- panel.scrollIntoView({behavior:'smooth'});
+ const fmt=v=>v==null||v===''?'':typeof v==='number'?v.toLocaleString('fr-FR',{maximumFractionDigits:3}):String(v);
+ const unit=(v,u)=>v==null||v===''?'':fmt(v)+u;
+ const line=(label,v)=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid var(--line)"><span>${esc(label)}</span><strong style="text-align:right">${esc(fmt(v))}</strong></div>`;
+ const dims=k=>['longueur','epaisseur','hauteur'].map(a=>r['dimensions_'+k+'_'+a]);
+ const rows=[['Œuvre',[f.C29,f.D29,f.E29]],['Intérieur',dims('interieures')],['Extérieur',dims('exterieures')]];
+ const table='<table class="library-table"><thead><tr><th>Dimensions (cm)</th><th>L</th><th>Ep</th><th>H</th></tr></thead><tbody>'+rows.map(([label,ds])=>'<tr><td>'+esc(label)+'</td>'+ds.map(v=>'<td>'+esc(fmt(v))+'</td>').join('')+'</tr>').join('')+'</tbody></table>';
+ const fabrication=[['Contreplaqué','C13'],['Barres','C15'],['Valsem','F15'],['Isolant','C17'],['Fermetures','C19'],['Peinture','F19'],['Poignées','C21'],['Tyvek','F21'],['Skis','C23'],['Option','F23']].map(([l,a])=>line(l,f[a])).join('');
+ let calage=line('Type de calage',f.B34);
+ if(['Bandes de mousse','Sous verre / bandes de mousse','Mousse à ras'].includes(f.B34)){calage+=line('Dessous',unit(f.C37,' cm'))+line('Dessus',unit(f.C36,' cm'));}
+ if(f.B34==='Mousse à ras')calage+=line('À ras de','');
+ calage+=line('Mousse de base',f.F23==='A plat + Chapeau'?'PU':f.B38);
+ if(f.F23!=='A plat + Chapeau')calage+=line('Quantité',f.F38)+line('Dimension',unit(f.C38,' cm'));
+ const positive=v=>typeof v==='number'&&v>0;
+ if(['Sous verre 2 faces','Sous verre 2 faces ESI'].includes(f.B34)&&[f.C41,f.D41,f.E41].every(positive))calage+=line('Rattrapage',[f.C41,f.D41,f.E41].map(fmt).join(' × ')+' cm');
+ if(positive(f.E39)&&positive(f.C39))calage+=line('Bande de fond',fmt(f.C39)+' × '+fmt(f.E39)+' cm');
+ const [l,e,h]=rows[2][1];
+ const logistic=line('Poids estimatif',unit(r.poids_caisse,' kg'))+line('Volume',[l,e,h].every(v=>typeof v==='number')?unit(l*e*h/1e6,' m³'):'')+line('Surface au sol',[l,e].every(v=>typeof v==='number')?unit(l*e/1e4,' m²'):'');
+ const heading=t=>`<div class="section-title" style="margin:18px 0 8px">${esc(t)}</div>`;
+ panel.innerHTML='<div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="fabricationTitle"><div class="modal-head"><div><div class="section-title">ESI DEVIS</div><h2 id="fabricationTitle">Fiche de fabrication T1</h2></div><button class="btn secondary" id="fabricationClose">Fermer ×</button></div><div class="content"><div class="grid2" style="align-items:start"><section class="card"><div class="section-title">Informations complémentaires (facultatives)</div><div style="display:grid;gap:10px;margin-top:12px">'+fields.map(([k,l,v])=>'<div class="field"><label for="fab_'+k+'">'+esc(l)+'</label><input id="fab_'+k+'" data-fabrication="'+k+'" maxlength="160" value="'+esc(v??'')+'"></div>').join('')+'</div></section><section class="card"><div class="section-title">Données techniques automatiques</div><p class="muted">Pour modifier ces données, revenir au chiffrage et recalculer.</p>'+table+heading('Fabrication')+fabrication+heading('Calage intérieur')+calage+heading('Données logistiques')+logistic+'</section></div><p id="fabricationMessage" role="status"></p><div class="actions"><button class="btn primary" id="fabricationGenerate">Générer PDF</button></div></div></div>';
+ document.body.appendChild(panel);
+ $('fabricationClose').onclick=()=>panel.remove();
+ $('fabricationGenerate').onclick=async()=>{const button=$('fabricationGenerate'),message=$('fabricationMessage');button.disabled=true;message.textContent='Génération en cours…';try{const info=Object.fromEntries([...panel.querySelectorAll('[data-fabrication]')].map(el=>[el.dataset.fabrication,el.value]));const res=await fetch('/devis-caisses/api/fabrication-t1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data,info})});if(!res.ok){const err=await res.json().catch(()=>({}));throw new Error(err.error||'Erreur PDF');}const url=URL.createObjectURL(await res.blob());const a=document.createElement('a');a.href=url;a.download='fiche_caisse_T1.pdf';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);message.textContent='PDF généré.';}catch(e){message.textContent=e.message;}finally{button.disabled=false;}};
+ $('fabricationClose').focus();
 }
 async function generateInternalPdf(){if(!state.current||!state.lastResult){notice('Lance un calcul avant de générer la fiche PDF.');return;}try{const res=await fetch('/devis-caisses/api/fiche-pdf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sheet:state.current,data:state.lastData,result:state.lastResult})});if(!res.ok){const err=await res.json().catch(()=>({error:'Erreur génération PDF'}));notice(err.error||'Erreur génération PDF');return;}const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`fiche_chiffrage_${state.current.replaceAll(' ','_')}.pdf`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);notice('Fiche PDF générée');}catch(e){notice('Erreur génération PDF');}}
 
