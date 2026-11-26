@@ -526,7 +526,9 @@ function filteredTickets(){
 }
 async function refreshTickets(){
   const res = await fetch('/api/tickets');
-  state.tickets = await res.json();
+  const tickets = await res.json();
+  const allowedModules = new Set(['fiche de caisse','demande de devis','demande aller voir']);
+  state.tickets = tickets.filter(t => allowedModules.has(String(t.module || '').toLowerCase().replace(/demandes/g,'demande').trim()));
 
   const params = new URLSearchParams(window.location.search);
   const ticketFromUrl = params.get('ticket');
