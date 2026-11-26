@@ -52,6 +52,9 @@ def result(sheet, overrides, materials):
         if len(caissons)==1:
             for axis in ('longueur','epaisseur','hauteur'):out['dimensions_exterieures_'+axis]=caissons[0][axis]
     if price_value<=0: raise CalculationError('Prix nul : vérifiez les dimensions et les options.')
+    if sheet == 'T1':
+        cells = 'C29 D29 E29 C13 C15 F15 C17 C19 F19 C21 F21 C23 F23 F25 B34 C36 C37 B38 C38 F38 C39 E39 C41 D41 E41'.split()
+        out['fabrication_t1'] = {a: e.cell(sheet,a) for a in cells}
     out['prix_achat']=out['prix_vente']=round(price_value,2)
     if weight:out['poids_caisse']=read(weight)
     if minutes:out['minutes_production']=read(minutes)
