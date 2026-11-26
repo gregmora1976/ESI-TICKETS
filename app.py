@@ -1,5 +1,3 @@
-from esi_test_guard import activate, local_auth_db, register_preview
-activate()
 from flask import Flask, render_template, jsonify, request, send_file, abort, redirect, url_for, make_response, g
 from pathlib import Path
 import json, webbrowser, os, urllib.request, urllib.parse
@@ -23,6 +21,21 @@ FILES_SUB = 'fichiers'
 SUPABASE_URL = (os.getenv("SUPABASE_URL") or "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or ""
 SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "uploads")
+
+# Integration DEVIS: fail closed if a preview configuration is still present.
+if any(os.getenv(k) for k in ("ESI_TEST_PASSWORD", "ESI_DEVIS_LOCAL_TEST")):
+    raise RuntimeError("Configuration TEST encore active : supprimer les variables temporaires avant le demarrage.")
+_required_env = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY", "ESI_DEVIS_SUPABASE_URL",
+                 "ESI_DEVIS_SUPABASE_SERVICE_ROLE_KEY", "ESI_SESSION_SECRET")
+_missing_env = [k for k in _required_env if not os.getenv(k, "").strip()]
+if _missing_env:
+    raise RuntimeError("Configuration ESI incomplete : " + ", ".join(_missing_env))
+if os.getenv("ESI_AUTH_ENABLED", "").strip() != "1" or len(os.getenv("ESI_SESSION_SECRET", "")) < 32:
+    raise RuntimeError("Authentification ESI obligatoire et secret de session de 32 caracteres minimum.")
+for _url_var in ("SUPABASE_URL", "ESI_DEVIS_SUPABASE_URL"):
+    _url = urllib.parse.urlsplit(os.environ[_url_var])
+    if _url.scheme != "https" or not _url.hostname or _url.username or _url.password or _url.query or _url.fragment:
+        raise RuntimeError("URL Supabase HTTPS invalide : " + _url_var)
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 
@@ -15869,9 +15882,8 @@ def _av_make_pdf(ticket, data):
 from esi_auth import register_security
 
 ESI_SECURITY = register_security(
-    app, local_auth_db(), load_ticket
+    app, supabase_rest_request, load_ticket
 )
-register_preview(app)
 from esi_devis.routes import devis_bp
 app.register_blueprint(devis_bp)
 
