@@ -111,6 +111,22 @@ def dispatch(subpath):
             return Response(pdf, mimetype='application/pdf', headers={'Cache-Control':'no-store','Content-Disposition':'inline; filename="fiche_caisse_T1.pdf"'})
         except (ValueError, TypeError, KeyError) as exc:
             return jsonify(ok=False, error=str(exc)), 400
+    if path == '/api/fabrication-t26':
+        if user.get('profil') not in {'GESTIONNAIRE', 'ADMIN'}:
+            return jsonify(ok=False, error='Accès technique requis'), 403
+        if request.method != 'POST':
+            return jsonify(ok=False, error='Méthode non autorisée'), 405
+        from .fiche_t26 import generate_pdf
+        try:
+            payload = request.get_json() or {}
+            data, info = payload['data'], payload.get('info', {})
+            if not isinstance(data, dict) or not isinstance(info, dict):
+                raise ValueError('Données invalides')
+            result = legacy.calculate_sheet('T1-T6', data)
+            pdf = generate_pdf(data, result, info, payload.get('adjustments', {}))
+            return Response(pdf, mimetype='application/pdf', headers={'Cache-Control':'no-store','Content-Disposition':'attachment; filename="fiche_caisse_T2-T6.pdf"'})
+        except (ValueError, TypeError, KeyError) as exc:
+            return jsonify(ok=False, error=str(exc)), 400
     handler = FlaskHandler(quote(path, safe='/'))
     if classic_only and request.method == 'POST' and (path.startswith('/api/calculate/') or path in {'/api/fiche-pdf','/api/notice/find'}):
         try:
