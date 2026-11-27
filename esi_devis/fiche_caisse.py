@@ -1,4 +1,4 @@
-"""T1 manufacturing sheet, derived exclusively from the 2026 calculation."""
+"""T1 manufacturing sheet, based on the 2026 calculation, with explicit fabrication-only adjustments."""
 from io import BytesIO
 from pathlib import Path
 from datetime import date
@@ -12,6 +12,32 @@ BLUE = '#075985'
 INK = '#0f172a'
 PALE = '#e0f2fe'
 LINE = '#cbd5e1'
+
+def apply_adjustments(result, adjustments, confirmed=False):
+    """Copy only permitted manufacturing fields; never change dimensions or cost."""
+    from math import isfinite
+    from .matrice_caisses.t1 import options_t1
+    if not isinstance(adjustments, dict):
+        raise ValueError('Modifications invalides')
+    if not adjustments:
+        return result
+    if confirmed is not True:
+        raise ValueError('Vérifiez et confirmez la compatibilité des modifications.')
+    o = options_t1()
+    choices = {'C13':['Peuplier 10 mm','Peuplier 15 mm','Peuplier Tour 15 mm Fonds 10 mm'], 'C15':['Pin non raboté','Pin raboté 4 faces'], 'F15':['Oui','Non'], 'C17':o['type_isolant'], 'C19':o['fermeture'], 'F19':o['peinture'], 'C21':['Bois','Métal x 2 sur bouts','Métal x 4 sur GC','Non'], 'F21':o['tyvek'], 'C23':['10 dessous en semelles','10 dessous en skis','Skis'], 'F23':['A Plat','A Plat + Chapeau','Aucun','Stabilisateur'], 'B34':o['type_calage'], 'B38':['Aucun','Agglocelle 50 mm','Ethafoam 50 mm','PU']}
+    numbers = {'C36','C37','F38','C38','C39','E39','C41','D41','E41'}
+    f = dict(result['fabrication_t1'])
+    for k,v in adjustments.items():
+        if k in choices:
+            if not isinstance(v,str) or v not in choices[k]+[f.get(k)]:
+                raise ValueError('Choix technique invalide : '+k)
+        elif k in numbers:
+            if isinstance(v,bool) or not isinstance(v,(int,float)) or not isfinite(v) or not 0<=v<=100000 or (k=='F38' and int(v)!=v):
+                raise ValueError('Valeur numérique invalide : '+k)
+        else:
+            raise ValueError('Champ non modifiable : '+k)
+        f[k]=v
+    return dict(result, fabrication_t1=f)
 
 def generate_pdf(data, result, info):
     f = result['fabrication_t1']
@@ -84,8 +110,8 @@ def generate_pdf(data, result, info):
     rect(x,y,lw,46,'#ffffff')
     for offset,label in [(0,'Mousse de base'),(280,'Qté'),(360,'Dim. (cm)')]:
         txt(x+10+offset,y+15,label,9,False,'#475569')
-    txt(x+10,y+33,'PU' if f['F23']=='A plat + Chapeau' else f['B38'],12,True,BLUE,maxw=260)
-    if f['F23']!='A plat + Chapeau':
+    txt(x+10,y+33,'PU' if str(f['F23']).lower()=='a plat + chapeau' else f['B38'],12,True,BLUE,maxw=260)
+    if str(f['F23']).lower()!='a plat + chapeau':
         txt(x+290,y+33,num(f['F38']),12,True,BLUE)
         txt(x+370,y+33,num(f['C38']),12,True,BLUE)
     header(right,274,rw,'DONNÉES LOGISTIQUES')

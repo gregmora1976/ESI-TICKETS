@@ -98,7 +98,7 @@ def dispatch(subpath):
             return jsonify(ok=False, error='Accès technique requis'), 403
         if request.method != 'POST':
             return jsonify(ok=False, error='Méthode non autorisée'), 405
-        from .fiche_caisse import generate_pdf
+        from .fiche_caisse import generate_pdf, apply_adjustments
         try:
             payload = request.get_json() or {}
             data = payload['data']
@@ -106,6 +106,7 @@ def dispatch(subpath):
             if not isinstance(data, dict) or not isinstance(info, dict):
                 raise ValueError('Données invalides')
             result = legacy.calculate_sheet('T1', data)
+            result = apply_adjustments(result, payload.get('adjustments', {}), payload.get('confirmed', False))
             pdf = generate_pdf(data, result, info)
             return Response(pdf, mimetype='application/pdf', headers={'Cache-Control':'no-store','Content-Disposition':'inline; filename="fiche_caisse_T1.pdf"'})
         except (ValueError, TypeError, KeyError) as exc:
