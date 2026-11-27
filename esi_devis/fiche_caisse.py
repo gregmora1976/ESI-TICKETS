@@ -53,10 +53,11 @@ def generate_pdf(data, result, info):
         v=info.get(k,default)
         if not isinstance(v,(str,int,float)) or len(str(v))>160:raise ValueError('Champ invalide : '+k)
         return str(v)
+    c.setFillColor(HexColor('#e2e8f0')); c.rect(0,0,W,H,fill=1,stroke=0)
     rect(20,18,W-40,48,PALE)
     c.drawImage(str(ROOT/'logo.png'),28,H-60,width=90,height=37,preserveAspectRatio=True,mask='auto')
     txt(140,49,'FICHE DE CAISSE - TABLEAUX',20,True,BLUE)
-    txt(655,38,'Version 06',10,True);txt(655,53,date.today().strftime('%d/%m/%Y'),9)
+    txt(655,38,'Version 07',10,True);txt(655,53,date.today().strftime('%d/%m/%Y'),9)
     x=20; right=490; lw=460; rw=W-right-20
     header(x,76,lw,'DIMENSIONS - cm (sans arrondi au cm)' )
     for i,label in enumerate(['Longueur','Épaisseur','Hauteur']):txt(190+i*90,110,label,10,True)
