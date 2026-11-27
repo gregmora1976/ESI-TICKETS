@@ -15,32 +15,21 @@ LINE = '#cbd5e1'
 
 def apply_adjustments(result, adjustments, confirmed=False):
     """Copy only permitted manufacturing fields; never change dimensions or cost."""
-    from math import isfinite
-    from .matrice_caisses.t1 import options_t1
     if not isinstance(adjustments, dict):
         raise ValueError('Modifications invalides')
-    if not adjustments:
-        return result
-    if confirmed is not True:
+    if adjustments and confirmed is not True:
         raise ValueError('Vérifiez et confirmez la compatibilité des modifications.')
-    o = options_t1()
-    choices = {'C13':['Peuplier 10 mm','Peuplier 15 mm','Peuplier Tour 15 mm Fonds 10 mm'], 'C15':['Pin non raboté','Pin raboté 4 faces'], 'F15':['Oui','Non'], 'C17':o['type_isolant'], 'C19':o['fermeture'], 'F19':o['peinture'], 'C21':['Bois','Métal x 2 sur bouts','Métal x 4 sur GC','Non'], 'F21':o['tyvek'], 'C23':['10 dessous en semelles','10 dessous en skis','Skis'], 'F23':['A Plat','A Plat + Chapeau','Aucun','Stabilisateur'], 'B34':o['type_calage'], 'B38':['Aucun','Agglocelle 50 mm','Ethafoam 50 mm','PU']}
-    numbers = {'C36','C37','F38','C38','C39','E39','C41','D41','E41'}
-    f = dict(result['fabrication_t1'])
+    allowed = {'C13','C15','F15','C17','C19','F19','C21','F21','C23','F23','B34','B38','C36','C37','F38','C38','C39','E39','C41','D41','E41'}
     for k,v in adjustments.items():
-        if k in choices:
-            if not isinstance(v,str) or v not in choices[k]+[f.get(k)]:
-                raise ValueError('Choix technique invalide : '+k)
-        elif k in numbers:
-            if isinstance(v,bool) or not isinstance(v,(int,float)) or not isfinite(v) or not 0<=v<=100000 or (k=='F38' and int(v)!=v):
-                raise ValueError('Valeur numérique invalide : '+k)
-        else:
-            raise ValueError('Champ non modifiable : '+k)
-        f[k]=v
-    return dict(result, fabrication_t1=f)
+        if k not in allowed or not isinstance(v,str) or len(v)>160:
+            raise ValueError('Texte invalide : '+k)
+    return dict(result, fabrication_text=dict(adjustments))
 
 def generate_pdf(data, result, info):
     f = result['fabrication_t1']
+    texts = result.get('fabrication_text', {})
+    def display(k, default=None):
+        return texts.get(k, f.get(k) if default is None else default)
     b = BytesIO(); c = canvas.Canvas(b, pagesize=landscape(A4)); W,H = landscape(A4)
     c.setTitle('ESI - Fiche de caisse TABLEAUX')
     def rect(x,y,w,h,fill,stroke=LINE):
@@ -79,7 +68,7 @@ def generate_pdf(data, result, info):
         for j,v in enumerate(ds):txt(190+j*90,y+15,num(v),11,True)
     header(right,76,rw,'CARACTÉRISTIQUES DE FABRICATION')
     for i,(label,a) in enumerate([('Contreplaqué','C13'),('Barres','C15'),('Valsem','F15'),('Isolant','C17'),('Fermetures','C19'),('Peinture','F19'),('Poignées','C21'),('Tyvek','F21'),('Skis','C23'),('Option','F23')]):
-        y=96+i*17;rect(right,y,rw,17,'#f8fafc' if i%2==0 else '#ffffff');field(right+7,y+12,label,f[a],rw-14)
+        y=96+i*17;rect(right,y,rw,17,'#f8fafc' if i%2==0 else '#ffffff');field(right+7,y+12,label,display(a),rw-14)
     rect(x,183,lw,24,'#f8fafc')
     field(x+8,199,'Inventaire de l’œuvre',val('inventaire'),lw-16)
     header(x,216,lw,'CALAGE INTÉRIEUR')
@@ -88,19 +77,19 @@ def generate_pdf(data, result, info):
     r=[f.get(k) for k in ('C41','D41','E41')]
     details=[]
     if f['B34'] in ('Sous verre 2 faces','Sous verre 2 faces ESI') and all(positive(v) for v in r):
-        details.append('R : '+' x '.join(num(v) for v in r)+' cm')
+        details.append('R : '+' x '.join(str(display(k,num(f[k]))) for k in ('C41','D41','E41'))+' cm')
     if positive(f.get('E39')) and positive(f.get('C39')):
-        details.append('BF : '+num(f['C39'])+' x '+num(f['E39'])+' cm')
+        details.append('BF : '+str(display('C39',num(f['C39'])))+' x '+str(display('E39',num(f['E39'])))+' cm')
     show_dd=f['B34'] in ('Bandes de mousse','Sous verre / bandes de mousse','Mousse à ras')
     y=236
     h=46+(22 if show_dd else 0)+(15 if f['B34']=='Mousse à ras' else 0)+15*len(details)
     rect(x,y,lw,h,'#ffffff')
     txt(x+10,y+15,'Type de calage',9,False,'#475569')
-    txt(x+10,y+33,f['B34'],12,True,BLUE,maxw=lw-20)
+    txt(x+10,y+33,display('B34'),12,True,BLUE,maxw=lw-20)
     yy=y+49
     if show_dd:
-        field(x+10,yy,'Dessous',num(f['C37'])+' cm',210)
-        field(x+240,yy,'Dessus',num(f['C36'])+' cm',210)
+        field(x+10,yy,'Dessous (cm)',display('C37',num(f['C37'])),210)
+        field(x+240,yy,'Dessus (cm)',display('C36',num(f['C36'])),210)
         yy+=22
     if f['B34']=='Mousse à ras':
         txt(x+10,yy,'À ras de',9);yy+=15
@@ -110,10 +99,10 @@ def generate_pdf(data, result, info):
     rect(x,y,lw,46,'#ffffff')
     for offset,label in [(0,'Mousse de base'),(280,'Qté'),(360,'Dim. (cm)')]:
         txt(x+10+offset,y+15,label,9,False,'#475569')
-    txt(x+10,y+33,'PU' if str(f['F23']).lower()=='a plat + chapeau' else f['B38'],12,True,BLUE,maxw=260)
+    txt(x+10,y+33,display('B38','PU' if str(f['F23']).lower()=='a plat + chapeau' else f['B38']),12,True,BLUE,maxw=260)
     if str(f['F23']).lower()!='a plat + chapeau':
-        txt(x+290,y+33,num(f['F38']),12,True,BLUE)
-        txt(x+370,y+33,num(f['C38']),12,True,BLUE)
+        txt(x+290,y+33,display('F38',num(f['F38'])),12,True,BLUE,maxw=70)
+        txt(x+370,y+33,display('C38',num(f['C38'])),12,True,BLUE,maxw=80)
     header(right,274,rw,'DONNÉES LOGISTIQUES')
     l,e,h=rows[-1][1]
     for i,(label,v) in enumerate([('Poids estimatif',num(result['poids_caisse'])+' kg'),('Volume',num(l*e*h/1e6)+' m³'),('Surface au sol',num(l*e/1e4)+' m²'),('Marquage','Français')]):
