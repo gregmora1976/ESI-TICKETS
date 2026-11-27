@@ -17,8 +17,6 @@ def apply_adjustments(result, adjustments, confirmed=False):
     """Copy only permitted manufacturing fields; never change dimensions or cost."""
     if not isinstance(adjustments, dict):
         raise ValueError('Modifications invalides')
-    if adjustments and confirmed is not True:
-        raise ValueError('Vérifiez et confirmez la compatibilité des modifications.')
     allowed = {'C13','C15','F15','C17','C19','F19','C21','F21','C23','F23','B34','B38','C36','C37','F38','C38','C39','E39','C41','D41','E41'}
     for k,v in adjustments.items():
         if k not in allowed or not isinstance(v,str) or len(v)>160:
