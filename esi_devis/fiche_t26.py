@@ -35,8 +35,8 @@ def generate_pdf(data,result,info,adjustments):
     if not isinstance(adjustments,dict) or any(k not in allowed or not isinstance(v,str) or len(v)>160 for k,v in adjustments.items()):raise ValueError('Textes invalides')
     def fmt(v):return f'{v:.3f}'.rstrip('0').rstrip('.').replace('.',',') if isinstance(v,(int,float)) else str(v or '')
     def val(k,v):return adjustments.get(k,fmt(v))
-    b=BytesIO(); W,H=landscape(A4); c=canvas.Canvas(b,pagesize=(W,H)); c.setTitle('ESI - Fiche de caisse TABLEAUX')
-    blue='#075985'; pale='#e0f2fe'; line='#cbd5e1'; ink='#0f172a'; x=20; w=W-40
+    b=BytesIO(); W,H=landscape(A4); c=canvas.Canvas(b,pagesize=(W,H)); c.setTitle('ESI - Fiche de caisse MULTI TABLEAUX')
+    blue='#075985'; pale='#e0f2fe'; line='#cbd5e1'; ink='#0f172a'; sheet='#e2e8f0'; x=20; w=W-40
     def rect(x,y,w,h,fill='#ffffff'):
         c.setFillColor(HexColor(fill));c.setStrokeColor(HexColor(line));c.rect(x,H-y-h,w,h,fill=1,stroke=1)
     def txt(x,y,v,size=9,bold=False,color=ink,maxw=780):
@@ -48,9 +48,12 @@ def generate_pdf(data,result,info,adjustments):
         rect(x,y,w,18,blue);txt(x+7,y+12,t,9,True,'#ffffff',w-14)
     def field(x,y,w,h,l,v):
         rect(x,y,w,h);txt(x+5,y+10,l,7.5,False,'#475569',w-10);txt(x+5,y+h-5,v,9,True,ink,w-10)
+    def paint_sheet_background():
+        c.setFillColor(HexColor(sheet)); c.setStrokeColor(HexColor(sheet)); c.rect(0,0,W,H,fill=1,stroke=0)
+
     def head():
-        rect(x,16,w,42,pale);c.drawImage(str(Path(__file__).with_name('logo.png')),28,H-54,width=80,height=32,preserveAspectRatio=True,mask='auto');txt(125,42,'FICHE DE CAISSE - TABLEAUX',19,True,blue);txt(680,31,'Version 01',9,True);txt(680,45,date.today().strftime('%d/%m/%Y'),8)
-    head(); bar(x,65,w,'DIMENSIONS DE LA CAISSE ET FABRICATION')
+        rect(x,16,w,42,pale);c.drawImage(str(Path(__file__).with_name('logo.png')),28,H-54,width=80,height=32,preserveAspectRatio=True,mask='auto');txt(125,42,'FICHE DE CAISSE - MULTI TABLEAUX',19,True,blue);txt(680,31,'Version 03',9,True);txt(680,45,date.today().strftime('%d/%m/%Y'),8)
+    paint_sheet_background(); head(); bar(x,65,w,'DIMENSIONS DE LA CAISSE ET FABRICATION')
     dw=230; fw=(w-dw-8)/5
     for i,k in enumerate(('interieures','exterieures')):
         ds=[result['dimensions_'+k+'_'+a] for a in ('longueur','epaisseur','hauteur')];field(x,83+i*28,dw,28,('Intérieur' if i==0 else 'Extérieur')+' — L × Ep × H (cm)',' × '.join(map(fmt,ds)))
@@ -74,7 +77,7 @@ def generate_pdf(data,result,info,adjustments):
         rect(xx,yy+51,cw,27);txt(xx+6,yy+61,'Mousse de base',8,False,'#475569');txt(xx+6,yy+73,fields['base'],10,True,blue,cw*.52);txt(xx+cw*.57,yy+61,'Qté',8);txt(xx+cw*.57,yy+73,fields['qte'],10,True,blue,cw*.17);txt(xx+cw*.77,yy+61,'Dim. (cm)',8);txt(xx+cw*.77,yy+73,fields['dim'],10,True,blue,cw*.21)
     y+=((len(f['oeuvres'])+1)//2)*(ch+5)
     # Keep footer fixed on the single page, or move it to a second page if necessary.
-    if y+135>H-12:c.showPage();head();y=68
+    if y+135>H-12:c.showPage();paint_sheet_background();head();y=68
     bar(x,y,w,'IDENTIFICATION DU DOSSIER ET DONNÉES LOGISTIQUES — MARQUAGE FRANÇAIS');y+=18
     l,e,h=[result['dimensions_exterieures_'+a] for a in ('longueur','epaisseur','hauteur')]
     vals=[('Dossier',info.get('dossier','')),('N° caisse',info.get('numero','')),('Exposition',info.get('exposition','')),('Prêteur',info.get('preteur','')),('Chargé de projet',info.get('charge','')),('Poids / Volume / Surface',fmt(result['poids_caisse'])+' kg / '+fmt(l*e*h/1e6)+' m³ / '+fmt(l*e/1e4)+' m²')]
