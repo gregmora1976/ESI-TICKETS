@@ -16,7 +16,7 @@ LINE = '#cbd5e1'
 def generate_pdf(data, result, info):
     f = result['fabrication_t1']
     b = BytesIO(); c = canvas.Canvas(b, pagesize=landscape(A4)); W,H = landscape(A4)
-    c.setTitle('ESI - Fiche de caisse T1')
+    c.setTitle('ESI - Fiche de caisse TABLEAUX')
     def rect(x,y,w,h,fill,stroke=LINE):
         c.setFillColor(HexColor(fill)); c.setStrokeColor(HexColor(stroke)); c.rect(x,H-y-h,w,h,fill=1,stroke=1)
     def txt(x,y,v,size=10,bold=False,color=INK,maxw=None):
@@ -42,8 +42,8 @@ def generate_pdf(data, result, info):
         return str(v)
     rect(20,18,W-40,48,PALE)
     c.drawImage(str(ROOT/'logo.png'),28,H-60,width=90,height=37,preserveAspectRatio=True,mask='auto')
-    txt(140,39,'FICHE DE CAISSE - T1',20,True,BLUE);txt(140,54,'FABRICATION  |  DOCUMENT DE TRAVAIL A VALIDER',9,False,BLUE)
-    txt(655,38,'Version 03',10,True);txt(655,53,date.today().strftime('%d/%m/%Y'),9)
+    txt(140,49,'FICHE DE CAISSE - TABLEAUX',20,True,BLUE)
+    txt(655,38,'Version 06',10,True);txt(655,53,date.today().strftime('%d/%m/%Y'),9)
     x=20; right=490; lw=460; rw=W-right-20
     header(x,76,lw,'DIMENSIONS - cm (sans arrondi au cm)' )
     for i,label in enumerate(['Longueur','Épaisseur','Hauteur']):txt(190+i*90,110,label,10,True)
@@ -57,26 +57,37 @@ def generate_pdf(data, result, info):
     rect(x,183,lw,24,'#f8fafc')
     field(x+8,199,'Inventaire de l’œuvre',val('inventaire'),lw-16)
     header(x,216,lw,'CALAGE INTÉRIEUR')
-    txt(x+8,252,f['B34'],12,True,BLUE,maxw=lw-16)
-    # Historical sheet: C16, G16, L16, D19, H19, J19 only.
-    if f['B34'] in ('Bandes de mousse','Sous verre / bandes de mousse','Mousse à ras'):
-        tile(x,260,(lw-8)/2,34,'Dessous',num(f['C37'])+' cm')
-        tile(x+(lw+8)/2,260,(lw-8)/2,34,'Dessus',num(f['C36'])+' cm')
-    if f['B34']=='Mousse à ras':txt(x+8,305,'À ras de',9)
-    for offset,label in [(0,'Mousse de base'),(280,'Qté'),(360,'Dim. (cm)')]:
-        txt(x+8+offset,317,label,10,True)
-    rect(x,323,lw,26,PALE)
-    txt(x+8,340,'PU' if f['F23']=='A plat + Chapeau' else f['B38'],11,True,maxw=270)
-    if f['F23']!='A plat + Chapeau':
-        txt(x+288,340,num(f['F38']),11,True)
-        txt(x+368,340,num(f['C38']),11,True)
-    # E16 in the source sheet: R and BF only when explicitly dimensioned.
+    # Two matching white cards; retain the historical conditional fields.
     def positive(v):return isinstance(v,(int,float)) and v>0
     r=[f.get(k) for k in ('C41','D41','E41')]
+    details=[]
     if f['B34'] in ('Sous verre 2 faces','Sous verre 2 faces ESI') and all(positive(v) for v in r):
-        txt(x+8,365,'R : '+ ' x '.join(num(v) for v in r)+' cm',10)
+        details.append('R : '+' x '.join(num(v) for v in r)+' cm')
     if positive(f.get('E39')) and positive(f.get('C39')):
-        txt(x+8,382,'BF : '+num(f['C39'])+' x '+num(f['E39'])+' cm',10)
+        details.append('BF : '+num(f['C39'])+' x '+num(f['E39'])+' cm')
+    show_dd=f['B34'] in ('Bandes de mousse','Sous verre / bandes de mousse','Mousse à ras')
+    y=236
+    h=46+(22 if show_dd else 0)+(15 if f['B34']=='Mousse à ras' else 0)+15*len(details)
+    rect(x,y,lw,h,'#ffffff')
+    txt(x+10,y+15,'Type de calage',9,False,'#475569')
+    txt(x+10,y+33,f['B34'],12,True,BLUE,maxw=lw-20)
+    yy=y+49
+    if show_dd:
+        field(x+10,yy,'Dessous',num(f['C37'])+' cm',210)
+        field(x+240,yy,'Dessus',num(f['C36'])+' cm',210)
+        yy+=22
+    if f['B34']=='Mousse à ras':
+        txt(x+10,yy,'À ras de',9);yy+=15
+    for detail in details:
+        txt(x+10,yy,detail,10,maxw=lw-20);yy+=15
+    y+=h+6
+    rect(x,y,lw,46,'#ffffff')
+    for offset,label in [(0,'Mousse de base'),(280,'Qté'),(360,'Dim. (cm)')]:
+        txt(x+10+offset,y+15,label,9,False,'#475569')
+    txt(x+10,y+33,'PU' if f['F23']=='A plat + Chapeau' else f['B38'],12,True,BLUE,maxw=260)
+    if f['F23']!='A plat + Chapeau':
+        txt(x+290,y+33,num(f['F38']),12,True,BLUE)
+        txt(x+370,y+33,num(f['C38']),12,True,BLUE)
     header(right,274,rw,'DONNÉES LOGISTIQUES')
     l,e,h=rows[-1][1]
     for i,(label,v) in enumerate([('Poids estimatif',num(result['poids_caisse'])+' kg'),('Volume',num(l*e*h/1e6)+' m³'),('Surface au sol',num(l*e/1e4)+' m²'),('Marquage','Français')]):
